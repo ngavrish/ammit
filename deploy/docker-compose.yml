@@ -34,6 +34,10 @@ services:
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # Grafana's own top bar, with a rule added to hide it. Grafana's
+      # template, not ours — pulled from the shipped image so an upgrade is a
+      # diff against a real file, not a guess at what changed underneath it.
+      - ./grafana/index.html:/usr/share/grafana/public/views/index.html:ro
       - ammit-data:/data:ro
       - grafana-data:/var/lib/grafana
     depends_on: [ammit]
