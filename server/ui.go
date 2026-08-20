@@ -53,8 +53,13 @@ header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5r
 .brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
        display:flex;align-items:center;gap:.5rem;opacity:.85;pointer-events:none}
 .brand svg{display:block}
-.brand b{font:800 20px/1 var(--sans);letter-spacing:-.01em;color:var(--ink)}
-.brand small{font:600 7px/1 var(--mono);letter-spacing:.32em;color:var(--mute);
+/* Block children, not <b><br><small> — a bare <br> takes the browser's
+   default line-height, which the reference component never touches (it
+   stacks two block elements in a flex column instead), and that inherited
+   leading was inflating this line's box past its own font-size. */
+.brand-text{display:flex;flex-direction:column}
+.brand b{display:block;font:800 20px/1 var(--sans);letter-spacing:-.01em;color:var(--ink)}
+.brand small{display:block;font:600 7px/1 var(--mono);letter-spacing:.32em;color:var(--mute);
              text-transform:uppercase;margin-top:3px}
 h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
    color:var(--bronze)}
@@ -150,7 +155,7 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
       <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
     </g>
   </svg>
-  <span><b>CHIRON</b><br><small>SYSTEMS</small></span>
+  <span class="brand-text"><b>CHIRON</b><small>SYSTEMS</small></span>
 </span>
 <nav class="tabs" role="tablist">
   <button id="tab-scales" role="tab" aria-selected="true" onclick="tab('scales')">scales</button>
