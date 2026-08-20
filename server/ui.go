@@ -53,9 +53,9 @@ header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5r
 .brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
        display:flex;align-items:center;gap:.5rem;opacity:.85;pointer-events:none}
 .brand svg{display:block}
-.brand b{font:800 13px/1 var(--sans);letter-spacing:-.01em;color:var(--ink)}
-.brand small{font:600 8px/1 var(--mono);letter-spacing:.32em;color:var(--dim);
-             text-transform:uppercase;margin-top:2px}
+.brand b{font:800 20px/1 var(--sans);letter-spacing:-.01em;color:var(--ink)}
+.brand small{font:600 7px/1 var(--mono);letter-spacing:.32em;color:var(--mute);
+             text-transform:uppercase;margin-top:3px}
 h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
    color:var(--bronze)}
 header .sub{color:var(--dim);font-size:13px;letter-spacing:.04em}
@@ -130,7 +130,7 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
      variant, since this header is dark. Static: the animation there is for a
      page somebody arrives at once, not a bar redrawn every refresh. -->
 <span class="brand" aria-hidden="true">
-  <svg width="20" height="18" viewBox="0 0 180 160">
+  <svg width="36" height="32" viewBox="0 0 180 160">
     <defs>
       <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
         <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
