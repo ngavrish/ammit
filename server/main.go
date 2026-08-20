@@ -233,8 +233,22 @@ func store(e event) {
 		log.Printf("ammit: could not keep an event: %v", err)
 		return
 	}
+	// A run this store has never heard of gets a row on its first event.
+	//
+	// The start event travels the same wire as everything else, and that wire
+	// blinks: a DNS hiccup at the wrong second dropped one, and a run with no row
+	// is a run no limit applies to — invisible to the cost cap, to the deadline,
+	// to the queue's idea of what is running. The row is what makes a run real
+	// here, so any event may create it and run_start merely fills in the name.
+	if run := e.s("run"); run != "" && e.s("kind") != "run_start" {
+		db.Exec(`INSERT OR IGNORE INTO runs (run, name, started) VALUES (?,?,?)`,
+			run, run, at)
+	}
+
 	switch e.s("kind") {
 	case "run_start":
+		// REPLACE, not IGNORE: if an earlier event created the row, this is
+		// where it learns the ticket's name and its real start.
 		db.Exec(`INSERT OR REPLACE INTO runs (run, name, started) VALUES (?,?,?)`,
 			e.s("run"), e.s("name"), at)
 	case "run_end":
