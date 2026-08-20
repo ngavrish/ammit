@@ -12,6 +12,13 @@ timeouts:
   session: 3600            # one agent session
   turn: 600                # one exchange — the hang nothing inside the run catches
 
+retention:
+  # Finished runs older than this move into archive/ammit-YYYY-MM.db and leave
+  # the live database small. Nothing is deleted: an archive is a database like
+  # any other, and ATTACH brings an old run back when somebody asks.
+  days: 30
+  dir: /data/archive
+
 limits:
   usd_per_run: 150
   turns_per_run: 4000

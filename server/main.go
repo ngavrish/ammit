@@ -71,6 +71,17 @@ CREATE TABLE IF NOT EXISTS judgements (
 );
 CREATE INDEX IF NOT EXISTS judgements_at ON judgements (at);
 
+CREATE TABLE IF NOT EXISTS documents (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    at    REAL NOT NULL,
+    run   TEXT,
+    kind  TEXT NOT NULL,
+    phase TEXT,
+    bytes INTEGER,
+    path  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS documents_run ON documents (run, kind);
+
 CREATE TABLE IF NOT EXISTS queue (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     name      TEXT NOT NULL,
@@ -83,9 +94,10 @@ CREATE TABLE IF NOT EXISTS queue (
 );`
 
 var (
-	db     *sql.DB
-	mu     sync.Mutex
-	dryRun = os.Getenv("AMMIT_DRY_RUN") == "1"
+	docsDir string
+	db      *sql.DB
+	mu      sync.Mutex
+	dryRun  = os.Getenv("AMMIT_DRY_RUN") == "1"
 )
 
 func env(key, fallback string) string {
@@ -468,6 +480,7 @@ var validName = regexp.MustCompile(`^[\w.:/-]{1,120}$`)
 
 func main() {
 	dbPath := env("AMMIT_DB", "/data/ammit.db")
+	docsDir = env("AMMIT_DOCS", strings.TrimSuffix(dbPath, "/"+lastSegment(dbPath))+"/documents")
 	confPath := env("AMMIT_CONFIG", "/config/limits.yml")
 	port := env("AMMIT_PORT", "8099")
 	tick, _ := strconv.Atoi(env("AMMIT_TICK", "20"))
@@ -490,6 +503,10 @@ func main() {
 			if len(conf) > 0 {
 				weigh(conf)
 				pumpQueue(conf)
+				// Every tick: deciding whether there is anything to archive is one
+				// indexed count, and an hourly guard only made it harder to tell
+				// whether archiving works at all.
+				archive(conf, dbPath)
 			}
 			time.Sleep(time.Duration(tick) * time.Second)
 		}
@@ -521,6 +538,58 @@ func main() {
 		mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]string{"queued": in.Name})
 	})
+	mux.HandleFunc("POST /documents", func(w http.ResponseWriter, r *http.Request) {
+		// A phase's artefact — a framework map, the requirements, a report. The
+		// body goes to a file and the row keeps the path: a run's map is over a
+		// megabyte, and a database that swallows those is a database nobody
+		// wants to keep for a year.
+		var in struct {
+			Run   string `json:"run"`
+			Kind  string `json:"kind"`
+			Phase string `json:"phase"`
+			Body  string `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Kind == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind and body are required"})
+			return
+		}
+		dir := docsDir + "/" + safeName(in.Run)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		path := fmt.Sprintf("%s/%s-%d", dir, safeName(in.Kind), time.Now().Unix())
+		if err := os.WriteFile(path, []byte(in.Body), 0o644); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		mu.Lock()
+		db.Exec(`INSERT INTO documents (at, run, kind, phase, bytes, path)
+		         VALUES (?,?,?,?,?,?)`,
+			float64(time.Now().UnixNano())/1e9, in.Run, in.Kind, in.Phase,
+			len(in.Body), path)
+		mu.Unlock()
+		writeJSON(w, http.StatusCreated, map[string]any{"path": path, "bytes": len(in.Body)})
+	})
+	mux.HandleFunc("GET /documents", func(w http.ResponseWriter, r *http.Request) {
+		if run := r.URL.Query().Get("run"); run != "" && r.URL.Query().Get("kind") != "" {
+			// The newest of that kind, as the file itself.
+			var path string
+			mu.Lock()
+			err := db.QueryRow(`SELECT path FROM documents WHERE run=? AND kind=?
+			                    ORDER BY id DESC LIMIT 1`, run,
+				r.URL.Query().Get("kind")).Scan(&path)
+			mu.Unlock()
+			if err != nil {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such document"})
+				return
+			}
+			http.ServeFile(w, r, path)
+			return
+		}
+		rows2json(w, `SELECT id, at, run, kind, coalesce(phase,'') phase, bytes, path
+		              FROM documents ORDER BY id DESC LIMIT 200`)
+	})
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "db": dbPath})
 	})
@@ -540,6 +609,96 @@ func main() {
 	log.Printf("ammit: listening on :%s, limits from %s, db %s%s", port, confPath, dbPath,
 		map[bool]string{true: " (dry run)", false: ""}[dryRun])
 	log.Fatal(http.ListenAndServe(":"+port, mux))
+}
+
+// archive moves finished runs older than retention.days into a file of their
+// own, and leaves the live database small.
+//
+// Nothing is thrown away. A month of runs is a couple of hundred megabytes
+// compressed, and an archive is a database like any other: sqlite3 ammit.db
+// "ATTACH 'archive/ammit-2026-08.db' AS old" and the old run is back. Deleting
+// history to keep a dashboard fast is a trade nobody should have to make.
+func archive(conf Config, dbPath string) {
+	days, ok := conf.num("retention", "days")
+	if !ok {
+		return
+	}
+	cutoff := float64(time.Now().Add(-time.Duration(days*24)*time.Hour).UnixNano()) / 1e9
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	var due int
+	if err := db.QueryRow(`SELECT count(*) FROM runs WHERE finished IS NOT NULL
+	                       AND finished < ?`, cutoff).Scan(&due); err != nil || due == 0 {
+		return
+	}
+
+	dir := conf.str("retention", "dir", strings.TrimSuffix(dbPath, lastSegment(dbPath))+"archive")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("ammit: no archive directory (%v)", err)
+		return
+	}
+	name := fmt.Sprintf("%s/ammit-%s.db", dir, time.Now().Format("2006-01"))
+
+	if _, err := db.Exec(`ATTACH DATABASE ? AS archive`, name); err != nil {
+		log.Printf("ammit: could not open the archive (%v)", err)
+		return
+	}
+	defer db.Exec(`DETACH DATABASE archive`)
+
+	for _, ddl := range []string{
+		`CREATE TABLE IF NOT EXISTS archive.runs AS SELECT * FROM runs WHERE 0`,
+		`CREATE TABLE IF NOT EXISTS archive.events AS SELECT * FROM events WHERE 0`,
+		`CREATE TABLE IF NOT EXISTS archive.judgements AS SELECT * FROM judgements WHERE 0`,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			log.Printf("ammit: archive schema (%v)", err)
+			return
+		}
+	}
+
+	moves := []string{
+		`INSERT INTO archive.runs SELECT * FROM runs WHERE finished IS NOT NULL AND finished < ?`,
+		`INSERT INTO archive.events SELECT * FROM events WHERE run IN
+		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
+		`INSERT INTO archive.judgements SELECT * FROM judgements WHERE run IN
+		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
+		`DELETE FROM events WHERE run IN
+		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
+		`DELETE FROM judgements WHERE run IN
+		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
+		`DELETE FROM runs WHERE finished IS NOT NULL AND finished < ?`,
+	}
+	for _, q := range moves {
+		if _, err := db.Exec(q, cutoff); err != nil {
+			log.Printf("ammit: archiving stopped (%v)", err)
+			return
+		}
+	}
+	db.Exec(`VACUUM`)
+	log.Printf("ammit: archived %d run(s) older than %.0f days into %s", due, days, name)
+}
+
+// safeName keeps a run's own name out of the filesystem's business.
+func safeName(s string) string {
+	if s == "" {
+		return "unnamed"
+	}
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+			out = append(out, r)
+		default:
+			out = append(out, '_')
+		}
+	}
+	if len(out) > 80 {
+		out = out[:80]
+	}
+	return string(out)
 }
 
 func lastSegment(path string) string {

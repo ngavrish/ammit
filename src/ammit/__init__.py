@@ -160,6 +160,24 @@ class Run:
     def session(self, agent: str, branch: str = "", model: str = "") -> Session:
         return Session(self, agent, branch, model)
 
+    def document(self, kind: str, body: str, phase: str = "") -> None:
+        """An artefact a phase produced: a map of the codebase, the requirements,
+        a report.
+
+        The body is written to a file and the row keeps the path — a framework
+        map is over a megabyte, and a database that swallows one per run is a
+        database nobody wants to keep for a year. Sent synchronously, because a
+        document is worth the wait a turn is not."""
+        payload = json.dumps({"run": self.id, "kind": kind, "phase": phase,
+                              "body": body}).encode()
+        req = urllib.request.Request(f"{_ENDPOINT}/documents", data=payload,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        try:
+            urllib.request.urlopen(req, timeout=max(_TIMEOUT, 30)).read()
+        except (urllib.error.URLError, OSError) as exc:
+            print(f"ammit: document {kind} not stored ({exc})", flush=True)
+
     def note(self, text: str, **fields) -> None:
         send("note", run=self.id, text=text[:2000], **fields)
 
