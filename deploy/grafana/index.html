@@ -76,6 +76,11 @@
           search.style.left = '50%';
           search.style.top = '50%';
           search.style.transform = 'translate(-50%, -50%)';
+          // Twice Grafana's own width. Doubling the outer wrapper leaves the
+          // inner input at its default width, uncentered inside a bigger box —
+          // the actual input-wrapper is the one that has to grow.
+          var box = search.querySelector('[class*="input-wrapper"]');
+          if (box) box.style.width = (2 * box.getBoundingClientRect().width) + 'px';
         }
         var pending = false;
         function schedule() {
