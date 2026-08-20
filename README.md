@@ -45,6 +45,21 @@ No dependencies. Every send is best-effort and off the caller's thread, so a
 server that is down costs the pipeline milliseconds. Point it somewhere with
 `AMMIT_URL`; silence it entirely with `AMMIT_DISABLE=1`.
 
+## Clients
+
+One call in the pipeline's language, and none of them can slow it down: every
+send is fire-and-forget.
+
+| language | how |
+|---|---|
+| Python | `pip install ammit` — `ammit.Run(...)` |
+| Go | `clients/go` — `ammit.NewRun(...)` |
+| TypeScript / JavaScript | `clients/typescript/ammit.ts` — `new Run(...)` |
+| anything else | `clients/shell/ammit.sh` — `ammit_turn`, `ammit_spend`, `ammit_run_finish` |
+
+The shell client exists for the steps inside a pipeline that are shell scripts,
+where a hang is just as likely and just as invisible.
+
 ## The server
 
 ```bash
@@ -55,8 +70,8 @@ docker run -p 8099:8099 \
   ghcr.io/ngavrish/ammit
 ```
 
-Keeps every event, weighs on a tick, acts by running a command. State is one
-sqlite file.
+One Go binary, one sqlite file. Keeps every event, weighs on a tick, acts by
+running a command.
 
 ## The scales
 
