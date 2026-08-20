@@ -41,9 +41,9 @@ actions:
   on_run_timeout: stop_run
   on_usd: stop_run
   on_phase_timeout: stop_phase
-  on_session_timeout: stop_session
+  on_session_timeout: retry_session
   on_turn_timeout: restart_worker
-  on_request_timeout: stop_session
+  on_request_timeout: retry_session
   on_memory: warn
   on_start: start_run
 
@@ -59,6 +59,14 @@ commands:
   stop_run: docker exec {worker} sh -c "touch /runs/{name}/.cancel"
   stop_phase: docker exec {worker} sh -c "touch /runs/{name}/.cancel.phase.{phase}"
   stop_session: docker exec {worker} sh -c "touch /runs/{name}/.cancel.session.{agent}"
+  stop_branch: docker exec {worker} sh -c "touch /runs/{name}/.cancel.branch.{branch}"
+  # And the other half: start that one thing again instead of abandoning it.
+  # Fires once — the runner eats the marker — and gives up after RUN_RETRY_MAX
+  # attempts, because a retry that never gives up is the same outage with more
+  # billing.
+  retry_phase: docker exec {worker} sh -c "touch /runs/{name}/.retry.phase.{phase}"
+  retry_branch: docker exec {worker} sh -c "touch /runs/{name}/.retry.branch.{branch}"
+  retry_session: docker exec {worker} sh -c "touch /runs/{name}/.retry.session.{agent}"
   start_run: curl -sS -X POST {starter} -H "Content-Type: application/json" -d {payload}
 
 context:

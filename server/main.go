@@ -361,6 +361,17 @@ func openRuns() []openRun {
 // The client reports a turn per exchange, so silence inside a live run is a turn
 // that has not come back — which is the failure this whole service was written
 // for, and the one nothing inside the pipeline could see.
+// lastBranch is the branch of the newest event of this run, or "" if this run
+// never fanned out.
+func lastBranch(run string) string {
+	mu.Lock()
+	defer mu.Unlock()
+	var branch string
+	db.QueryRow(`SELECT coalesce(branch,'') FROM events WHERE run=? AND ifnull(branch,'') <> ''
+	             ORDER BY id DESC LIMIT 1`, run).Scan(&branch)
+	return branch
+}
+
 func quietFor(run string) (float64, string, string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -450,7 +461,10 @@ func recordLimits(conf Config) {
 func weigh(conf Config) {
 	for _, r := range openRuns() {
 		age := float64(time.Now().UnixNano())/1e9 - r.started
-		ctx := map[string]string{"run": r.run, "name": r.name}
+		ctx := map[string]string{"run": r.run, "name": r.name,
+			// Which fan-out branch the run was last heard from, so a command can
+			// name one branch instead of taking the whole run down with it.
+			"branch": lastBranch(r.run)}
 		for k, v := range conf["context"] {
 			ctx[k] = v
 		}
