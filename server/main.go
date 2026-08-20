@@ -491,8 +491,18 @@ func weigh(conf Config) {
 		if limit, ok := conf.num("timeouts", "turn"); ok {
 			if quiet, agent, phase := quietFor(r.run); quiet > limit &&
 				!recently("timeouts.turn", r.run, limit) {
+				// When a whole run goes quiet, the last thing that spoke is the
+				// thing that stopped speaking — so this can be aimed at that one
+				// session rather than at the container around it. Restarting the
+				// container was the old answer, and it treats one wedged agent by
+				// killing every branch beside it and the run they belong to.
 				action := conf.str("actions", "on_turn_timeout", "warn")
 				ctx["agent"], ctx["phase"] = agent, phase
+				if agent == "" {
+					// Nothing to aim at: whatever spoke last did not name an
+					// agent. Then, and only then, the blunt instrument.
+					action = conf.str("actions", "on_turn_timeout_blind", "restart_worker")
+				}
 				judge("turn", r.run, strings.TrimSpace(agent+" "+phase), "timeouts.turn",
 					limit, quiet, action, act(action, conf, ctx))
 			}

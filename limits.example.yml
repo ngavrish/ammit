@@ -42,7 +42,11 @@ actions:
   on_usd: stop_run
   on_phase_timeout: stop_phase
   on_session_timeout: retry_session
-  on_turn_timeout: restart_worker
+  # The run went quiet everywhere. Whatever spoke last is what stopped speaking,
+  # so aim at that session; only when the last thing said names no agent is
+  # there nothing left but restarting the container.
+  on_turn_timeout: retry_session
+  on_turn_timeout_blind: restart_worker
   on_request_timeout: retry_session
   on_memory: warn
   on_start: start_run
