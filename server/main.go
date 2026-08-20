@@ -442,19 +442,27 @@ var reserved = map[string]bool{
 	"request_tool": true, "turn": true,
 }
 
-// spanIsOrphaned says whether this request belongs to a session that has since
-// ended — which makes it a lost event rather than a hanging call.
-func spanIsOrphaned(run, request string) bool {
+// spanFacts is who opened this wait, on which branch, and when.
+func spanFacts(run, request string) (string, string, float64) {
 	mu.Lock()
 	defer mu.Unlock()
 	var at float64
 	var agent, branch string
-	if err := db.QueryRow(`SELECT at, coalesce(agent,''), coalesce(branch,'')
-	                       FROM events WHERE run=? AND kind='request_start' AND session=?
-	                       ORDER BY id DESC LIMIT 1`, run, request).
-		Scan(&at, &agent, &branch); err != nil || agent == "" {
+	db.QueryRow(`SELECT at, coalesce(agent,''), coalesce(branch,'')
+	             FROM events WHERE run=? AND kind='request_start' AND session=?
+	             ORDER BY id DESC LIMIT 1`, run, request).Scan(&at, &agent, &branch)
+	return agent, branch, at
+}
+
+// spanIsOrphaned says whether this request belongs to a session that has since
+// ended — which makes it a lost event rather than a hanging call.
+func spanIsOrphaned(run, request string) bool {
+	agent, branch, at := spanFacts(run, request)
+	if agent == "" {
 		return false
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	var ended int
 	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='session_end'
 	             AND coalesce(agent,'')=? AND coalesce(branch,'')=? AND at>=?`,
@@ -706,7 +714,12 @@ func weigh(conf Config) {
 				}
 				limit = against
 				action := conf.str("actions", "on_request_timeout", "restart_worker")
-				ctx["request"] = request
+				// Who to aim at, not just what is late. Without this the command
+				// went out with "{agent}" in it, unsubstituted, and asked the
+				// worker to retry a session by that literal name — which matched
+				// nothing, so a real hang would have been answered with a no-op.
+				who, _, _ := spanFacts(r.run, request)
+				ctx["request"], ctx["agent"] = request, who
 				judge("request", r.run, request, rule, against, age,
 					action, act(action, conf, ctx))
 			}
