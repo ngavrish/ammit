@@ -25,8 +25,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, rule || ': ' || coalesce(observed,'?') || ' vs ' || coalesce(threshold,'?') || ' -> ' || action AS text FROM judgements WHERE action <> 'started' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, rule || ': ' || coalesce(observed,'?') || ' vs ' || coalesce(threshold,'?') || ' -> ' || action AS text FROM judgements WHERE action <> 'started' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, rule || ': ' || coalesce(observed,'?') || ' vs ' || coalesce(threshold,'?') || ' -> ' || action AS text FROM judgements WHERE action <> 'started' ORDER BY at",
+     "queryText": "SELECT at AS time, rule || ': ' || coalesce(observed,'?') || ' vs ' || coalesce(threshold,'?') || ' -> ' || action AS text FROM judgements WHERE action <> 'started' ORDER BY at"
     }
    },
    {
@@ -42,8 +42,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT started*1000 AS time, name || ' started' AS text FROM runs ORDER BY started",
-     "queryText": "SELECT started*1000 AS time, name || ' started' AS text FROM runs ORDER BY started"
+     "rawQueryText": "SELECT started AS time, name || ' started' AS text FROM runs ORDER BY started",
+     "queryText": "SELECT started AS time, name || ' started' AS text FROM runs ORDER BY started"
     }
    },
    {
@@ -59,8 +59,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name || ' set to ' || value AS text FROM (SELECT at, name, value, lag(value) OVER (PARTITION BY name ORDER BY at) AS prev FROM limits) WHERE prev IS NULL OR prev <> value ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name || ' set to ' || value AS text FROM (SELECT at, name, value, lag(value) OVER (PARTITION BY name ORDER BY at) AS prev FROM limits) WHERE prev IS NULL OR prev <> value ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name || ' set to ' || value AS text FROM (SELECT at, name, value, lag(value) OVER (PARTITION BY name ORDER BY at) AS prev FROM limits) WHERE prev IS NULL OR prev <> value ORDER BY at",
+     "queryText": "SELECT at AS time, name || ' set to ' || value AS text FROM (SELECT at, name, value, lag(value) OVER (PARTITION BY name ORDER BY at) AS prev FROM limits) WHERE prev IS NULL OR prev <> value ORDER BY at"
     }
    }
   ]
@@ -165,16 +165,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT e.at*1000 AS time, r.name AS metric, sum(json_extract(e.payload,'$.usd')) OVER (PARTITION BY e.run ORDER BY e.at) AS value FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' ORDER BY e.at",
-     "queryText": "SELECT e.at*1000 AS time, r.name AS metric, sum(json_extract(e.payload,'$.usd')) OVER (PARTITION BY e.run ORDER BY e.at) AS value FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' ORDER BY e.at"
+     "rawQueryText": "SELECT e.at AS time, r.name AS metric, sum(json_extract(e.payload,'$.usd')) OVER (PARTITION BY e.run ORDER BY e.at) AS value FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' ORDER BY e.at",
+     "queryText": "SELECT e.at AS time, r.name AS metric, sum(json_extract(e.payload,'$.usd')) OVER (PARTITION BY e.run ORDER BY e.at) AS value FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' ORDER BY e.at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at"
     }
    ]
   },
@@ -265,16 +265,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT e.at*1000 AS time, r.name AS metric, count(*) OVER (PARTITION BY e.run ORDER BY e.at) AS value FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'turn' ORDER BY e.at",
-     "queryText": "SELECT e.at*1000 AS time, r.name AS metric, count(*) OVER (PARTITION BY e.run ORDER BY e.at) AS value FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'turn' ORDER BY e.at"
+     "rawQueryText": "SELECT e.at AS time, r.name AS metric, count(*) OVER (PARTITION BY e.run ORDER BY e.at) AS value FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'turn' ORDER BY e.at",
+     "queryText": "SELECT e.at AS time, r.name AS metric, count(*) OVER (PARTITION BY e.run ORDER BY e.at) AS value FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'turn' ORDER BY e.at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.turns_per_run' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.turns_per_run' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.turns_per_run' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.turns_per_run' ORDER BY at"
     }
    ]
   },
@@ -365,16 +365,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT CAST(e.at/60 AS INTEGER)*60000 AS time, r.name AS metric, max(e.at - r.started) AS value FROM events e JOIN runs r ON r.run = e.run WHERE r.started IS NOT NULL GROUP BY 1, 2 ORDER BY 1",
-     "queryText": "SELECT CAST(e.at/60 AS INTEGER)*60000 AS time, r.name AS metric, max(e.at - r.started) AS value FROM events e JOIN runs r ON r.run = e.run WHERE r.started IS NOT NULL GROUP BY 1, 2 ORDER BY 1"
+     "rawQueryText": "SELECT CAST(e.at/60 AS INTEGER)*60 AS time, r.name AS metric, max(e.at - r.started) AS value FROM events e JOIN runs r ON r.run = e.run WHERE r.started IS NOT NULL GROUP BY 1, 2 ORDER BY 1",
+     "queryText": "SELECT CAST(e.at/60 AS INTEGER)*60 AS time, r.name AS metric, max(e.at - r.started) AS value FROM events e JOIN runs r ON r.run = e.run WHERE r.started IS NOT NULL GROUP BY 1, 2 ORDER BY 1"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.run' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.run' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.run' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.run' ORDER BY at"
     }
    ]
   },
@@ -465,8 +465,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, sum(idle) OVER (PARTITION BY run ORDER BY at) AS value FROM ( SELECT e.at AS at, e.run AS run, r.name AS name, CASE WHEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) > 120 THEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) ELSE 0 END AS idle FROM events e JOIN runs r ON r.run = e.run WHERE e.run IS NOT NULL) ORDER BY 1",
-     "queryText": "SELECT at*1000 AS time, name AS metric, sum(idle) OVER (PARTITION BY run ORDER BY at) AS value FROM ( SELECT e.at AS at, e.run AS run, r.name AS name, CASE WHEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) > 120 THEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) ELSE 0 END AS idle FROM events e JOIN runs r ON r.run = e.run WHERE e.run IS NOT NULL) ORDER BY 1"
+     "rawQueryText": "SELECT at AS time, name AS metric, sum(idle) OVER (PARTITION BY run ORDER BY at) AS value FROM ( SELECT e.at AS at, e.run AS run, r.name AS name, CASE WHEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) > 120 THEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) ELSE 0 END AS idle FROM events e JOIN runs r ON r.run = e.run WHERE e.run IS NOT NULL) ORDER BY 1",
+     "queryText": "SELECT at AS time, name AS metric, sum(idle) OVER (PARTITION BY run ORDER BY at) AS value FROM ( SELECT e.at AS at, e.run AS run, r.name AS name, CASE WHEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) > 120 THEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) ELSE 0 END AS idle FROM events e JOIN runs r ON r.run = e.run WHERE e.run IS NOT NULL) ORDER BY 1"
     }
    ]
   },
@@ -569,16 +569,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'request_end' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'request_end' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'request_end' ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'request_end' ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' ORDER BY at"
     }
    ]
   },
@@ -669,8 +669,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT CAST(at/60 AS INTEGER)*60000 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0 GROUP BY 1, 2 ORDER BY 1",
-     "queryText": "SELECT CAST(at/60 AS INTEGER)*60000 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0 GROUP BY 1, 2 ORDER BY 1"
+     "rawQueryText": "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0 GROUP BY 1, 2 ORDER BY 1",
+     "queryText": "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0 GROUP BY 1, 2 ORDER BY 1"
     }
    ]
   },
@@ -761,16 +761,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'no phase') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'request_end' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'no phase') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'request_end' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'request_end' ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'request_end' ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' ORDER BY at"
     }
    ]
   },
@@ -798,8 +798,8 @@
      "timeColumns": [
       "at"
      ],
-     "rawQueryText": "SELECT at*1000 AS at, run, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'') AS phase, ROUND(json_extract(payload,'$.seconds'),1) AS seconds, json_extract(payload,'$.error') AS error FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0 ORDER BY id DESC LIMIT 100",
-     "queryText": "SELECT at*1000 AS at, run, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'') AS phase, ROUND(json_extract(payload,'$.seconds'),1) AS seconds, json_extract(payload,'$.error') AS error FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0 ORDER BY id DESC LIMIT 100"
+     "rawQueryText": "SELECT at AS at, run, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'') AS phase, ROUND(json_extract(payload,'$.seconds'),1) AS seconds, json_extract(payload,'$.error') AS error FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0 ORDER BY id DESC LIMIT 100",
+     "queryText": "SELECT at AS at, run, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'') AS phase, ROUND(json_extract(payload,'$.seconds'),1) AS seconds, json_extract(payload,'$.error') AS error FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0 ORDER BY id DESC LIMIT 100"
     }
    ]
   },
@@ -902,16 +902,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'no phase') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE kind = 'spend' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'no phase') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE kind = 'spend' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE kind = 'spend' ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE kind = 'spend' ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at"
     }
    ]
   },
@@ -1002,8 +1002,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'no phase') AS metric, count(*) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE kind = 'turn' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'no phase') AS metric, count(*) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE kind = 'turn' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, count(*) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE kind = 'turn' ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, count(*) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE kind = 'turn' ORDER BY at"
     }
    ]
   },
@@ -1094,16 +1094,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'phase_end' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'phase_end' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(phase,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'phase_end' ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(phase,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'phase_end' ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' ORDER BY at"
     }
    ]
   },
@@ -1194,16 +1194,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'no phase') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(phase,'') ORDER BY at) AS value FROM events WHERE run IS NOT NULL AND kind IN ('turn','log','session_start','phase_start') ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(phase,''),'no phase') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(phase,'') ORDER BY at) AS value FROM events WHERE run IS NOT NULL AND kind IN ('turn','log','session_start','phase_start') ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(phase,'') ORDER BY at) AS value FROM events WHERE run IS NOT NULL AND kind IN ('turn','log','session_start','phase_start') ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(phase,'') ORDER BY at) AS value FROM events WHERE run IS NOT NULL AND kind IN ('turn','log','session_start','phase_start') ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' ORDER BY at"
     }
    ]
   },
@@ -1294,16 +1294,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT t*1000 AS time, phase AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1",
-     "queryText": "SELECT t*1000 AS time, phase AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1"
+     "rawQueryText": "SELECT t AS time, phase AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1",
+     "queryText": "SELECT t AS time, phase AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at"
     }
    ]
   },
@@ -1394,16 +1394,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT CAST(e.at/60 AS INTEGER)*60000 AS time, coalesce(nullif(e.phase,''),'no phase') AS metric, max(e.at - (SELECT p.at FROM events p WHERE p.kind = 'phase_start' AND p.run = e.run AND p.phase = e.phase AND p.at <= e.at ORDER BY p.at DESC LIMIT 1)) AS value FROM events e WHERE e.run IS NOT NULL AND ifnull(e.phase,'') <> '' GROUP BY 1, 2 ORDER BY 1",
-     "queryText": "SELECT CAST(e.at/60 AS INTEGER)*60000 AS time, coalesce(nullif(e.phase,''),'no phase') AS metric, max(e.at - (SELECT p.at FROM events p WHERE p.kind = 'phase_start' AND p.run = e.run AND p.phase = e.phase AND p.at <= e.at ORDER BY p.at DESC LIMIT 1)) AS value FROM events e WHERE e.run IS NOT NULL AND ifnull(e.phase,'') <> '' GROUP BY 1, 2 ORDER BY 1"
+     "rawQueryText": "SELECT CAST(e.at/60 AS INTEGER)*60 AS time, coalesce(nullif(e.phase,''),'no phase') AS metric, max(e.at - (SELECT p.at FROM events p WHERE p.kind = 'phase_start' AND p.run = e.run AND p.phase = e.phase AND p.at <= e.at ORDER BY p.at DESC LIMIT 1)) AS value FROM events e WHERE e.run IS NOT NULL AND ifnull(e.phase,'') <> '' GROUP BY 1, 2 ORDER BY 1",
+     "queryText": "SELECT CAST(e.at/60 AS INTEGER)*60 AS time, coalesce(nullif(e.phase,''),'no phase') AS metric, max(e.at - (SELECT p.at FROM events p WHERE p.kind = 'phase_start' AND p.run = e.run AND p.phase = e.phase AND p.at <= e.at ORDER BY p.at DESC LIMIT 1)) AS value FROM events e WHERE e.run IS NOT NULL AND ifnull(e.phase,'') <> '' GROUP BY 1, 2 ORDER BY 1"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' ORDER BY at"
     }
    ]
   },
@@ -1506,16 +1506,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE kind = 'spend' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE kind = 'spend' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE kind = 'spend' ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE kind = 'spend' ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY at"
     }
    ]
   },
@@ -1606,8 +1606,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE kind = 'turn' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE kind = 'turn' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE kind = 'turn' ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE kind = 'turn' ORDER BY at"
     }
    ]
   },
@@ -1698,16 +1698,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'session_end' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'session_end' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'session_end' ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind = 'session_end' ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' ORDER BY at"
     }
    ]
   },
@@ -1798,16 +1798,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM events WHERE kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM events WHERE kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at"
+     "rawQueryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM events WHERE kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at",
+     "queryText": "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM events WHERE kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' ORDER BY at"
     }
    ]
   },
@@ -1898,16 +1898,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT t*1000 AS time, agent AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1",
-     "queryText": "SELECT t*1000 AS time, agent AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1"
+     "rawQueryText": "SELECT t AS time, agent AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1",
+     "queryText": "SELECT t AS time, agent AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at"
     }
    ]
   },
@@ -1998,16 +1998,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT CAST(e.at/60 AS INTEGER)*60000 AS time, coalesce(nullif(e.agent,''),'?') AS metric, max(e.at - (SELECT a.at FROM events a WHERE a.kind = 'session_start' AND a.run = e.run AND a.agent = e.agent AND a.at <= e.at ORDER BY a.at DESC LIMIT 1)) AS value FROM events e WHERE e.run IS NOT NULL AND ifnull(e.agent,'') <> '' GROUP BY 1, 2 ORDER BY 1",
-     "queryText": "SELECT CAST(e.at/60 AS INTEGER)*60000 AS time, coalesce(nullif(e.agent,''),'?') AS metric, max(e.at - (SELECT a.at FROM events a WHERE a.kind = 'session_start' AND a.run = e.run AND a.agent = e.agent AND a.at <= e.at ORDER BY a.at DESC LIMIT 1)) AS value FROM events e WHERE e.run IS NOT NULL AND ifnull(e.agent,'') <> '' GROUP BY 1, 2 ORDER BY 1"
+     "rawQueryText": "SELECT CAST(e.at/60 AS INTEGER)*60 AS time, coalesce(nullif(e.agent,''),'?') AS metric, max(e.at - (SELECT a.at FROM events a WHERE a.kind = 'session_start' AND a.run = e.run AND a.agent = e.agent AND a.at <= e.at ORDER BY a.at DESC LIMIT 1)) AS value FROM events e WHERE e.run IS NOT NULL AND ifnull(e.agent,'') <> '' GROUP BY 1, 2 ORDER BY 1",
+     "queryText": "SELECT CAST(e.at/60 AS INTEGER)*60 AS time, coalesce(nullif(e.agent,''),'?') AS metric, max(e.at - (SELECT a.at FROM events a WHERE a.kind = 'session_start' AND a.run = e.run AND a.agent = e.agent AND a.at <= e.at ORDER BY a.at DESC LIMIT 1)) AS value FROM events e WHERE e.run IS NOT NULL AND ifnull(e.agent,'') <> '' GROUP BY 1, 2 ORDER BY 1"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' ORDER BY at"
     }
    ]
   },
@@ -2110,16 +2110,16 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.memory_mb') AS value FROM events WHERE kind = 'sample' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.memory_mb') AS value FROM events WHERE kind = 'sample' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.memory_mb') AS value FROM events WHERE kind = 'sample' ORDER BY at",
+     "queryText": "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.memory_mb') AS value FROM events WHERE kind = 'sample' ORDER BY at"
     },
     {
      "queryType": "time series",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' ORDER BY at"
     }
    ]
   },
@@ -2210,8 +2210,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.cpu_pct') AS value FROM events WHERE kind = 'sample' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.cpu_pct') AS value FROM events WHERE kind = 'sample' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.cpu_pct') AS value FROM events WHERE kind = 'sample' ORDER BY at",
+     "queryText": "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.cpu_pct') AS value FROM events WHERE kind = 'sample' ORDER BY at"
     }
    ]
   },
@@ -2302,8 +2302,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT at*1000 AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.pids') AS value FROM events WHERE kind = 'sample' ORDER BY at",
-     "queryText": "SELECT at*1000 AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.pids') AS value FROM events WHERE kind = 'sample' ORDER BY at"
+     "rawQueryText": "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.pids') AS value FROM events WHERE kind = 'sample' ORDER BY at",
+     "queryText": "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.pids') AS value FROM events WHERE kind = 'sample' ORDER BY at"
     }
    ]
   },
@@ -2345,8 +2345,8 @@
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT CAST(at/60 AS INTEGER)*60000 AS time, coalesce(nullif(branch,''),'head') AS metric, coalesce(nullif(phase,''), agent, '?') AS value FROM events WHERE kind IN ('turn','log','session_start') GROUP BY 1, 2 ORDER BY 1",
-     "queryText": "SELECT CAST(at/60 AS INTEGER)*60000 AS time, coalesce(nullif(branch,''),'head') AS metric, coalesce(nullif(phase,''), agent, '?') AS value FROM events WHERE kind IN ('turn','log','session_start') GROUP BY 1, 2 ORDER BY 1"
+     "rawQueryText": "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(branch,''),'head') AS metric, coalesce(nullif(phase,''), agent, '?') AS value FROM events WHERE kind IN ('turn','log','session_start') GROUP BY 1, 2 ORDER BY 1",
+     "queryText": "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(branch,''),'head') AS metric, coalesce(nullif(phase,''), agent, '?') AS value FROM events WHERE kind IN ('turn','log','session_start') GROUP BY 1, 2 ORDER BY 1"
     }
    ]
   },
@@ -2413,8 +2413,8 @@
      "timeColumns": [
       "at"
      ],
-     "rawQueryText": "SELECT at*1000 AS at, run, coalesce(nullif(phase,''),'') AS phase, coalesce(nullif(agent,''),'') AS agent, CAST(gap/60 AS INTEGER) AS minutes FROM (SELECT at, run, phase, agent, at - lag(at) OVER (PARTITION BY run ORDER BY at) AS gap FROM events WHERE run IS NOT NULL) WHERE gap > 300 ORDER BY at DESC LIMIT 50",
-     "queryText": "SELECT at*1000 AS at, run, coalesce(nullif(phase,''),'') AS phase, coalesce(nullif(agent,''),'') AS agent, CAST(gap/60 AS INTEGER) AS minutes FROM (SELECT at, run, phase, agent, at - lag(at) OVER (PARTITION BY run ORDER BY at) AS gap FROM events WHERE run IS NOT NULL) WHERE gap > 300 ORDER BY at DESC LIMIT 50"
+     "rawQueryText": "SELECT at AS at, run, coalesce(nullif(phase,''),'') AS phase, coalesce(nullif(agent,''),'') AS agent, CAST(gap/60 AS INTEGER) AS minutes FROM (SELECT at, run, phase, agent, at - lag(at) OVER (PARTITION BY run ORDER BY at) AS gap FROM events WHERE run IS NOT NULL) WHERE gap > 300 ORDER BY at DESC LIMIT 50",
+     "queryText": "SELECT at AS at, run, coalesce(nullif(phase,''),'') AS phase, coalesce(nullif(agent,''),'') AS agent, CAST(gap/60 AS INTEGER) AS minutes FROM (SELECT at, run, phase, agent, at - lag(at) OVER (PARTITION BY run ORDER BY at) AS gap FROM events WHERE run IS NOT NULL) WHERE gap > 300 ORDER BY at DESC LIMIT 50"
     }
    ]
   },
@@ -2442,8 +2442,8 @@
      "timeColumns": [
       "at"
      ],
-     "rawQueryText": "SELECT at*1000 AS at, scope, coalesce(subject,'') AS subject, rule, threshold, observed, action, coalesce(outcome,'') AS outcome FROM judgements ORDER BY id DESC LIMIT 200",
-     "queryText": "SELECT at*1000 AS at, scope, coalesce(subject,'') AS subject, rule, threshold, observed, action, coalesce(outcome,'') AS outcome FROM judgements ORDER BY id DESC LIMIT 200"
+     "rawQueryText": "SELECT at AS at, scope, coalesce(subject,'') AS subject, rule, threshold, observed, action, coalesce(outcome,'') AS outcome FROM judgements ORDER BY id DESC LIMIT 200",
+     "queryText": "SELECT at AS at, scope, coalesce(subject,'') AS subject, rule, threshold, observed, action, coalesce(outcome,'') AS outcome FROM judgements ORDER BY id DESC LIMIT 200"
     }
    ]
   },
@@ -2471,8 +2471,8 @@
      "timeColumns": [
       "started"
      ],
-     "rawQueryText": "SELECT started*1000 AS started, name, coalesce(verdict,'running') AS verdict, CAST((coalesce(finished, strftime('%s','now')) - started)/60 AS INTEGER) AS minutes, ROUND(coalesce(usd,0),2) AS usd, coalesce(turns,0) AS turns, coalesce(summary,'') AS summary FROM runs ORDER BY started DESC LIMIT 50",
-     "queryText": "SELECT started*1000 AS started, name, coalesce(verdict,'running') AS verdict, CAST((coalesce(finished, strftime('%s','now')) - started)/60 AS INTEGER) AS minutes, ROUND(coalesce(usd,0),2) AS usd, coalesce(turns,0) AS turns, coalesce(summary,'') AS summary FROM runs ORDER BY started DESC LIMIT 50"
+     "rawQueryText": "SELECT started AS started, name, coalesce(verdict,'running') AS verdict, CAST((coalesce(finished, strftime('%s','now')) - started)/60 AS INTEGER) AS minutes, ROUND(coalesce(usd,0),2) AS usd, coalesce(turns,0) AS turns, coalesce(summary,'') AS summary FROM runs ORDER BY started DESC LIMIT 50",
+     "queryText": "SELECT started AS started, name, coalesce(verdict,'running') AS verdict, CAST((coalesce(finished, strftime('%s','now')) - started)/60 AS INTEGER) AS minutes, ROUND(coalesce(usd,0),2) AS usd, coalesce(turns,0) AS turns, coalesce(summary,'') AS summary FROM runs ORDER BY started DESC LIMIT 50"
     }
    ]
   },
@@ -2500,8 +2500,8 @@
      "timeColumns": [
       "changed"
      ],
-     "rawQueryText": "SELECT name, value, at*1000 AS changed FROM limits WHERE id IN (SELECT max(id) FROM limits GROUP BY name) ORDER BY name",
-     "queryText": "SELECT name, value, at*1000 AS changed FROM limits WHERE id IN (SELECT max(id) FROM limits GROUP BY name) ORDER BY name"
+     "rawQueryText": "SELECT name, value, at AS changed FROM limits WHERE id IN (SELECT max(id) FROM limits GROUP BY name) ORDER BY name",
+     "queryText": "SELECT name, value, at AS changed FROM limits WHERE id IN (SELECT max(id) FROM limits GROUP BY name) ORDER BY name"
     }
    ]
   }
