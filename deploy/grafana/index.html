@@ -57,9 +57,7 @@
          the DOM write whenever the box is already where it belongs. -->
     <script nonce="[[.Nonce]]">
       (function () {
-        function relocate() {
-          var toolbar = document.querySelector('[data-testid="data-testid Nav toolbar"]');
-          if (!toolbar) return;
+        function relocateSearch(toolbar) {
           var wrappers = document.querySelectorAll('[data-testid="wrapper"]');
           var search = null;
           for (var i = 0; i < wrappers.length; i++) {
@@ -81,14 +79,15 @@
           // the actual input-wrapper is the one that has to grow.
           var box = search.querySelector('[class*="input-wrapper"]');
           if (box) box.style.width = (2 * box.getBoundingClientRect().width) + 'px';
-
+        }
+        function scrubActions(toolbar) {
           // Only this dashboard: Share, Edit and the collapse arrow give way
           // to a single kiosk-mode link, in the same actions container the
-          // search box was just excused from having to share. Re-hides on
-          // every call, not just the first: the refresh cycle re-renders
-          // that Share/Edit wrapper and React reasserts its own style prop
-          // over it, quietly reversing a display:none set once and never
-          // touched again.
+          // search box was just excused from having to share. Unconditional,
+          // every call — this used to sit after relocateSearch's own early
+          // return, which is true forever once the search box has been moved
+          // once, so this whole block went dead after the first tick and
+          // Share/Edit came back the moment anything else re-rendered them.
           if (!/^\/d\/ammit\//.test(location.pathname)) return;
           var actions = toolbar.querySelector('[class*="NavToolbar-actions"]');
           if (!actions) return;
@@ -115,6 +114,12 @@
           kioskLink.style.cssText = 'display:flex;align-items:center;padding:0 10px;' +
             'color:#ccccdc;font:12px sans-serif;text-decoration:none;white-space:nowrap;height:32px';
           actions.appendChild(kioskLink);
+        }
+        function relocate() {
+          var toolbar = document.querySelector('[data-testid="data-testid Nav toolbar"]');
+          if (!toolbar) return;
+          relocateSearch(toolbar);
+          scrubActions(toolbar);
         }
         var pending = false;
         function schedule() {
