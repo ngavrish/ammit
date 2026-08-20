@@ -119,7 +119,7 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
 </style></head><body>
 <header><h1>ammit</h1><span class="sub">the scales, the record, and the eating</span>
 <nav class="tabs" role="tablist">
-  <button id="tab-scales" role="tab" aria-selected="true" onclick="tab('scales')">the scales</button>
+  <button id="tab-scales" role="tab" aria-selected="true" onclick="tab('scales')">scales</button>
   <button id="tab-charts" role="tab" aria-selected="false" onclick="tab('charts')">charts</button>
 </nav></header>
 <main id="scales">
