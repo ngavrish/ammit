@@ -432,7 +432,10 @@ def ann(name, colour, sql):
 
 dash = {
     "uid": "ammit", "title": "ammit", "tags": ["ammit"], "timezone": "browser",
-    "refresh": "30s", "time": {"from": "now-12h", "to": "now"},
+    # A run may not exceed timeouts.run, four hours as it stands, so twelve hours
+    # of window is three quarters of empty chart to the left of every line. Six
+    # covers the longest run this is allowed to watch, with room either side.
+    "refresh": "30s", "time": {"from": "now-6h", "to": "now"},
     "annotations": {"list": [
         ann("limits crossed", "red",
             """SELECT at AS time, rule || ': ' || coalesce(observed,'?') || ' vs '

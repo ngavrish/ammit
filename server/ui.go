@@ -155,14 +155,21 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
 <script>
 // The charts load the first time somebody asks for them: a tab nobody opened
 // should not be polling Grafana every thirty seconds behind the page.
-const CHARTS = "{{charts}}/d/ammit/ammit?kiosk&theme=dark&from=now-12h&to=now&refresh=30s";
+const CHARTS = "{{charts}}/d/ammit/ammit?kiosk&theme=dark&refresh=30s";
+let earliest = 0;
+function chartsURL() {
+  // A little before the first run, a little after now: the whole record and no
+  // more. Falls back to six hours when there is nothing to measure against.
+  const from = earliest ? Math.round((earliest - 120) * 1000) : "now-6h";
+  return CHARTS + "&from=" + from + "&to=now";
+}
 function tab(which) {
   for (const name of ["scales", "charts"]) {
     document.getElementById(name).hidden = name !== which;
     document.getElementById("tab-" + name).setAttribute("aria-selected", name === which);
   }
   const f = document.getElementById("charts-frame");
-  if (which === "charts" && f.getAttribute("src") === "about:blank") f.src = CHARTS;
+  if (which === "charts" && f.getAttribute("src") === "about:blank") f.src = chartsURL();
   history.replaceState(null, "", which === "charts" ? "#charts" : "#");
 }
 if (location.hash === "#charts") addEventListener("DOMContentLoaded", () => tab("charts"));
@@ -297,6 +304,11 @@ function table(el, cols, rows, cell) {
 async function refresh() {
   const [runs, judgements, queue] = await Promise.all(
     [j("/runs"), j("/judgements"), j("/queue")]);
+  // The charts open on the runs there are, not on a fixed twelve hours. A run
+  // three hours old inside a twelve hour window is three quarters of empty
+  // chart with the line squeezed against the right edge.
+  const started = runs.map(r => r.started).filter(Boolean);
+  if (started.length) earliest = Math.min(...started);
   table(document.getElementById("runs"),
     ["run", "started", "verdict", "minutes", "usd", "turns", "summary"], runs, r => [
       esc(r.name), when(r.started),
