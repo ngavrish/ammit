@@ -13,7 +13,8 @@ timeouts:
   # One wait for the model: ask, and get an answer back. The only limit that
   # can catch a call that never returns, because nothing inside the process
   # notices — there is no error to log and no retry to fire.
-  request: 900
+  request: 600             # a wait for the model itself; nothing observed has passed 3 min
+  request_tool: 1800       # a wait that covers a tool the agent asked for — a suite run is twenty minutes
   turn: 600                # one exchange — the hang nothing inside the run catches
 
 retention:

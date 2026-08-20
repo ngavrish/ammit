@@ -386,6 +386,30 @@ func lastBranch(run string) string {
 	return branch
 }
 
+// afterTool says whether this wait is one the agent caused by asking for a
+// tool. The session logs the tool call, then waits for it to finish, so the
+// newest thing said by this session before the wait began settles it.
+func afterTool(run, request string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	var started float64
+	var agent string
+	if err := db.QueryRow(`SELECT at, coalesce(agent,'') FROM events
+	                       WHERE run=? AND kind='request_start' AND session=?
+	                       ORDER BY id DESC LIMIT 1`, run, request).
+		Scan(&started, &agent); err != nil {
+		return false
+	}
+	var level string
+	if err := db.QueryRow(`SELECT coalesce(json_extract(payload,'$.level'),'')
+	                       FROM events WHERE run=? AND kind='log' AND agent=? AND at<=?
+	                       ORDER BY id DESC LIMIT 1`, run, agent, started).
+		Scan(&level); err != nil {
+		return false
+	}
+	return level == "tool"
+}
+
 func quietFor(run string) (float64, string, string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -526,13 +550,28 @@ func weigh(conf Config) {
 		// retry to trigger, and the two-hour silence that cost a run its
 		// afternoon looked exactly like a long think.
 		if limit, ok := conf.num("timeouts", "request"); ok {
+			// Two limits, because a wait is two different things wearing one
+			// name. Between "asked the model" and "the model answered" nothing
+			// observed here has ever taken three minutes. But the same gap also
+			// covers a tool the agent asked for, and one of those tools runs a
+			// browser through a suite for twenty minutes — cut that at the
+			// model's limit and the watchdog is breaking the work it guards.
+			//
+			// Which one this is comes from what the session said last: a tool
+			// call is logged before the wait it causes.
+			tool, hasTool := conf.num("timeouts", "request_tool")
 			for request, age := range openSpans(r.run, "request_start", "request_end", "session") {
-				if age <= limit || recently("timeouts.request", request, limit) {
+				rule, against := "timeouts.request", limit
+				if hasTool && afterTool(r.run, request) {
+					rule, against = "timeouts.request_tool", tool
+				}
+				if against <= 0 || age <= against || recently(rule, request, against) {
 					continue
 				}
+				limit = against
 				action := conf.str("actions", "on_request_timeout", "restart_worker")
 				ctx["request"] = request
-				judge("request", r.run, request, "timeouts.request", limit, age,
+				judge("request", r.run, request, rule, against, age,
 					action, act(action, conf, ctx))
 			}
 		}
