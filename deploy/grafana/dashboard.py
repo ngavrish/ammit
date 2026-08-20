@@ -32,6 +32,46 @@ LIMIT_LOOK = {
 
 panels, Y = [], [0]
 
+# Each family keeps a hue and shifts within it, so "planfix" reads as planning
+# gone back over rather than as something unrelated.
+PHASE_COLOURS = [
+    {"type": "value", "options": {
+        "planning":      {"color": "#5794F2", "index": 0},
+        "planfix":       {"color": "#3274D9", "index": 1},
+        "planreview":    {"color": "#8AB8FF", "index": 2},
+        "funcreqs":      {"color": "#CD7F32", "index": 3},
+        "funcreqfix":    {"color": "#A85F1E", "index": 4},
+        "funcreqreview": {"color": "#E5A56B", "index": 5},
+        "claims":        {"color": "#B877D9", "index": 6},
+        "audit":         {"color": "#F2CC0C", "index": 7},
+        "implement":     {"color": "#4FA97C", "index": 8},
+        "report":        {"color": "#FF9830", "index": 9},
+        "?":             {"color": "#4A5568", "index": 10},
+    }},
+    {"type": "value", "options": {
+        "#1":  {"color": "#001F3F", "index": 20},
+        "#2":  {"color": "#CD7F32", "index": 21},
+        "#3":  {"color": "#264653", "index": 22},
+        "#4":  {"color": "#8AB8FF", "index": 23},
+        "#5":  {"color": "#A85F1E", "index": 24},
+        "#6":  {"color": "#4FA97C", "index": 25},
+        "#7":  {"color": "#B877D9", "index": 26},
+        "#8":  {"color": "#F2CC0C", "index": 27},
+        "#9":  {"color": "#E06C5A", "index": 28},
+        "#10": {"color": "#5794F2", "index": 29},
+        "#11": {"color": "#E5A56B", "index": 30},
+        "#12": {"color": "#3274D9", "index": 31},
+    }},
+    {"type": "regex", "options": {"pattern": "^plan",
+     "result": {"color": "#5794F2", "index": 11}}},
+    {"type": "regex", "options": {"pattern": "^funcreq",
+     "result": {"color": "#CD7F32", "index": 12}}},
+    {"type": "regex", "options": {"pattern": ".*",
+     "result": {"color": "#A0AEC0", "index": 13}}},
+]
+
+
+
 
 def one(sql):
     return " ".join(sql.split())
@@ -364,15 +404,31 @@ panels.append({
     "description": "What each branch was doing, minute by minute.",
     "gridPos": {"h": 8, "w": 24, "x": 0, "y": Y[0]}, "datasource": DS,
     "transparent": True,
-    "fieldConfig": {"defaults": {"custom": {"lineWidth": 0, "fillOpacity": 80}},
+    # A colour mode does not help here: the palette colours by field name and
+    # there is one field, "value", so every phase came out the same green. A
+    # discrete string state takes its colour from a mapping and nothing else.
+    # The regexes at the end catch phases added later: a fix belongs to the
+    # family it fixes, and an unnamed one is still not green.
+    "fieldConfig": {"defaults": {"custom": {"lineWidth": 0, "fillOpacity": 85},
+                                 "mappings": PHASE_COLOURS},
                     "overrides": []},
     "options": {"mergeValues": True, "showValue": "auto",
                 "legend": {"displayMode": "list", "placement": "bottom",
                            "showLegend": True}},
-    "targets": [q("""SELECT CAST(at/60 AS INTEGER)*60 AS time,
-                     coalesce(nullif(phase,''), agent, '?') AS value
-                     FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind IN ('turn','log','session_start')
-                     GROUP BY 1 ORDER BY 1""", "table", ("time",))]})
+    # Two lanes, because a phase changing and a run changing look identical on
+    # one. The run lane is numbered in the order they started, so the moment a
+    # band changes there is a new run — which the thin annotation line was too
+    # quiet to say.
+    "targets": [q("""SELECT time, run, phase FROM (
+                       SELECT CAST(e.at/60 AS INTEGER)*60 AS time,
+                              max('#' || n.seq) AS run,
+                              max(coalesce(nullif(e.phase,''), e.agent, '?')) AS phase
+                       FROM events e
+                       LEFT JOIN (SELECT run, dense_rank() OVER (ORDER BY started) AS seq
+                                  FROM runs) n ON n.run = e.run
+                       WHERE e.at*1000 BETWEEN $__from AND $__to
+                         AND e.kind IN ('turn','log','session_start')
+                       GROUP BY 1) ORDER BY time""", "table", ("time",))]})
 Y[0] += 8
 
 # ------------------------------------------------------ where time went
@@ -380,7 +436,8 @@ row("Where the time went")
 
 tbl("Busy and idle, per run",
     "Elapsed against the part of it where nothing happened for more than two minutes.",
-    """SELECT r.name AS run, coalesce(r.verdict,'running') AS verdict,
+    """SELECT r.started AS started, r.finished AS finished, r.name AS run,
+       coalesce(r.verdict,'running') AS verdict,
        CAST((coalesce(r.finished, strftime('%s','now')) - r.started)/60 AS INTEGER) AS elapsed_min,
        CAST(((coalesce(r.finished, strftime('%s','now')) - r.started) - coalesce(g.idle,0))/60
             AS INTEGER) AS busy_min,
@@ -394,7 +451,7 @@ tbl("Busy and idle, per run",
                             THEN at - lag(at) OVER (PARTITION BY run ORDER BY at)
                             ELSE 0 END AS gap
            FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL) GROUP BY run) g ON g.run = r.run
-       ORDER BY r.started DESC LIMIT 50""", 0, [])
+       ORDER BY r.started DESC LIMIT 50""", 0, ["started", "finished"])
 
 tbl("The longest gaps",
     "Every stretch over five minutes where nothing was reported, newest first. What was "
@@ -413,11 +470,12 @@ tbl("What ammit did",
        FROM judgements ORDER BY id DESC LIMIT 200""", 0, ["at"])
 
 tbl("Runs", "",
-    """SELECT started AS started, name, coalesce(verdict,'running') AS verdict,
+    """SELECT started AS started, finished AS finished, name,
+       coalesce(verdict,'running') AS verdict,
        CAST((coalesce(finished, strftime('%s','now')) - started)/60 AS INTEGER) AS minutes,
        ROUND(coalesce(usd,0),2) AS usd, coalesce(turns,0) AS turns,
        coalesce(summary,'') AS summary FROM runs ORDER BY started DESC LIMIT 50""",
-    12, ["started"])
+    12, ["started", "finished"])
 
 tbl("Limits, as they stand",
     "What every chart above is drawn against, and when it last changed.",
@@ -432,10 +490,11 @@ def ann(name, colour, sql):
 
 dash = {
     "uid": "ammit", "title": "ammit", "tags": ["ammit"], "timezone": "browser",
-    # A run may not exceed timeouts.run, four hours as it stands, so twelve hours
-    # of window is three quarters of empty chart to the left of every line. Six
-    # covers the longest run this is allowed to watch, with room either side.
-    "refresh": "30s", "time": {"from": "now-6h", "to": "now"},
+    # Whatever this says, most of the chart is empty most of the time: a fixed
+    # window cannot match a record that grows. Three hours is the closest fixed
+    # answer to a run as long as this pipeline actually takes. The charts tab
+    # does not use it — it computes the range from the runs it can see.
+    "refresh": "30s", "time": {"from": "now-3h", "to": "now"},
     "annotations": {"list": [
         ann("limits crossed", "red",
             """SELECT at AS time, rule || ': ' || coalesce(observed,'?') || ' vs '
