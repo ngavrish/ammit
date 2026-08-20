@@ -127,6 +127,14 @@
         // body threw here and killed the whole script before it did anything.
         new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
         schedule();
+        // childList only catches nodes being added or removed. The refresh
+        // cycle doesn't do either here — it re-renders the Share/Edit wrapper
+        // in place, React reasserting its own style prop over the display:none
+        // set on it, which is an attribute change no childList observer sees.
+        // Watching attributes across the whole document to catch one wrapper
+        // would fire on every chart animation on the page; a plain heartbeat
+        // is cheaper and does not care which mechanism reverted it.
+        setInterval(relocate, 1000);
       })();
     </script>
   </head>

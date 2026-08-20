@@ -432,6 +432,24 @@ func itemFacts(run, item string) (string, string) {
 	return kind, agent
 }
 
+// heaviestTurn is the largest single prompt this run has sent recently, and who
+// sent it. Recently rather than ever, because a run is judged on what it is
+// doing now: one heavy turn an hour ago is history, and a limit that keeps
+// firing on history cannot be acted on.
+func heaviestTurn(run string) (float64, string, string) {
+	mu.Lock()
+	defer mu.Unlock()
+	since := float64(time.Now().Add(-15*time.Minute).UnixNano()) / 1e9
+	var size float64
+	var who, phase string
+	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.context'),0),
+	                    coalesce(agent,'?'), coalesce(phase,'')
+	             FROM events WHERE run=? AND kind='turn' AND at>=?
+	             ORDER BY coalesce(json_extract(payload,'$.context'),0) DESC
+	             LIMIT 1`, run, since).Scan(&size, &who, &phase)
+	return size, who, phase
+}
+
 // contextPerTurn is what each agent's messages carried, on average, in the
 // sessions of this run that have finished.
 //
@@ -588,6 +606,18 @@ func weigh(conf Config) {
 		//
 		// Measured per session as the context each of its turns carried, which is
 		// what a prompt costs when it is sent again and again.
+		// One turn, as it was sent. The per-session average below says a session
+		// was heavy after it has finished; this says a turn is heavy while the
+		// next one has not been paid for yet.
+		if limit, ok := conf.num("limits", "turn_tokens"); ok && limit > 0 {
+			if size, who, phase := heaviestTurn(r.run); size > limit &&
+				!recently("limits.turn_tokens", r.run+who, 900) {
+				action := conf.str("actions", "on_turn_tokens", "warn")
+				ctx["agent"], ctx["phase"] = who, phase
+				judge("turn", r.run, who, "limits.turn_tokens", limit, size,
+					action, act(action, conf, ctx))
+			}
+		}
 		if limit, ok := conf.num("limits", "context_tokens"); ok && limit > 0 {
 			for who, size := range contextPerTurn(r.run) {
 				if size <= limit || recently("limits.context_tokens", r.run+who, 900) {

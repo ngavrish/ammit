@@ -1550,6 +1550,202 @@
   },
   {
    "type": "timeseries",
+   "title": "What one turn carried, against limits.turn_tokens",
+   "description": "Every turn as it was sent \u2014 the system prompt, whatever was inlined into it, and the conversation so far. The per-session average below is a summary that arrives once the session is over; this is the number while the next turn has not been paid for yet.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 124
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "never",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.context') AS value FROM events WHERE kind = 'turn' AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at",
+     "queryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.context') AS value FROM events WHERE kind = 'turn' AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at"
+    },
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.turn_tokens' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.turn_tokens' AND at*1000 < $__from)) ORDER BY at",
+     "queryText": "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.turn_tokens' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.turn_tokens' AND at*1000 < $__from)) ORDER BY at"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Output per turn, by agent",
+   "description": "What the model actually wrote. Read this beside the chart on the left: three hundred tokens read for every one written is a prompt problem, not a model having a hard think.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 132
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "never",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.tokens_out') AS value FROM events WHERE kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at",
+     "queryText": "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.tokens_out') AS value FROM events WHERE kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
    "title": "What each turn carries, by agent",
    "description": "The context every message of that session was sent with: the system prompt, whatever was inlined into it, and the conversation so far. A conversation raises this honestly as it grows; a document in the prompt raises it from the first turn and never gives it back. That is what this chart is for \u2014 one run carried a 253 KB map in every message and it looked like ordinary work.",
    "transparent": true,
@@ -1557,7 +1753,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 124
+    "y": 140
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1659,7 +1855,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 132
+    "y": 148
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1753,7 +1949,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 140
+    "y": 156
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1847,7 +2043,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 148
+    "y": 164
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1949,7 +2145,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 156
+    "y": 172
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2051,7 +2247,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 164
+    "y": 180
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2153,7 +2349,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 172
+    "y": 188
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2254,7 +2450,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 180
+    "y": 196
    },
    "panels": []
   },
@@ -2267,7 +2463,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 181
+    "y": 197
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2361,7 +2557,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 189
+    "y": 205
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2455,7 +2651,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 197
+    "y": 213
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2549,7 +2745,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 205
+    "y": 221
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2643,7 +2839,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 213
+    "y": 229
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2737,7 +2933,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 221
+    "y": 237
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2766,7 +2962,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 230
+    "y": 246
    },
    "panels": []
   },
@@ -2779,7 +2975,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 231
+    "y": 247
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2881,7 +3077,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 239
+    "y": 255
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2975,7 +3171,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 247
+    "y": 263
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3068,7 +3264,7 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 255
+    "y": 271
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3246,7 +3442,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 263
+    "y": 279
    },
    "panels": []
   },
@@ -3259,7 +3455,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 264
+    "y": 280
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3290,7 +3486,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 273
+    "y": 289
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3320,7 +3516,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 282
+    "y": 298
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3350,7 +3546,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 291
+    "y": 307
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3381,7 +3577,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 300
+    "y": 316
    },
    "datasource": {
     "type": "frser-sqlite-datasource",

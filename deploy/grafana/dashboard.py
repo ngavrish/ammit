@@ -285,6 +285,26 @@ ts("Cost by agent", "Which agent is spending the money.", "currencyUSD", [
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.usd_per_run")], 0)
 
+ts("What one turn carried, against limits.turn_tokens",
+   "Every turn as it was sent — the system prompt, whatever was inlined into it, "
+   "and the conversation so far. The per-session average below is a summary that "
+   "arrives once the session is over; this is the number while the next turn has "
+   "not been paid for yet.", "short", [
+    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric,
+         json_extract(payload,'$.context') AS value
+         FROM events WHERE kind = 'turn'
+         AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at"""),
+    limit_of("limits.turn_tokens")], 0)
+
+ts("Output per turn, by agent",
+   "What the model actually wrote. Read this beside the chart on the left: three "
+   "hundred tokens read for every one written is a prompt problem, not a model "
+   "having a hard think.", "short", [
+    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric,
+         json_extract(payload,'$.tokens_out') AS value
+         FROM events WHERE kind = 'turn'
+         AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at""")], 12)
+
 ts("What each turn carries, by agent",
    "The context every message of that session was sent with: the system prompt, "
    "whatever was inlined into it, and the conversation so far. A conversation "
