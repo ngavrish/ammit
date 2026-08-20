@@ -48,10 +48,12 @@ const page = `<!doctype html>
 body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)}
 header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5rem 2.5rem;
        border-bottom:1px solid var(--bronze-dim);background:var(--deep)}
-/* Centered independent of how wide the title or the tabs are, the way a
-   watermark sits rather than a flex child that shoves its neighbours. */
+/* Centered independent of how wide the title or the tabs are, positioned
+   rather than a flex child that would shove its neighbours. Full strength,
+   not dimmed — the reference never fades this mark, and doing it here read
+   as washed out next to the real thing. */
 .brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-       display:flex;align-items:center;gap:.5rem;opacity:.85;pointer-events:none}
+       display:flex;align-items:center;gap:.5rem;pointer-events:none}
 .brand svg{display:block}
 /* Block children, not <b><br><small> — a bare <br> takes the browser's
    default line-height, which the reference component never touches (it

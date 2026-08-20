@@ -47,6 +47,39 @@
       header:has(> [data-testid="data-testid Nav toolbar"])
         > *:not([data-testid="data-testid Nav toolbar"]) { display: none !important; }
     </style>
+
+    <!-- The search box itself stays, moved down into the breadcrumb row
+         (Home > Dashboards > ammit) rather than deleted with the rest of the
+         hidden row above. Reparented, not cloned: a copy would just be a
+         picture of the box, wired to nothing. Grafana re-renders this part of
+         the toolbar on route changes, which would otherwise undo the move, so
+         a MutationObserver reapplies it — cheap, since the guard below skips
+         the DOM write whenever the box is already where it belongs. -->
+    <script nonce="[[.Nonce]]">
+      (function () {
+        function relocate() {
+          var toolbar = document.querySelector('[data-testid="data-testid Nav toolbar"]');
+          var actions = toolbar && toolbar.querySelector('[class*="NavToolbar-actions"]');
+          if (!actions) return;
+          var wrappers = document.querySelectorAll('[data-testid="wrapper"]');
+          var search = null;
+          for (var i = 0; i < wrappers.length; i++) {
+            if (wrappers[i].querySelector('input, [class*="input"]')) { search = wrappers[i]; break; }
+          }
+          if (!search || actions.firstChild === search) return;
+          actions.insertBefore(search, actions.firstChild);
+          search.style.marginRight = 'auto';
+        }
+        var pending = false;
+        function schedule() {
+          if (pending) return;
+          pending = true;
+          requestAnimationFrame(function () { pending = false; relocate(); });
+        }
+        new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+        schedule();
+      })();
+    </script>
   </head>
 
   <body class="theme-[[ .ThemeType ]] [[.AppNameBodyClass]]">
