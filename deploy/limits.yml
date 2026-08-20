@@ -1,0 +1,39 @@
+# Every limit in one file, in one vocabulary. Seconds unless the name says
+# otherwise. Zero means no limit — and writing zero is a decision somebody made
+# rather than a gap somebody left. Re-read every tick, so a limit can be changed
+# while a run is going, which is exactly when anyone wants to.
+
+queue:
+  parallel: 1              # runs allowed at once
+
+timeouts:
+  run: 14400               # the whole thing
+  phase: 5400              # one phase
+  session: 3600            # one agent session
+  turn: 600                # one exchange — the hang nothing inside the run catches
+
+limits:
+  usd_per_run: 150
+  turns_per_run: 4000
+
+# The names below refer to the commands underneath, so this service never needs
+# to know whether it is watching a container, a pod or a process.
+actions:
+  on_run_timeout: stop_run
+  on_usd: stop_run
+  on_phase_timeout: warn
+  on_session_timeout: warn
+  on_turn_timeout: restart_worker
+  on_start: start_run
+
+# {run}, {name}, {phase}, {agent}, {session} and anything under `context` are
+# substituted before the command runs.
+commands:
+  warn: /bin/true
+  restart_worker: docker restart {worker}
+  stop_run: docker exec {worker} sh -c "rm -f /runs/{name}/.running"
+  start_run: curl -sS -X POST {starter} -H "Content-Type: application/json" -d {payload}
+
+context:
+  worker: my-pipeline-worker-1
+  starter: http://orchestrator:8081/api/run

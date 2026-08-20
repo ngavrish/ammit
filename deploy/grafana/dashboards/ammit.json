@@ -1,0 +1,254 @@
+{
+  "uid": "ammit",
+  "title": "ammit",
+  "tags": [
+    "ammit"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-12h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "limits crossed",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "ammit"
+        },
+        "enable": true,
+        "iconColor": "red",
+        "target": {
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ],
+          "queryText": "SELECT at*1000 AS time, rule || ': ' || coalesce(observed,'?') || ' vs ' || coalesce(threshold,'?') || ' -> ' || action AS text FROM judgements WHERE action <> 'started' ORDER BY at"
+        }
+      },
+      {
+        "name": "runs",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "ammit"
+        },
+        "enable": true,
+        "iconColor": "blue",
+        "target": {
+          "queryType": "table",
+          "timeColumns": [
+            "time"
+          ],
+          "queryText": "SELECT started*1000 AS time, 'start ' || name AS text FROM runs UNION ALL SELECT finished*1000, coalesce(verdict,'ended') || ' ' || name FROM runs WHERE finished IS NOT NULL"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Cost per run, cumulative",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "description": "Where a line stops, an annotation says why. The threshold is limits.usd_per_run.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ammit"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 150
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "queryType": "time series",
+          "timeColumns": [
+            "time"
+          ],
+          "queryText": "SELECT e.at*1000 AS time, r.name AS metric, (SELECT sum(json_extract(e2.payload,'$.usd')) FROM events e2 WHERE e2.run=e.run AND e2.kind='spend' AND e2.at<=e.at) AS value FROM events e JOIN runs r ON r.run=e.run WHERE e.kind='spend' ORDER BY e.at"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Turns per minute, by phase",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "description": "A flat line inside a live run is a turn that has not come back.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ammit"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 20,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        }
+      },
+      "targets": [
+        {
+          "queryType": "time series",
+          "timeColumns": [
+            "time"
+          ],
+          "queryText": "SELECT CAST(at/60 AS INTEGER)*60000 AS time, coalesce(phase,'no phase') AS metric, count(*) AS value FROM events WHERE kind='turn' GROUP BY 1,2 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "type": "state-timeline",
+      "title": "Phases and branches",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "description": "What was running when. A gap is time the pipeline was neither working nor stopping.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ammit"
+      },
+      "options": {
+        "mergeValues": true
+      },
+      "targets": [
+        {
+          "queryType": "time series",
+          "timeColumns": [
+            "time"
+          ],
+          "queryText": "SELECT CAST(at/60 AS INTEGER)*60000 AS time, coalesce(nullif(branch,''),'head') AS metric, coalesce(phase, agent, '?') AS value FROM events WHERE kind IN ('turn','log','session_start') GROUP BY 1,2 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Session length against timeouts.session",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ammit"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 6
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "queryType": "time series",
+          "timeColumns": [
+            "time"
+          ],
+          "queryText": "SELECT at*1000 AS time, coalesce(agent,'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE kind='session_end' ORDER BY at"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "What ammit did",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ammit"
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "timeColumns": [
+            "at"
+          ],
+          "queryText": "SELECT at*1000 AS at, scope, coalesce(subject,'') AS subject, rule, threshold, observed, action, coalesce(outcome,'') AS outcome FROM judgements ORDER BY id DESC LIMIT 200"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Runs",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "ammit"
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "timeColumns": [
+            "started"
+          ],
+          "queryText": "SELECT started*1000 AS started, name, coalesce(verdict,'running') AS verdict, CAST((coalesce(finished, strftime('%s','now')) - started)/60 AS INTEGER) AS minutes, ROUND(coalesce(usd,0),2) AS usd, coalesce(turns,0) AS turns, coalesce(summary,'') AS summary FROM runs ORDER BY started DESC LIMIT 50"
+        }
+      ]
+    }
+  ]
+}

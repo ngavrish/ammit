@@ -1,0 +1,141 @@
+<div align="center">
+
+# ammit
+
+Weighs a running pipeline against its limits. Eats what fails.
+
+[![License](https://img.shields.io/badge/MIT-1a1a1a?style=flat-square&labelColor=1a1a1a)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-1a1a1a?style=flat-square&labelColor=1a1a1a)](https://www.python.org)
+[![Dependencies](https://img.shields.io/badge/dependencies-none-1a1a1a?style=flat-square&labelColor=1a1a1a)](pyproject.toml)
+
+</div>
+
+---
+
+A four-hour budget was enforced by a timer inside the pipeline it was meant to
+restrain. The pipeline blocked, the timer never got a turn, and the run was
+cancelled at ten and a half hours having cost $345. The session cap lived in the
+same loop and cut sessions in half while they waited for tests, so it was
+removed. A single turn hung for two hours — no error, no retry — twice in one
+run.
+
+All three are the same mistake: the thing being limited was in charge of the
+limit.
+
+Ammit sat beside the scales. A heart was weighed against the feather of truth,
+Thoth wrote the result down, and what failed the weighing was eaten. That is the
+whole design — keep the record, hold the measure, devour what goes past it, and
+from outside, where a wedged run cannot delay its own judgement.
+
+## The client
+
+```python
+import ammit
+
+run = ammit.Run("APF-1934", tags={"mode": "test"})
+with run.phase("implementing"):
+    with run.session("implement", branch="req-3", model="sonnet") as s:
+        s.turn()                                   # heartbeat: still thinking
+        s.spend(usd=0.42, tokens_in=120_000, tokens_out=3_400)
+        s.log("wrote the step, running the scenario")
+run.finish("PASS", "31 scenarios, 0 failures")
+```
+
+No dependencies. Every send is best-effort and off the caller's thread, so a
+server that is down costs the pipeline milliseconds. Point it somewhere with
+`AMMIT_URL`; silence it entirely with `AMMIT_DISABLE=1`.
+
+## The server
+
+```bash
+docker run -p 8099:8099 \
+  -v "$PWD/limits.yml:/config/limits.yml:ro" \
+  -v ammit-data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/ngavrish/ammit
+```
+
+Keeps every event, weighs on a tick, acts by running a command. State is one
+sqlite file.
+
+## The scales
+
+```yaml
+queue:
+  parallel: 1              # runs allowed at once
+
+timeouts:
+  run: 14400               # the whole thing
+  phase: 5400              # one phase
+  session: 3600            # one agent session
+  turn: 600                # one exchange — the hang nothing inside the run catches
+
+limits:
+  usd_per_run: 150
+  turns_per_run: 4000
+
+actions:
+  on_run_timeout: stop_run
+  on_usd: stop_run
+  on_turn_timeout: restart_worker
+  on_start: start_run
+
+commands:
+  restart_worker: docker restart {worker}
+  stop_run: docker exec {worker} sh -c "rm -f /runs/{name}/.running"
+  start_run: curl -sS -X POST {starter} -d {payload}
+
+context:
+  worker: my-pipeline-worker-1
+  starter: http://orchestrator:8081/api/run
+```
+
+Actions are commands, not code: it never needs to know whether it is watching a
+container, a pod or a process. The file is re-read every tick, so a limit can be
+changed while a run is going. Zero means no limit, and writing zero is a decision
+rather than an omission.
+
+## The queue
+
+```bash
+curl -X POST localhost:8099/queue -d '{"name": "APF-2531", "payload": {"mode": "test"}}'
+```
+
+Items start when a slot frees, in order, by running the configured command. "Two
+at once" becomes a number in a file rather than a property of whoever pressed the
+button first.
+
+## What it exposes
+
+| endpoint | what |
+|---|---|
+| `POST /events` | what the client reports |
+| `POST /queue` | queue an item |
+| `GET /runs` | runs with cost, turns, verdicts |
+| `GET /judgements` | every limit crossed, what was observed, what was done |
+| `GET /queue` | what is waiting |
+| `GET /limits` | the config as the server currently reads it |
+
+## The dashboard
+
+`deploy/` ships a Grafana that reads the same sqlite file the server judges by,
+so what is drawn and what was acted on cannot disagree: cost against its
+threshold, turns per minute by phase, a phase timeline where a stall is a visible
+gap, session lengths against the session timeout, and every judgement as an
+annotation on the same axis — so "the cost stopped climbing" and "the run was
+stopped" are one event rather than two stories.
+
+```bash
+cd deploy && docker compose up -d      # ammit on :8099, Grafana on :3301
+```
+
+## Why not Temporal, Prefect, Airflow
+
+They are better at what they do, and adopting one means rewriting the pipeline as
+their workflow. Ammit assumes the pipeline exists and adds one client call: the
+limits, the queue and the dashboard arrive without a rewrite. If the control
+plane is the thing you want to replace, use Temporal.
+
+## License
+
+MIT
