@@ -85,7 +85,7 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
     "y": 1
    },
@@ -183,13 +183,13 @@
   {
    "type": "timeseries",
    "title": "Turns per run against limits.turns_per_run",
-   "description": "Turns taken, counted as they happened.",
+   "description": "One per tool call, which is what the pipeline reports as a turn: the heartbeat that proves a session is still moving. Not the number of exchanges with the model.",
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 1
+    "w": 24,
+    "x": 0,
+    "y": 9
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -289,9 +289,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 9
+    "y": 17
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -391,9 +391,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 9
+    "w": 24,
+    "x": 0,
+    "y": 25
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -486,7 +486,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 17
+    "y": 33
    },
    "panels": []
   },
@@ -497,9 +497,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 18
+    "y": 34
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -599,9 +599,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 18
+    "w": 24,
+    "x": 0,
+    "y": 42
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -693,9 +693,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 26
+    "y": 50
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -795,9 +795,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 26
+    "w": 24,
+    "x": 0,
+    "y": 58
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -826,7 +826,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 34
+    "y": 66
    },
    "panels": []
   },
@@ -837,9 +837,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 35
+    "y": 67
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -935,13 +935,13 @@
   {
    "type": "timeseries",
    "title": "Turns by phase",
-   "description": "Turns taken in each phase.",
+   "description": "One per tool call \u2014 runsdb emits a turn from log() when the line is a tool line, so this counts tool calls, not exchanges with the model.",
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 35
+    "w": 24,
+    "x": 0,
+    "y": 75
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1033,9 +1033,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 43
+    "y": 83
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1135,9 +1135,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 43
+    "w": 24,
+    "x": 0,
+    "y": 91
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1237,9 +1237,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 51
+    "y": 99
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1339,9 +1339,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 51
+    "w": 24,
+    "x": 0,
+    "y": 107
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1442,7 +1442,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 59
+    "y": 115
    },
    "panels": []
   },
@@ -1453,9 +1453,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 60
+    "y": 116
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1555,9 +1555,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 60
+    "w": 24,
+    "x": 0,
+    "y": 124
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1649,9 +1649,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 68
+    "y": 132
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1751,9 +1751,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 68
+    "w": 24,
+    "x": 0,
+    "y": 140
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1853,9 +1853,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 76
+    "y": 148
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -1955,9 +1955,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 76
+    "w": 24,
+    "x": 0,
+    "y": 156
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2052,13 +2052,525 @@
   },
   {
    "type": "row",
+   "title": "Tokens",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 164
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "title": "Tokens out, per run",
+   "description": "Generated tokens as they accrued. This is the number that moves the bill; cache read below is charged at a fraction of it.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 165
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "never",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
+     "queryText": "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Tokens out, by phase",
+   "description": "Which phase is generating the volume.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 173
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "never",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
+     "queryText": "SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Tokens out, by agent",
+   "description": "And which agent inside it.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 181
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "never",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
+     "queryText": "SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Cache read, per run",
+   "description": "Context read back rather than re-sent. Large is good here: it is the same prompt not being paid for twice.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 189
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "never",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.cache_read')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
+     "queryText": "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.cache_read')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "Cache written, per run",
+   "description": "Context put into the cache. Written once, read many times \u2014 a run where this keeps climbing is a run whose prompt will not settle.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 197
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "never",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.cache_write')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
+     "queryText": "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.cache_write')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "title": "Tokens and what they cost",
+   "description": "Every run in the window: what it generated, what it read back, and the bill.",
+   "transparent": true,
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 205
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "targets": [
+    {
+     "queryType": "table",
+     "timeColumns": [
+      "started"
+     ],
+     "rawQueryText": "SELECT r.started AS started, r.name AS run, coalesce(r.verdict,'running') AS verdict, CAST(sum(json_extract(e.payload,'$.tokens_out')) AS INTEGER) AS tokens_out, CAST(sum(json_extract(e.payload,'$.cache_read')) AS INTEGER) AS cache_read, CAST(sum(json_extract(e.payload,'$.cache_write')) AS INTEGER) AS cache_write, ROUND(sum(json_extract(e.payload,'$.usd')), 2) AS usd FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' AND e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) GROUP BY e.run ORDER BY r.started DESC LIMIT 50",
+     "queryText": "SELECT r.started AS started, r.name AS run, coalesce(r.verdict,'running') AS verdict, CAST(sum(json_extract(e.payload,'$.tokens_out')) AS INTEGER) AS tokens_out, CAST(sum(json_extract(e.payload,'$.cache_read')) AS INTEGER) AS cache_read, CAST(sum(json_extract(e.payload,'$.cache_write')) AS INTEGER) AS cache_write, ROUND(sum(json_extract(e.payload,'$.usd')), 2) AS usd FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' AND e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) GROUP BY e.run ORDER BY r.started DESC LIMIT 50"
+    }
+   ]
+  },
+  {
+   "type": "row",
    "title": "The machine",
    "collapsed": false,
    "gridPos": {
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 84
+    "y": 214
    },
    "panels": []
   },
@@ -2069,9 +2581,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 85
+    "y": 215
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2171,9 +2683,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 85
+    "w": 24,
+    "x": 0,
+    "y": 223
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2265,9 +2777,9 @@
    "transparent": true,
    "gridPos": {
     "h": 8,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 93
+    "y": 231
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2358,14 +2870,15 @@
    "description": "What each branch was doing, minute by minute.",
    "gridPos": {
     "h": 8,
-    "w": 12,
-    "x": 12,
-    "y": 93
+    "w": 24,
+    "x": 0,
+    "y": 239
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
     "uid": "ammit"
    },
+   "transparent": true,
    "fieldConfig": {
     "defaults": {
      "custom": {
@@ -2386,12 +2899,12 @@
    },
    "targets": [
     {
-     "queryType": "time series",
+     "queryType": "table",
      "timeColumns": [
       "time"
      ],
-     "rawQueryText": "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(branch,''),'head') AS metric, coalesce(nullif(phase,''), agent, '?') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind IN ('turn','log','session_start') GROUP BY 1, 2 ORDER BY 1",
-     "queryText": "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(branch,''),'head') AS metric, coalesce(nullif(phase,''), agent, '?') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind IN ('turn','log','session_start') GROUP BY 1, 2 ORDER BY 1"
+     "rawQueryText": "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(phase,''), agent, '?') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind IN ('turn','log','session_start') GROUP BY 1 ORDER BY 1",
+     "queryText": "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(phase,''), agent, '?') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind IN ('turn','log','session_start') GROUP BY 1 ORDER BY 1"
     }
    ]
   },
@@ -2403,7 +2916,7 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 101
+    "y": 247
    },
    "panels": []
   },
@@ -2414,9 +2927,9 @@
    "transparent": true,
    "gridPos": {
     "h": 9,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 102
+    "y": 248
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2442,9 +2955,9 @@
    "transparent": true,
    "gridPos": {
     "h": 9,
-    "w": 12,
-    "x": 12,
-    "y": 102
+    "w": 24,
+    "x": 0,
+    "y": 257
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2472,9 +2985,9 @@
    "transparent": true,
    "gridPos": {
     "h": 9,
-    "w": 12,
+    "w": 24,
     "x": 0,
-    "y": 111
+    "y": 266
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2502,9 +3015,9 @@
    "transparent": true,
    "gridPos": {
     "h": 9,
-    "w": 12,
-    "x": 12,
-    "y": 111
+    "w": 24,
+    "x": 0,
+    "y": 275
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -2534,7 +3047,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 120
+    "y": 284
    },
    "datasource": {
     "type": "frser-sqlite-datasource",

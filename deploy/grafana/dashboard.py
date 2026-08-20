@@ -62,6 +62,9 @@ def row(title):
 
 
 def ts(title, desc, unit, targets, x, w=12, h=8, points=False):
+    # Full width, one to a line. Half-width panels put twelve hours of a run into
+    # six hundred pixels, where a spike and a plateau look the same.
+    x, w = 0, 24
     panels.append({
         "type": "timeseries", "title": title, "description": desc,
         # Framed inside ammit's own page, a grid of cards reads as a second
@@ -89,6 +92,7 @@ def ts(title, desc, unit, targets, x, w=12, h=8, points=False):
 
 
 def tbl(title, desc, sql, x, time_cols, w=12, h=9):
+    x, w = 0, 24
     panels.append({"type": "table", "title": title, "description": desc,
                    "transparent": True,
                    "gridPos": {"h": h, "w": w, "x": x, "y": Y[0]}, "datasource": DS,
@@ -110,7 +114,7 @@ ts("Cost per run against limits.usd_per_run",
          FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.kind = 'spend' ORDER BY e.at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.usd_per_run")], 0)
 
-ts("Turns per run against limits.turns_per_run", "Turns taken, counted as they happened.",
+ts("Turns per run against limits.turns_per_run", "One per tool call, which is what the pipeline reports as a turn: the heartbeat that proves a session is still moving. Not the number of exchanges with the model.",
    "short", [
     q("""SELECT * FROM (SELECT e.at AS time, r.name AS metric,
          count(*) OVER (PARTITION BY e.run ORDER BY e.at) AS value
@@ -187,7 +191,7 @@ ts("Cost by phase", "What each phase is costing, as it accrues. \"What is the de
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.usd_per_run")], 0)
 
-ts("Turns by phase", "Turns taken in each phase.", "short", [
+ts("Turns by phase", "One per tool call — runsdb emits a turn from log() when the line is a tool line, so this counts tool calls, not exchanges with the model.", "short", [
     q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
          count(*) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'turn' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
@@ -283,6 +287,54 @@ ts("Time in a session, minute by minute",
     limit_of("timeouts.session")], 12)
 
 # --------------------------------------------------------------- machine
+# ------------------------------------------------------------------ tokens
+# What a run costs is settled by tokens; usd is that same number after a price
+# list that changes. Cache read is charged at a tenth, so a run that looks
+# enormous here and cheap on the cost chart is a run that is reusing context —
+# which is the intended shape, not a fault.
+row("Tokens")
+
+ts("Tokens out, per run", "Generated tokens as they accrued. This is the number "
+   "that moves the bill; cache read below is charged at a fraction of it.", "short", [
+    q("""SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric,
+         sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
+
+ts("Tokens out, by phase", "Which phase is generating the volume.", "short", [
+    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
+         sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
+
+ts("Tokens out, by agent", "And which agent inside it.", "short", [
+    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
+         sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
+
+ts("Cache read, per run",
+   "Context read back rather than re-sent. Large is good here: it is the same "
+   "prompt not being paid for twice.", "short", [
+    q("""SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric,
+         sum(json_extract(payload,'$.cache_read')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
+
+ts("Cache written, per run",
+   "Context put into the cache. Written once, read many times — a run where this "
+   "keeps climbing is a run whose prompt will not settle.", "short", [
+    q("""SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric,
+         sum(json_extract(payload,'$.cache_write')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
+
+tbl("Tokens and what they cost",
+    "Every run in the window: what it generated, what it read back, and the bill.",
+    """SELECT r.started AS started, r.name AS run, coalesce(r.verdict,'running') AS verdict,
+       CAST(sum(json_extract(e.payload,'$.tokens_out')) AS INTEGER) AS tokens_out,
+       CAST(sum(json_extract(e.payload,'$.cache_read')) AS INTEGER) AS cache_read,
+       CAST(sum(json_extract(e.payload,'$.cache_write')) AS INTEGER) AS cache_write,
+       ROUND(sum(json_extract(e.payload,'$.usd')), 2) AS usd
+       FROM events e JOIN runs r ON r.run = e.run
+       WHERE e.kind = 'spend' AND e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from))
+       GROUP BY e.run ORDER BY r.started DESC LIMIT 50""", 12, ["started"])
+
 row("The machine")
 
 ts("Memory by container against limits.memory_mb",
@@ -310,17 +362,17 @@ ts("Processes by container",
 panels.append({
     "type": "state-timeline", "title": "Phases and branches",
     "description": "What each branch was doing, minute by minute.",
-    "gridPos": {"h": 8, "w": 12, "x": 12, "y": Y[0]}, "datasource": DS,
+    "gridPos": {"h": 8, "w": 24, "x": 0, "y": Y[0]}, "datasource": DS,
+    "transparent": True,
     "fieldConfig": {"defaults": {"custom": {"lineWidth": 0, "fillOpacity": 80}},
                     "overrides": []},
     "options": {"mergeValues": True, "showValue": "auto",
                 "legend": {"displayMode": "list", "placement": "bottom",
                            "showLegend": True}},
     "targets": [q("""SELECT CAST(at/60 AS INTEGER)*60 AS time,
-                     coalesce(nullif(branch,''),'head') AS metric,
                      coalesce(nullif(phase,''), agent, '?') AS value
                      FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind IN ('turn','log','session_start')
-                     GROUP BY 1, 2 ORDER BY 1""")]})
+                     GROUP BY 1 ORDER BY 1""", "table", ("time",))]})
 Y[0] += 8
 
 # ------------------------------------------------------ where time went
