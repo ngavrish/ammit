@@ -123,6 +123,36 @@ func env(key, fallback string) string {
 // having fewer moving parts than what it watches would be a poor trade.
 type Config map[string]map[string]string
 
+// cutComment splits a line into what it says and the comment after it. A '#'
+// only starts a comment at the start of a line or after a space: a command is
+// allowed to contain one, and a command that loses half of itself to a comment
+// marker is a limit that cannot be enforced.
+func cutComment(line string) (string, string) {
+	for i := 0; i < len(line); i++ {
+		if line[i] != '#' {
+			continue
+		}
+		if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
+			return line[:i], line[i:]
+		}
+	}
+	return line, ""
+}
+
+// unquote takes the quotes off a value that is wrapped in them and leaves every
+// other quote where it was. `sh -c "rm -f x"` keeps its own pair: stripped from
+// one end only, the command the service runs to stop a run is a syntax error,
+// and the run it was meant to stop keeps going.
+func unquote(value string) string {
+	if len(value) >= 2 {
+		first, last := value[0], value[len(value)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
+}
+
 func loadConfig(path string) Config {
 	conf := Config{}
 	raw, err := os.ReadFile(path)
@@ -131,9 +161,7 @@ func loadConfig(path string) Config {
 	}
 	section := ""
 	for _, line := range strings.Split(string(raw), "\n") {
-		if i := strings.Index(line, "#"); i >= 0 {
-			line = line[:i]
-		}
+		line, _ = cutComment(line)
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -149,7 +177,7 @@ func loadConfig(path string) Config {
 		if !found {
 			continue
 		}
-		conf[section][strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
+		conf[section][strings.TrimSpace(key)] = unquote(strings.TrimSpace(value))
 	}
 	return conf
 }

@@ -148,10 +148,16 @@ button first.
 
 ## The page
 
-`http://localhost:8099` is the limits, editable, next to what they are doing to
-the run in front of you. It is the same file underneath, so the config still
-lives in git and a change made under pressure is a diff somebody can read later.
-Saved limits are in force on the next tick — no restart, and nothing lost mid-run.
+`http://localhost:8099` is the limits as fields — each timeout, budget and queue
+size with its own box, what it means beside it, and seconds shown as hours while
+you type. Change one, save, and it is in force on the next tick: no restart, and
+nothing lost mid-run.
+
+Underneath it is the same file, edited in place: the comments, the order and the
+alignment somebody wrote survive being changed by somebody else in a hurry, so
+the config still lives in git and every change is a diff one line long. What
+fields cannot say — a new command, a renamed section — is one click away as the
+file itself.
 
 The page also queues a ticket, and lists the runs, the queue and every judgement,
 which is the short version of the charts for when the charts are one tab too many.
