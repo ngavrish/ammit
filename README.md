@@ -50,15 +50,27 @@ server that is down costs the pipeline milliseconds. Point it somewhere with
 One call in the pipeline's language, and none of them can slow it down: every
 send is fire-and-forget.
 
-| language | how |
+Every language the model vendors ship an SDK for, so the report goes in the same
+language as the work:
+
+| language | SDK |
 |---|---|
 | Python | `pip install ammit` — `ammit.Run(...)` |
-| Go | `clients/go` — `ammit.NewRun(...)` |
 | TypeScript / JavaScript | `clients/typescript/ammit.ts` — `new Run(...)` |
+| Go | `clients/go` — `ammit.NewRun(...)` |
+| Java | `clients/java/Ammit.java` — `Ammit.run(...)` |
+| Kotlin | `clients/kotlin/Ammit.kt` — `Ammit.run(...)`, `use {}` closes the span |
+| C# / .NET | `clients/csharp/Ammit.cs` — `new Run(...)`, `using` closes the span |
+| Ruby | `clients/ruby/ammit.rb` — `Ammit::Run.new(...)`, blocks close the span |
+| PHP | `clients/php/Ammit.php` — `new Run(...)` |
 | anything else | `clients/shell/ammit.sh` — `ammit_turn`, `ammit_spend`, `ammit_run_finish` |
 
-The shell client exists for the steps inside a pipeline that are shell scripts,
-where a hang is just as likely and just as invisible.
+None of them has a dependency, and none of them can slow the caller: every send
+is fire-and-forget and every failure is swallowed.
+
+The shell one is not a joke. The steps inside a pipeline that are shell scripts
+hang exactly as often as the ones that are not, and until something reports them
+they are the invisible half.
 
 ## The server
 
