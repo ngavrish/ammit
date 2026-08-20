@@ -442,6 +442,26 @@ var reserved = map[string]bool{
 	"request_tool": true, "turn": true,
 }
 
+// spanIsOrphaned says whether this request belongs to a session that has since
+// ended — which makes it a lost event rather than a hanging call.
+func spanIsOrphaned(run, request string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	var at float64
+	var agent, branch string
+	if err := db.QueryRow(`SELECT at, coalesce(agent,''), coalesce(branch,'')
+	                       FROM events WHERE run=? AND kind='request_start' AND session=?
+	                       ORDER BY id DESC LIMIT 1`, run, request).
+		Scan(&at, &agent, &branch); err != nil || agent == "" {
+		return false
+	}
+	var ended int
+	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='session_end'
+	             AND coalesce(agent,'')=? AND coalesce(branch,'')=? AND at>=?`,
+		run, agent, branch, at).Scan(&ended)
+	return ended > 0
+}
+
 // itemFacts is what an open unit of work said about itself when it started:
 // what kind of thing it is, and who is running it.
 func itemFacts(run, item string) (string, string) {
@@ -662,6 +682,21 @@ func weigh(conf Config) {
 			// call is logged before the wait it causes.
 			tool, hasTool := conf.num("timeouts", "request_tool")
 			for request, age := range openSpans(r.run, "request_start", "request_end", "session") {
+				// A wait inside a session that has already ended is not a wait.
+				//
+				// Events are sent best-effort — a pipeline must not stop because
+				// its bookkeeping is down — so a server that blinks loses some,
+				// and the one whose loss matters is the one that closes a span.
+				// It stays open for ever after, and this service dutifully asks
+				// for a restart of a session that finished an hour ago. Twice
+				// tonight, on a run that had no long wait at all: the longest was
+				// 98 seconds.
+				//
+				// The record already answers it. A session says when it ended,
+				// under the same agent and branch the wait was opened with.
+				if spanIsOrphaned(r.run, request) {
+					continue
+				}
 				rule, against := "timeouts.request", limit
 				if hasTool && afterTool(r.run, request) {
 					rule, against = "timeouts.request_tool", tool
