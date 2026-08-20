@@ -82,6 +82,14 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS documents_run ON documents (run, kind);
 
+CREATE TABLE IF NOT EXISTS limits (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    at    REAL NOT NULL,
+    name  TEXT NOT NULL,
+    value REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS limits_name ON limits (name, at);
+
 CREATE TABLE IF NOT EXISTS queue (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     name      TEXT NOT NULL,
@@ -349,6 +357,49 @@ func openSpans(run, startKind, endKind, column string) map[string]float64 {
 	return live
 }
 
+// limitsSeen is the last value written for each limit, so the table grows when
+// something changes rather than on every tick.
+var limitsSeen = map[string]struct{ value, at float64 }{}
+
+// recordLimits writes the limits down as a series, so a chart can draw the line
+// a run was measured against instead of a number somebody typed into a panel
+// months ago. A limit that is edited mid-run bends its own line at the minute it
+// was edited, and the run underneath it is right there to compare.
+//
+// Every numeric setting is recorded, whatever it is called: this service does not
+// get to decide which of somebody's limits are the interesting ones.
+func recordLimits(conf Config) {
+	now := float64(time.Now().UnixNano()) / 1e9
+	for section, kv := range conf {
+		switch section {
+		case "commands", "actions", "context":
+			continue // names of things to run, not numbers to cross
+		}
+		for key, raw := range kv {
+			value, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				continue
+			}
+			name := section + "." + key
+			// A heartbeat every minute as well as on change: a line needs two
+			// points, and a chart of the last hour should not be empty because
+			// nobody touched the config today.
+			if last, ok := limitsSeen[name]; ok && last.value == value && now-last.at < 60 {
+				continue
+			}
+			mu.Lock()
+			_, err = db.Exec("INSERT INTO limits (at, name, value) VALUES (?,?,?)",
+				now, name, value)
+			mu.Unlock()
+			if err != nil {
+				log.Printf("ammit: could not record limit %s: %v", name, err)
+				continue
+			}
+			limitsSeen[name] = struct{ value, at float64 }{value, now}
+		}
+	}
+}
+
 func weigh(conf Config) {
 	for _, r := range openRuns() {
 		age := float64(time.Now().UnixNano())/1e9 - r.started
@@ -501,6 +552,7 @@ func main() {
 		for {
 			conf := loadConfig(confPath)
 			if len(conf) > 0 {
+				recordLimits(conf)
 				weigh(conf)
 				pumpQueue(conf)
 				// Every tick: deciding whether there is anything to archive is one
@@ -606,6 +658,8 @@ func main() {
 		writeJSON(w, http.StatusOK, loadConfig(confPath))
 	})
 
+	serveUI(mux, confPath, env("AMMIT_CHARTS_URL", "http://localhost:3301"))
+
 	log.Printf("ammit: listening on :%s, limits from %s, db %s%s", port, confPath, dbPath,
 		map[bool]string{true: " (dry run)", false: ""}[dryRun])
 	log.Fatal(http.ListenAndServe(":"+port, mux))
@@ -651,6 +705,7 @@ func archive(conf Config, dbPath string) {
 		`CREATE TABLE IF NOT EXISTS archive.runs AS SELECT * FROM runs WHERE 0`,
 		`CREATE TABLE IF NOT EXISTS archive.events AS SELECT * FROM events WHERE 0`,
 		`CREATE TABLE IF NOT EXISTS archive.judgements AS SELECT * FROM judgements WHERE 0`,
+		`CREATE TABLE IF NOT EXISTS archive.limits AS SELECT * FROM limits WHERE 0`,
 	} {
 		if _, err := db.Exec(ddl); err != nil {
 			log.Printf("ammit: archive schema (%v)", err)
@@ -668,6 +723,12 @@ func archive(conf Config, dbPath string) {
 		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
 		`DELETE FROM judgements WHERE run IN
 		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
+		// The newest row of each limit stays behind whatever its age: it is what
+		// the limit is now, and a chart with no starting point draws nothing.
+		`INSERT INTO archive.limits SELECT * FROM limits WHERE at < ?
+		 AND id NOT IN (SELECT max(id) FROM limits GROUP BY name)`,
+		`DELETE FROM limits WHERE at < ?
+		 AND id NOT IN (SELECT max(id) FROM limits GROUP BY name)`,
 		`DELETE FROM runs WHERE finished IS NOT NULL AND finished < ?`,
 	}
 	for _, q := range moves {

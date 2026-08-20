@@ -142,15 +142,49 @@ button first.
 | `GET /judgements` | every limit crossed, what was observed, what was done |
 | `GET /queue` | what is waiting |
 | `GET /limits` | the config as the server currently reads it |
+| `GET /` | the page: limits, queue, runs, judgements |
+| `GET /limits.yml` | the config file itself |
+| `PUT /limits.yml` | replace it — refused if it does not parse |
+
+## The page
+
+`http://localhost:8099` is the limits, editable, next to what they are doing to
+the run in front of you. It is the same file underneath, so the config still
+lives in git and a change made under pressure is a diff somebody can read later.
+Saved limits are in force on the next tick — no restart, and nothing lost mid-run.
+
+The page also queues a ticket, and lists the runs, the queue and every judgement,
+which is the short version of the charts for when the charts are one tab too many.
 
 ## The dashboard
 
 `deploy/` ships a Grafana that reads the same sqlite file the server judges by,
-so what is drawn and what was acted on cannot disagree: cost against its
-threshold, turns per minute by phase, a phase timeline where a stall is a visible
-gap, session lengths against the session timeout, and every judgement as an
-annotation on the same axis — so "the cost stopped climbing" and "the run was
-stopped" are one event rather than two stories.
+so what is drawn and what was acted on cannot disagree.
+
+**Every limit is on the chart it applies to**, the way a level is on a trading
+screen: a dashed red line held flat until somebody moves it. It is not a number
+typed into a panel — the server writes the limits down on every tick, so the line
+is what the run was actually being measured against, and editing a limit mid-run
+bends the line at the minute it was edited, with a marker on the axis saying who
+moved what.
+
+| chart | against |
+|---|---|
+| cost per run, as it accrued | `limits.usd_per_run` |
+| turns per run | `limits.turns_per_run` |
+| how long a run has been going | `timeouts.run` |
+| silence between turns, per agent | `timeouts.turn` |
+| session length | `timeouts.session` |
+| phase length | `timeouts.phase` |
+| runs at once | `queue.parallel` |
+
+The silence chart is the one this was written for: a model call that never came
+back is a spike there and nothing anywhere else. Every judgement is an annotation
+on the same axis, so "the cost stopped climbing" and "the run was stopped" are one
+event rather than two stories.
+
+Dashboards are provisioned from files and editable in the interface — add a panel,
+keep it; the file is the starting point, not the ceiling.
 
 ```bash
 cd deploy && docker compose up -d      # ammit on :8099, Grafana on :3301

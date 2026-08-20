@@ -7,8 +7,12 @@ services:
     environment:
       AMMIT_TICK: "20"
       AMMIT_DRY_RUN: "${AMMIT_DRY_RUN:-0}"
+      # Where the page sends you for the charts.
+      AMMIT_CHARTS_URL: "${AMMIT_CHARTS_URL:-http://localhost:3301}"
     volumes:
-      - ./limits.yml:/config/limits.yml:ro
+      # Writable: the limits are edited on ammit's own page, and this file is
+      # what it reads.
+      - ./limits.yml:/config/limits.yml
       - ammit-data:/data
       # How it restarts what it watches. Drop this line and the container
       # actions become no-ops; webhook actions still work.
@@ -20,7 +24,7 @@ services:
     ports: ["3301:3000"]
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
       GF_USERS_DEFAULT_THEME: dark
       GF_INSTALL_PLUGINS: frser-sqlite-datasource
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ammit.json
