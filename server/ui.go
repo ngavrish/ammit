@@ -46,8 +46,16 @@ const page = `<!doctype html>
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)}
-header{display:flex;align-items:baseline;gap:1rem;padding:1.5rem 2.5rem;
+header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5rem 2.5rem;
        border-bottom:1px solid var(--bronze-dim);background:var(--deep)}
+/* Centered independent of how wide the title or the tabs are, the way a
+   watermark sits rather than a flex child that shoves its neighbours. */
+.brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+       display:flex;align-items:center;gap:.5rem;opacity:.85;pointer-events:none}
+.brand svg{display:block}
+.brand b{font:800 13px/1 var(--sans);letter-spacing:-.01em;color:var(--ink)}
+.brand small{font:600 8px/1 var(--mono);letter-spacing:.32em;color:var(--dim);
+             text-transform:uppercase;margin-top:2px}
 h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
    color:var(--bronze)}
 header .sub{color:var(--dim);font-size:13px;letter-spacing:.04em}
@@ -118,6 +126,32 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
 #charts iframe{width:100%;height:100%;border:0;display:block;background:var(--navy)}
 </style></head><body>
 <header><h1>ammit</h1><span class="sub">the scales, the record, and the eating</span>
+<!-- Same mark, same bow-and-arrow path, as dokimos.chiron.systems — the light
+     variant, since this header is dark. Static: the animation there is for a
+     page somebody arrives at once, not a bar redrawn every refresh. -->
+<span class="brand" aria-hidden="true">
+  <svg width="20" height="18" viewBox="0 0 180 160">
+    <defs>
+      <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
+        <stop offset="40%" stop-color="#CD7F32" stop-opacity=".4"/>
+        <stop offset="85%" stop-color="#CD7F32" stop-opacity=".9"/>
+        <stop offset="100%" stop-color="#CD7F32"/>
+      </linearGradient>
+      <mask id="brandCut">
+        <rect width="180" height="160" fill="#fff"/>
+        <line x1="5" y1="80" x2="180" y2="80" stroke="#000" stroke-width="15" stroke-linecap="round"/>
+      </mask>
+    </defs>
+    <g transform="rotate(-30 90 80)">
+      <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
+               C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
+            fill="#F7FAFC" mask="url(#brandCut)"/>
+      <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
+    </g>
+  </svg>
+  <span><b>CHIRON</b><br><small>SYSTEMS</small></span>
+</span>
 <nav class="tabs" role="tablist">
   <button id="tab-scales" role="tab" aria-selected="true" onclick="tab('scales')">scales</button>
   <button id="tab-charts" role="tab" aria-selected="false" onclick="tab('charts')">charts</button>
