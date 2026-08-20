@@ -15,8 +15,13 @@ timeouts:
   # notices — there is no error to log and no retry to fire.
   request: 600             # a wait for the model itself; nothing observed has passed 3 min
   request_tool: 1800       # a wait that covers a tool the agent asked for — a suite run is twenty minutes
-  turn: 600                # one exchange — the hang nothing inside the run catches
-
+  turn: 600
+  # The two sizes of test work. What a module is belongs to the stack — a
+  # .feature file here, a test file or a class elsewhere — so the client says
+  # what kind of thing it started and the limit is looked up under that name.
+  # Add timeouts.<kind> for any other unit a stack wants bounded.
+  test: 300                # one test: a scenario, a test case
+  module: 1200             # one test module: a .feature file, a test file
 retention:
   # Finished runs older than this move into archive/ammit-YYYY-MM.db and leave
   # the live database small. Nothing is deleted: an archive is a database like
@@ -50,6 +55,8 @@ actions:
   on_turn_timeout_blind: restart_worker
   on_request_timeout: retry_session
   on_memory: warn
+  on_module_timeout: retry_session
+  on_test_timeout: warn
   on_start: start_run
 
 # {run}, {name}, {phase}, {agent}, {session} and anything under `context` are

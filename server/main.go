@@ -410,6 +410,28 @@ func afterTool(run, request string) bool {
 	return level == "tool"
 }
 
+// The timeout names this service owns. A client cannot claim one of these as a
+// kind, because "my module took longer than timeouts.run" is not a sentence
+// anyone wants to debug.
+var reserved = map[string]bool{
+	"run": true, "phase": true, "session": true, "request": true,
+	"request_tool": true, "turn": true,
+}
+
+// itemFacts is what an open unit of work said about itself when it started:
+// what kind of thing it is, and who is running it.
+func itemFacts(run, item string) (string, string) {
+	mu.Lock()
+	defer mu.Unlock()
+	var kind, agent string
+	// itemkind, not kind: `kind` on an event is already the event's own name, so
+	// what sort of unit this is has to travel under a name of its own.
+	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.itemkind'),''), coalesce(agent,'')
+	             FROM events WHERE run=? AND kind='item_start' AND session=?
+	             ORDER BY id DESC LIMIT 1`, run, item).Scan(&kind, &agent)
+	return kind, agent
+}
+
 func quietFor(run string) (float64, string, string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -574,6 +596,35 @@ func weigh(conf Config) {
 				judge("request", r.run, request, rule, against, age,
 					action, act(action, conf, ctx))
 			}
+		}
+		// A test and a test module are different sizes of the same thing, and a
+		// pipeline that cannot bound them separately ends up bounding neither:
+		// one scenario stuck on a locator looks nothing like a whole .feature
+		// grinding through forty of them, and the number that catches the first
+		// would cut the second in half.
+		//
+		// What a "module" is belongs to the stack, not to this service: a
+		// .feature here, a test file elsewhere, a class somewhere else. The
+		// client says what kind of thing it started and the limit is looked up
+		// under that name, so timeouts.test and timeouts.module are simply the
+		// two kinds that most stacks have.
+		for item, age := range openSpans(r.run, "item_start", "item_end", "session") {
+			kind, agent := itemFacts(r.run, item)
+			if kind == "" || reserved[kind] {
+				continue
+			}
+			against, ok := conf.num("timeouts", kind)
+			if !ok || against <= 0 || age <= against || recently("timeouts."+kind, item, against) {
+				continue
+			}
+			action := conf.str("actions", "on_"+kind+"_timeout",
+				conf.str("actions", "on_item_timeout", "warn"))
+			ctx["item"], ctx["kind"] = item, kind
+			if agent != "" {
+				ctx["agent"] = agent
+			}
+			judge(kind, r.run, item, "timeouts."+kind, against, age, action,
+				act(action, conf, ctx))
 		}
 		if limit, ok := conf.num("timeouts", "phase"); ok {
 			for phase, age := range openSpans(r.run, "phase_start", "phase_end", "phase") {
