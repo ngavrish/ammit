@@ -40,10 +40,10 @@ sample:
 actions:
   on_run_timeout: stop_run
   on_usd: stop_run
-  on_phase_timeout: warn
-  on_session_timeout: warn
+  on_phase_timeout: stop_phase
+  on_session_timeout: stop_session
   on_turn_timeout: restart_worker
-  on_request_timeout: restart_worker
+  on_request_timeout: stop_session
   on_memory: warn
   on_start: start_run
 
@@ -52,7 +52,13 @@ actions:
 commands:
   warn: /bin/true
   restart_worker: docker restart {worker}
-  stop_run: docker exec {worker} sh -c "rm -f /runs/{name}/.running"
+  # Kill switches the runner checks between messages: it stops where nothing is
+  # half-done, rather than being shot mid-tool-call. Removing the lock file was
+  # what this used to do, and it stopped nothing — the run kept spending, and
+  # the ticket merely became free for another run to claim on top of it.
+  stop_run: docker exec {worker} sh -c "touch /runs/{name}/.cancel"
+  stop_phase: docker exec {worker} sh -c "touch /runs/{name}/.cancel.phase.{phase}"
+  stop_session: docker exec {worker} sh -c "touch /runs/{name}/.cancel.session.{agent}"
   start_run: curl -sS -X POST {starter} -H "Content-Type: application/json" -d {payload}
 
 context:
