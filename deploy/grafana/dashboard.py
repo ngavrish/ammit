@@ -46,8 +46,13 @@ def q(sql, kind="time series", time_cols=("time",)):
 
 
 def limit_of(name):
+    # The window is 12 hours and a limit set last week is still the limit. Take
+    # every change inside the window, plus the one in force when it opened, or
+    # the line vanishes exactly when it matters.
     return q(f"SELECT at AS time, name AS metric, value FROM limits "
-             f"WHERE name = '{name}' ORDER BY at")
+             f"WHERE name = '{name}' AND at*1000 <= $__to "
+             f"AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits "
+             f"WHERE name = '{name}' AND at*1000 < $__from)) ORDER BY at")
 
 
 def row(title):
@@ -59,8 +64,17 @@ def row(title):
 def ts(title, desc, unit, targets, x, w=12, h=8, points=False):
     panels.append({
         "type": "timeseries", "title": title, "description": desc,
+        # Framed inside ammit's own page, a grid of cards reads as a second
+        # product. Transparent panels let the page's background carry through.
+        "transparent": True,
         "gridPos": {"h": h, "w": w, "x": x, "y": Y[0]}, "datasource": DS,
         "fieldConfig": {"defaults": {
+            # The plugin returns every series as a field called "value" carrying
+            # the metric as a label, so Grafana shows `value {metric="..."}` and
+            # the override below — anchored on the limit's own name — never
+            # matches. Name the series after the label and both the legend and
+            # the dashed limit line come right.
+            "displayName": "${__field.labels.metric}",
             "unit": unit, "min": 0,
             "custom": {"lineWidth": 2, "fillOpacity": 6, "spanNulls": True,
                        "showPoints": "always" if points else "never",
@@ -76,6 +90,7 @@ def ts(title, desc, unit, targets, x, w=12, h=8, points=False):
 
 def tbl(title, desc, sql, x, time_cols, w=12, h=9):
     panels.append({"type": "table", "title": title, "description": desc,
+                   "transparent": True,
                    "gridPos": {"h": h, "w": w, "x": x, "y": Y[0]}, "datasource": DS,
                    "fieldConfig": {"defaults": {}, "overrides": []},
                    "targets": [q(sql, "table", time_cols)]})
@@ -90,16 +105,16 @@ ts("Cost per run against limits.usd_per_run",
    "Each line is one run's spend as it accrued. The dashed line is the limit in "
    "force at that moment: edit it on the ammit page and the line bends here.",
    "currencyUSD", [
-    q("""SELECT e.at AS time, r.name AS metric,
+    q("""SELECT * FROM (SELECT e.at AS time, r.name AS metric,
          sum(json_extract(e.payload,'$.usd')) OVER (PARTITION BY e.run ORDER BY e.at) AS value
-         FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' ORDER BY e.at"""),
+         FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.kind = 'spend' ORDER BY e.at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.usd_per_run")], 0)
 
 ts("Turns per run against limits.turns_per_run", "Turns taken, counted as they happened.",
    "short", [
-    q("""SELECT e.at AS time, r.name AS metric,
+    q("""SELECT * FROM (SELECT e.at AS time, r.name AS metric,
          count(*) OVER (PARTITION BY e.run ORDER BY e.at) AS value
-         FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'turn' ORDER BY e.at"""),
+         FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.kind = 'turn' ORDER BY e.at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.turns_per_run")], 12)
 
 ts("How long a run has been going, against timeouts.run",
@@ -113,14 +128,14 @@ ts("How long a run has been going, against timeouts.run",
 ts("Idle time piling up, per run",
    "Every gap over two minutes, added up as the run went. A staircase that climbs as "
    "fast as the run is a run that is mostly waiting: 377 of 636 minutes, once.", "s", [
-    q("""SELECT at AS time, name AS metric,
+    q("""SELECT * FROM (SELECT at AS time, name AS metric,
          sum(idle) OVER (PARTITION BY run ORDER BY at) AS value FROM (
            SELECT e.at AS at, e.run AS run, r.name AS name,
              CASE WHEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) > 120
                   THEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at)
                   ELSE 0 END AS idle
-           FROM events e JOIN runs r ON r.run = e.run WHERE e.run IS NOT NULL)
-         ORDER BY 1""")], 12)
+           FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.run IS NOT NULL)
+         ORDER BY 1) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
 
 # ----------------------------------------------------- requests to a model
 row("Requests to the model")
@@ -131,7 +146,7 @@ ts("How long one request takes, by agent, against timeouts.request",
    "is timed out here, where something can act on it.", "s", [
     q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
          json_extract(payload,'$.seconds') AS value
-         FROM events WHERE kind = 'request_end' ORDER BY at"""),
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at"""),
     limit_of("timeouts.request")], 0, points=True)
 
 ts("Requests that died, per minute",
@@ -140,7 +155,7 @@ ts("Requests that died, per minute",
    "session that stopped.", "short", [
     q("""SELECT CAST(at/60 AS INTEGER)*60 AS time,
          coalesce(nullif(agent,''),'?') AS metric, count(*) AS value
-         FROM events WHERE kind = 'request_end'
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end'
          AND json_extract(payload,'$.ok') = 0 GROUP BY 1, 2 ORDER BY 1""")], 12)
 
 ts("Request time by phase, against timeouts.request",
@@ -149,7 +164,7 @@ ts("Request time by phase, against timeouts.request",
    "network problem.", "s", [
     q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
          json_extract(payload,'$.seconds') AS value
-         FROM events WHERE kind = 'request_end' ORDER BY at"""),
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at"""),
     limit_of("timeouts.request")], 0, points=True)
 
 tbl("Requests that died, in full",
@@ -158,7 +173,7 @@ tbl("Requests that died, in full",
        coalesce(nullif(phase,''),'') AS phase,
        ROUND(json_extract(payload,'$.seconds'),1) AS seconds,
        json_extract(payload,'$.error') AS error
-       FROM events WHERE kind = 'request_end' AND json_extract(payload,'$.ok') = 0
+       FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' AND json_extract(payload,'$.ok') = 0
        ORDER BY id DESC LIMIT 100""", 12, ["at"], h=8)
 
 # -------------------------------------------------------------- by phase
@@ -166,30 +181,30 @@ row("By phase")
 
 ts("Cost by phase", "What each phase is costing, as it accrues. \"What is the design "
    "costing us\" is this chart and no other.", "currencyUSD", [
-    q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
+    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
          sum(json_extract(payload,'$.usd'))
            OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value
-         FROM events WHERE kind = 'spend' ORDER BY at"""),
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.usd_per_run")], 0)
 
 ts("Turns by phase", "Turns taken in each phase.", "short", [
-    q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
+    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
          count(*) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value
-         FROM events WHERE kind = 'turn' ORDER BY at""")], 12)
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'turn' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
 
 ts("Phase length against timeouts.phase", "One point per finished phase.", "s", [
     q("""SELECT at AS time, coalesce(nullif(phase,''),'?') AS metric,
          json_extract(payload,'$.seconds') AS value
-         FROM events WHERE kind = 'phase_end' ORDER BY at"""),
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'phase_end' ORDER BY at"""),
     limit_of("timeouts.phase")], 0, points=True)
 
 ts("Idle inside a phase, against timeouts.turn",
    "The gap between one thing happening and the next, within a phase. Which phase the "
    "waiting happens in is the difference between a slow model and a stuck gate.", "s", [
-    q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
+    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
          at - lag(at) OVER (PARTITION BY run, coalesce(phase,'') ORDER BY at) AS value
-         FROM events WHERE run IS NOT NULL
-         AND kind IN ('turn','log','session_start','phase_start') ORDER BY at"""),
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL
+         AND kind IN ('turn','log','session_start','phase_start') ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("timeouts.turn")], 12)
 
 ts("Memory while each phase ran, against limits.memory_mb",
@@ -201,7 +216,7 @@ ts("Memory while each phase ran, against limits.memory_mb",
              WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at
              ORDER BY p.at DESC LIMIT 1),'no phase') AS phase,
              sum(json_extract(s.payload,'$.memory_mb')) AS mb
-           FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1"""),
+           FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' GROUP BY s.at) ORDER BY 1"""),
     limit_of("limits.memory_mb")], 0)
 
 ts("Time in a phase, minute by minute",
@@ -212,7 +227,7 @@ ts("Time in a phase, minute by minute",
          max(e.at - (SELECT p.at FROM events p WHERE p.kind = 'phase_start'
              AND p.run = e.run AND p.phase = e.phase AND p.at <= e.at
              ORDER BY p.at DESC LIMIT 1)) AS value
-         FROM events e WHERE e.run IS NOT NULL AND ifnull(e.phase,'') <> ''
+         FROM events e WHERE e.at*1000 BETWEEN $__from AND $__to AND e.run IS NOT NULL AND ifnull(e.phase,'') <> ''
          GROUP BY 1, 2 ORDER BY 1"""),
     limit_of("timeouts.phase")], 12)
 
@@ -220,29 +235,29 @@ ts("Time in a phase, minute by minute",
 row("By agent session")
 
 ts("Cost by agent", "Which agent is spending the money.", "currencyUSD", [
-    q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
+    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
          sum(json_extract(payload,'$.usd'))
            OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value
-         FROM events WHERE kind = 'spend' ORDER BY at"""),
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.usd_per_run")], 0)
 
 ts("Turns by agent", "Which agent is taking the turns.", "short", [
-    q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
+    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
          count(*) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value
-         FROM events WHERE kind = 'turn' ORDER BY at""")], 12)
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'turn' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
 
 ts("Session length against timeouts.session", "One point per finished session, by agent.",
    "s", [
     q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
          json_extract(payload,'$.seconds') AS value
-         FROM events WHERE kind = 'session_end' ORDER BY at"""),
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'session_end' ORDER BY at"""),
     limit_of("timeouts.session")], 0, points=True)
 
 ts("Silence between turns, against timeouts.turn",
    "The gap between one turn and the next, per agent.", "s", [
-    q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
+    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
          at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value
-         FROM events WHERE kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at"""),
+         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("timeouts.turn")], 12)
 
 ts("Memory while each agent ran, against limits.memory_mb",
@@ -253,7 +268,7 @@ ts("Memory while each agent ran, against limits.memory_mb",
              WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at
              ORDER BY a.at DESC LIMIT 1),'nobody') AS agent,
              sum(json_extract(s.payload,'$.memory_mb')) AS mb
-           FROM events s WHERE s.kind = 'sample' GROUP BY s.at) ORDER BY 1"""),
+           FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' GROUP BY s.at) ORDER BY 1"""),
     limit_of("limits.memory_mb")], 0)
 
 ts("Time in a session, minute by minute",
@@ -263,7 +278,7 @@ ts("Time in a session, minute by minute",
          max(e.at - (SELECT a.at FROM events a WHERE a.kind = 'session_start'
              AND a.run = e.run AND a.agent = e.agent AND a.at <= e.at
              ORDER BY a.at DESC LIMIT 1)) AS value
-         FROM events e WHERE e.run IS NOT NULL AND ifnull(e.agent,'') <> ''
+         FROM events e WHERE e.at*1000 BETWEEN $__from AND $__to AND e.run IS NOT NULL AND ifnull(e.agent,'') <> ''
          GROUP BY 1, 2 ORDER BY 1"""),
     limit_of("timeouts.session")], 12)
 
@@ -276,21 +291,21 @@ ts("Memory by container against limits.memory_mb",
    "mbytes", [
     q("""SELECT at AS time, json_extract(payload,'$.container') AS metric,
          json_extract(payload,'$.memory_mb') AS value
-         FROM events WHERE kind = 'sample' ORDER BY at"""),
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at"""),
     limit_of("limits.memory_mb")], 0)
 
 ts("CPU by container", "Percent of one core, as the container client reports it.",
    "percent", [
     q("""SELECT at AS time, json_extract(payload,'$.container') AS metric,
          json_extract(payload,'$.cpu_pct') AS value
-         FROM events WHERE kind = 'sample' ORDER BY at""")], 12)
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at""")], 12)
 
 ts("Processes by container",
    "A count that climbs and never falls is something not being reaped — the browser "
    "runs this pipeline leaves behind, most often.", "short", [
     q("""SELECT at AS time, json_extract(payload,'$.container') AS metric,
          json_extract(payload,'$.pids') AS value
-         FROM events WHERE kind = 'sample' ORDER BY at""")], 0)
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at""")], 0)
 
 panels.append({
     "type": "state-timeline", "title": "Phases and branches",
@@ -304,7 +319,7 @@ panels.append({
     "targets": [q("""SELECT CAST(at/60 AS INTEGER)*60 AS time,
                      coalesce(nullif(branch,''),'head') AS metric,
                      coalesce(nullif(phase,''), agent, '?') AS value
-                     FROM events WHERE kind IN ('turn','log','session_start')
+                     FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind IN ('turn','log','session_start')
                      GROUP BY 1, 2 ORDER BY 1""")]})
 Y[0] += 8
 
@@ -326,18 +341,18 @@ tbl("Busy and idle, per run",
            SELECT run, CASE WHEN at - lag(at) OVER (PARTITION BY run ORDER BY at) > 120
                             THEN at - lag(at) OVER (PARTITION BY run ORDER BY at)
                             ELSE 0 END AS gap
-           FROM events WHERE run IS NOT NULL) GROUP BY run) g ON g.run = r.run
+           FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL) GROUP BY run) g ON g.run = r.run
        ORDER BY r.started DESC LIMIT 50""", 0, [])
 
 tbl("The longest gaps",
     "Every stretch over five minutes where nothing was reported, newest first. What was "
     "open when it started is the first place to look.",
-    """SELECT at AS at, run, coalesce(nullif(phase,''),'') AS phase,
+    """SELECT * FROM (SELECT at AS at, run, coalesce(nullif(phase,''),'') AS phase,
        coalesce(nullif(agent,''),'') AS agent, CAST(gap/60 AS INTEGER) AS minutes
        FROM (SELECT at, run, phase, agent,
              at - lag(at) OVER (PARTITION BY run ORDER BY at) AS gap
-             FROM events WHERE run IS NOT NULL)
-       WHERE gap > 300 ORDER BY at DESC LIMIT 50""", 12, ["at"])
+             FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL)
+       WHERE gap > 300 ORDER BY at DESC LIMIT 50) WHERE at*1000 BETWEEN $__from AND $__to""", 12, ["at"])
 
 tbl("What ammit did",
     "Every limit crossed, what it did about it, and what the command said back.",
@@ -374,9 +389,9 @@ dash = {
         ann("runs", "blue",
             """SELECT started AS time, name || ' started' AS text FROM runs ORDER BY started"""),
         ann("limits changed", "yellow",
-            """SELECT at AS time, name || ' set to ' || value AS text FROM
+            """SELECT * FROM (SELECT at AS time, name || ' set to ' || value AS text FROM
                (SELECT at, name, value, lag(value) OVER (PARTITION BY name ORDER BY at)
-                AS prev FROM limits) WHERE prev IS NULL OR prev <> value ORDER BY at"""),
+                AS prev FROM limits) WHERE prev IS NULL OR prev <> value ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     ]},
     "panels": panels,
 }
