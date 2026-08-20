@@ -46,6 +46,16 @@
     <style>
       header:has(> [data-testid="data-testid Nav toolbar"])
         > *:not([data-testid="data-testid Nav toolbar"]) { display: none !important; }
+
+      /* Same reasoning as above, one row down: scrubActions() below did this
+         with JS, which only runs once React has mounted the buttons — a gap
+         wide enough that Share, Edit and the arrow flashed on screen first
+         and vanished a beat later, on every load. A stylesheet rule paints
+         before any of that, so there is nothing left to flash. The one thing
+         JS still has to do here is put the kiosk link in their place. */
+      [data-testid="data-testid Share dashboard"],
+      [data-testid="data-testid Edit dashboard button"],
+      button[title="Toggle top search bar"] { display: none !important; }
     </style>
 
     <!-- The search box itself stays, moved down into the breadcrumb row
@@ -98,30 +108,40 @@
             if (c.tagName === 'BUTTON' && c.title === 'Toggle top search bar') chevron = c;
             if (c.style.display !== 'none') c.style.display = 'none';
           }
-          if (actions.querySelector('[data-ammit-kiosk]')) return;
-          // Built by hand, not URLSearchParams: Grafana's own kiosk detection
-          // reads the query string as a bare flag — "kiosk", no "=" — and
-          // URLSearchParams always serializes a set value as "kiosk=", which
-          // it silently does not recognise.
-          var href = location.href.split('#')[0];
-          href += (href.indexOf('?') === -1 ? '?' : '&') + 'kiosk';
-          var kioskLink = document.createElement('a');
-          kioskLink.href = href;
-          kioskLink.title = 'Kiosk mode';
-          kioskLink.setAttribute('data-ammit-kiosk', '1');
-          kioskLink.className = chevron ? chevron.className : '';
-          kioskLink.style.cssText = 'display:flex;align-items:center;padding:0 10px;' +
-            'color:#ccccdc;font:12px sans-serif;text-decoration:none;white-space:nowrap;height:32px';
+          var kioskLink = actions.querySelector('[data-ammit-kiosk]');
+          if (!kioskLink) {
+            // Built by hand, not URLSearchParams: Grafana's own kiosk
+            // detection reads the query string as a bare flag — "kiosk", no
+            // "=" — and URLSearchParams always serializes a set value as
+            // "kiosk=", which it silently does not recognise.
+            var href = location.href.split('#')[0];
+            href += (href.indexOf('?') === -1 ? '?' : '&') + 'kiosk';
+            kioskLink = document.createElement('a');
+            kioskLink.href = href;
+            kioskLink.title = 'Kiosk mode';
+            kioskLink.setAttribute('data-ammit-kiosk', '1');
+            kioskLink.appendChild(document.createTextNode('Kiosk mode'));
+            actions.appendChild(kioskLink);
+          }
+          if (!kioskLink.className) kioskLink.className = chevron ? chevron.className : '';
+          if (!kioskLink.style.cssText) {
+            kioskLink.style.cssText = 'display:flex;align-items:center;padding:0 10px;' +
+              'color:#ccccdc;font:12px sans-serif;text-decoration:none;white-space:nowrap;height:32px';
+          }
           // The chevron's own icon, carried over rather than dropped along
           // with the button that had it — the same up-arrow, not a stand-in.
-          var chevronIcon = chevron && chevron.querySelector('svg');
-          if (chevronIcon) {
-            var icon = chevronIcon.cloneNode(true);
-            icon.style.marginRight = '6px';
-            kioskLink.appendChild(icon);
+          // Retried every call, not just on creation: the chevron button can
+          // still be mounting on the very first tick this runs, and a guard
+          // that only ever tries once left the link permanently text-only
+          // whenever that race went the wrong way.
+          if (!kioskLink.querySelector('svg') && chevron) {
+            var chevronIcon = chevron.querySelector('svg');
+            if (chevronIcon) {
+              var icon = chevronIcon.cloneNode(true);
+              icon.style.marginRight = '6px';
+              kioskLink.insertBefore(icon, kioskLink.firstChild);
+            }
           }
-          kioskLink.appendChild(document.createTextNode('Kiosk mode'));
-          actions.appendChild(kioskLink);
         }
         function relocate() {
           var toolbar = document.querySelector('[data-testid="data-testid Nav toolbar"]');
