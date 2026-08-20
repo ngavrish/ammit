@@ -91,11 +91,11 @@
           if (!/^\/d\/ammit\//.test(location.pathname)) return;
           var actions = toolbar.querySelector('[class*="NavToolbar-actions"]');
           if (!actions) return;
-          var chevronClass = '';
+          var chevron = null;
           for (var j = 0; j < actions.children.length; j++) {
             var c = actions.children[j];
             if (c.hasAttribute('data-ammit-kiosk')) continue;
-            if (c.tagName === 'BUTTON' && c.title === 'Toggle top search bar') chevronClass = c.className;
+            if (c.tagName === 'BUTTON' && c.title === 'Toggle top search bar') chevron = c;
             if (c.style.display !== 'none') c.style.display = 'none';
           }
           if (actions.querySelector('[data-ammit-kiosk]')) return;
@@ -108,11 +108,19 @@
           var kioskLink = document.createElement('a');
           kioskLink.href = href;
           kioskLink.title = 'Kiosk mode';
-          kioskLink.textContent = 'Kiosk mode';
           kioskLink.setAttribute('data-ammit-kiosk', '1');
-          kioskLink.className = chevronClass;
+          kioskLink.className = chevron ? chevron.className : '';
           kioskLink.style.cssText = 'display:flex;align-items:center;padding:0 10px;' +
             'color:#ccccdc;font:12px sans-serif;text-decoration:none;white-space:nowrap;height:32px';
+          // The chevron's own icon, carried over rather than dropped along
+          // with the button that had it — the same up-arrow, not a stand-in.
+          var chevronIcon = chevron && chevron.querySelector('svg');
+          if (chevronIcon) {
+            var icon = chevronIcon.cloneNode(true);
+            icon.style.marginRight = '6px';
+            kioskLink.appendChild(icon);
+          }
+          kioskLink.appendChild(document.createTextNode('Kiosk mode'));
           actions.appendChild(kioskLink);
         }
         function relocate() {
