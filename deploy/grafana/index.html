@@ -108,40 +108,33 @@
             if (c.tagName === 'BUTTON' && c.title === 'Toggle top search bar') chevron = c;
             if (c.style.display !== 'none') c.style.display = 'none';
           }
-          var kioskLink = actions.querySelector('[data-ammit-kiosk]');
-          if (!kioskLink) {
-            // Built by hand, not URLSearchParams: Grafana's own kiosk
-            // detection reads the query string as a bare flag — "kiosk", no
-            // "=" — and URLSearchParams always serializes a set value as
-            // "kiosk=", which it silently does not recognise.
-            var href = location.href.split('#')[0];
-            href += (href.indexOf('?') === -1 ? '?' : '&') + 'kiosk';
-            kioskLink = document.createElement('a');
-            kioskLink.href = href;
-            kioskLink.title = 'Kiosk mode';
-            kioskLink.setAttribute('data-ammit-kiosk', '1');
-            kioskLink.appendChild(document.createTextNode('Kiosk mode'));
-            actions.appendChild(kioskLink);
-          }
-          if (!kioskLink.className) kioskLink.className = chevron ? chevron.className : '';
-          if (!kioskLink.style.cssText) {
-            kioskLink.style.cssText = 'display:flex;align-items:center;padding:0 10px;' +
-              'color:#ccccdc;font:12px sans-serif;text-decoration:none;white-space:nowrap;height:32px';
-          }
-          // The chevron's own icon, carried over rather than dropped along
-          // with the button that had it — the same up-arrow, not a stand-in.
-          // Retried every call, not just on creation: the chevron button can
-          // still be mounting on the very first tick this runs, and a guard
-          // that only ever tries once left the link permanently text-only
-          // whenever that race went the wrong way.
-          if (!kioskLink.querySelector('svg') && chevron) {
-            var chevronIcon = chevron.querySelector('svg');
-            if (chevronIcon) {
-              var icon = chevronIcon.cloneNode(true);
-              icon.style.marginRight = '6px';
-              kioskLink.insertBefore(icon, kioskLink.firstChild);
-            }
-          }
+          if (actions.querySelector('[data-ammit-kiosk]')) return;
+          // Built by hand, not URLSearchParams: Grafana's own kiosk
+          // detection reads the query string as a bare flag — "kiosk", no
+          // "=" — and URLSearchParams always serializes a set value as
+          // "kiosk=", which it silently does not recognise.
+          var href = location.href.split('#')[0];
+          href += (href.indexOf('?') === -1 ? '?' : '&') + 'kiosk';
+          var kioskLink = document.createElement('a');
+          kioskLink.href = href;
+          kioskLink.title = 'Kiosk mode';
+          kioskLink.setAttribute('aria-label', 'Kiosk mode');
+          kioskLink.setAttribute('data-ammit-kiosk', '1');
+          kioskLink.className = chevron ? chevron.className : '';
+          kioskLink.style.cssText = 'display:flex;align-items:center;justify-content:center;' +
+            'width:32px;height:32px;color:#ccccdc;text-decoration:none;';
+          // A monitor, not the collapse arrow this replaced — that icon meant
+          // "toggle the search bar" on the button it came from, and carrying
+          // it over verbatim onto a button that does something else entirely
+          // just relabelled the same confusion. Grafana ships this one as a
+          // static asset; pulled its path rather than inventing a new icon
+          // the rest of the UI doesn't already use for the same idea.
+          kioskLink.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+            '<path fill="currentColor" d="M19,2H5A3,3,0,0,0,2,5V15a3,3,0,0,0,3,3H7.64l-.58,1a2,2,0,0,0,0,2,' +
+            '2,2,0,0,0,1.75,1h6.46A2,2,0,0,0,17,21a2,2,0,0,0,0-2l-.59-1H19a3,3,0,0,0,3-3V5A3,3,0,0,0,19,2Z' +
+            'M8.77,20,10,18H14l1.2,2ZM20,15a1,1,0,0,1-1,1H5a1,1,0,0,1-1-1V14H20Zm0-3H4V5A1,1,0,0,1,5,4H19a' +
+            '1,1,0,0,1,1,1Z"/></svg>';
+          actions.appendChild(kioskLink);
         }
         function relocate() {
           var toolbar = document.querySelector('[data-testid="data-testid Nav toolbar"]');
