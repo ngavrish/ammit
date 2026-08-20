@@ -105,10 +105,24 @@ a{color:var(--bronze);text-decoration:none;border-bottom:1px solid var(--bronze-
   font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase}
 a:hover{border-bottom-color:var(--bronze)}
 [hidden]{display:none!important}
+/* One page, two tabs. The charts are not a different product and should not
+   look like one: same bar, same bronze, no second logo to explain. */
+nav.tabs{margin-left:auto;display:flex;gap:.25rem;align-self:center}
+nav.tabs button{background:transparent;border:1px solid transparent;border-radius:2px;
+  padding:.45rem .9rem;color:var(--mute);cursor:pointer;
+  font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase}
+nav.tabs button:hover{background:var(--bronze-wash);color:var(--ink)}
+nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
+  border-color:var(--bronze-dim);color:var(--bronze)}
+#charts{max-width:none;padding:0;display:block;height:calc(100vh - 5.4rem)}
+#charts iframe{width:100%;height:100%;border:0;display:block;background:var(--navy)}
 </style></head><body>
 <header><h1>ammit</h1><span class="sub">the scales, the record, and the eating</span>
-<span style="margin-left:auto"><a href="{{charts}}" target="_blank">charts</a></span></header>
-<main>
+<nav class="tabs" role="tablist">
+  <button id="tab-scales" role="tab" aria-selected="true" onclick="tab('scales')">the scales</button>
+  <button id="tab-charts" role="tab" aria-selected="false" onclick="tab('charts')">charts</button>
+</nav></header>
+<main id="scales">
   <section>
     <h2>Limits <small id="where"></small></h2>
     <div id="form"></div>
@@ -133,7 +147,26 @@ a:hover{border-bottom-color:var(--bronze)}
   <section><h2>What ammit did <small>every limit crossed, and what followed</small></h2>
     <table id="judgements"></table></section>
 </main>
+<main id="charts" hidden>
+  <!-- kiosk drops Grafana's own header, menu and logo: inside this page there is
+       one product with two tabs, not two products sharing a browser. -->
+  <iframe id="charts-frame" title="charts" loading="lazy" src="about:blank"></iframe>
+</main>
 <script>
+// The charts load the first time somebody asks for them: a tab nobody opened
+// should not be polling Grafana every thirty seconds behind the page.
+const CHARTS = "{{charts}}/d/ammit/ammit?kiosk&theme=dark&from=now-12h&to=now&refresh=30s";
+function tab(which) {
+  for (const name of ["scales", "charts"]) {
+    document.getElementById(name).hidden = name !== which;
+    document.getElementById("tab-" + name).setAttribute("aria-selected", name === which);
+  }
+  const f = document.getElementById("charts-frame");
+  if (which === "charts" && f.getAttribute("src") === "about:blank") f.src = CHARTS;
+  history.replaceState(null, "", which === "charts" ? "#charts" : "#");
+}
+if (location.hash === "#charts") addEventListener("DOMContentLoaded", () => tab("charts"));
+
 const j = (p) => fetch(p).then(r => r.json());
 const esc = (s) => String(s ?? "").replace(/[<>&"]/g, c =>
   ({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));

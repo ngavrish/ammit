@@ -23,6 +23,9 @@ services:
     image: grafana/grafana:11.3.0
     ports: ["3301:3000"]
     environment:
+      # The page frames these charts as its own tab. Without this Grafana sends
+      # X-Frame-Options: deny and the tab is a blank rectangle.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
       GF_USERS_DEFAULT_THEME: dark
