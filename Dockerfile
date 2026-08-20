@@ -1,12 +1,16 @@
-# The most boring container in the stack, on purpose: python, a container client
-# for the actions that want one, curl for the actions that want that. Its whole
-# state is one sqlite file.
-FROM python:3.12-alpine
+# The server is Go, the image is what the actions need: a container client for
+# the ones that restart something, curl for the ones that call a webhook. Its
+# whole state is one sqlite file on a volume.
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+COPY server/go.mod server/go.sum ./
+RUN go mod download
+COPY server/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /ammit .
 
-RUN apk add --no-cache docker-cli curl
-
-COPY server/server.py /app/server.py
-
-ENV PYTHONUNBUFFERED=1 AMMIT_DB=/data/ammit.db AMMIT_CONFIG=/config/limits.yml
+FROM alpine:3.20
+RUN apk add --no-cache docker-cli curl ca-certificates
+COPY --from=build /ammit /usr/local/bin/ammit
+ENV AMMIT_DB=/data/ammit.db AMMIT_CONFIG=/config/limits.yml
 EXPOSE 8099
-ENTRYPOINT ["python3", "/app/server.py"]
+ENTRYPOINT ["ammit"]

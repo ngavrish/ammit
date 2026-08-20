@@ -10,6 +10,10 @@ timeouts:
   run: 14400               # the whole thing
   phase: 5400              # one phase
   session: 3600            # one agent session
+  # One wait for the model: ask, and get an answer back. The only limit that
+  # can catch a call that never returns, because nothing inside the process
+  # notices — there is no error to log and no retry to fire.
+  request: 900
   turn: 600                # one exchange — the hang nothing inside the run catches
 
 retention:
@@ -22,6 +26,14 @@ retention:
 limits:
   usd_per_run: 150
   turns_per_run: 4000
+  # Megabytes, per container. A worker that swells until the kernel kills it
+  # leaves no evidence behind, because the process that would have said so is
+  # the one that died — so the reading is taken from out here.
+  memory_mb: 6000
+
+sample:
+  every: 60                # seconds between readings of memory and cpu
+  containers: ""           # only containers whose name contains this; "" is all
 
 # The names below refer to the commands underneath, so this service never needs
 # to know whether it is watching a container, a pod or a process.
@@ -31,6 +43,8 @@ actions:
   on_phase_timeout: warn
   on_session_timeout: warn
   on_turn_timeout: restart_worker
+  on_request_timeout: restart_worker
+  on_memory: warn
   on_start: start_run
 
 # {run}, {name}, {phase}, {agent}, {session} and anything under `context` are

@@ -253,6 +253,25 @@ func store(e event) {
 //
 // A limit crossed silently is not a limit, and a kill nobody recorded is
 // indistinguishable from a crash.
+// A stuck thing is stuck on every tick. Without this, one hung request is a
+// judgement every twenty seconds and a worker restarted three times a minute —
+// which is how a watchdog turns into the outage. Once per cooldown, then again
+// if it is still going.
+var judged = map[string]float64{}
+
+func recently(rule, subject string, cooldown float64) bool {
+	if cooldown < 60 {
+		cooldown = 60
+	}
+	now := float64(time.Now().UnixNano()) / 1e9
+	key := rule + "\x1f" + subject
+	if last, ok := judged[key]; ok && now-last < cooldown {
+		return true
+	}
+	judged[key] = now
+	return false
+}
+
 func judge(scope, run, subject, rule string, threshold, observed float64,
 	action, outcome string) {
 	mu.Lock()
@@ -456,16 +475,32 @@ func weigh(conf Config) {
 		}
 
 		if limit, ok := conf.num("timeouts", "turn"); ok {
-			if quiet, agent, phase := quietFor(r.run); quiet > limit {
+			if quiet, agent, phase := quietFor(r.run); quiet > limit &&
+				!recently("timeouts.turn", r.run, limit) {
 				action := conf.str("actions", "on_turn_timeout", "warn")
 				ctx["agent"], ctx["phase"] = agent, phase
 				judge("turn", r.run, strings.TrimSpace(agent+" "+phase), "timeouts.turn",
 					limit, quiet, action, act(action, conf, ctx))
 			}
 		}
+		// One request to the model, timed from out here. Inside the run this is
+		// invisible: a call that never comes back has no error to log and no
+		// retry to trigger, and the two-hour silence that cost a run its
+		// afternoon looked exactly like a long think.
+		if limit, ok := conf.num("timeouts", "request"); ok {
+			for request, age := range openSpans(r.run, "request_start", "request_end", "session") {
+				if age <= limit || recently("timeouts.request", request, limit) {
+					continue
+				}
+				action := conf.str("actions", "on_request_timeout", "restart_worker")
+				ctx["request"] = request
+				judge("request", r.run, request, "timeouts.request", limit, age,
+					action, act(action, conf, ctx))
+			}
+		}
 		if limit, ok := conf.num("timeouts", "phase"); ok {
 			for phase, age := range openSpans(r.run, "phase_start", "phase_end", "phase") {
-				if age > limit {
+				if age > limit && !recently("timeouts.phase", phase, limit) {
 					action := conf.str("actions", "on_phase_timeout", "warn")
 					ctx["phase"] = phase
 					judge("phase", r.run, phase, "timeouts.phase", limit, age, action,
@@ -475,7 +510,7 @@ func weigh(conf Config) {
 		}
 		if limit, ok := conf.num("timeouts", "session"); ok {
 			for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
-				if age > limit {
+				if age > limit && !recently("timeouts.session", session, limit) {
 					action := conf.str("actions", "on_session_timeout", "warn")
 					ctx["session"] = session
 					judge("session", r.run, session, "timeouts.session", limit, age,
@@ -581,6 +616,7 @@ func main() {
 			conf := loadConfig(confPath)
 			if len(conf) > 0 {
 				recordLimits(conf)
+				keepSamples(conf)
 				weigh(conf)
 				pumpQueue(conf)
 				// Every tick: deciding whether there is anything to archive is one
