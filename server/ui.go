@@ -148,14 +148,14 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
     <table id="judgements"></table></section>
 </main>
 <main id="charts" hidden>
-  <!-- kiosk drops Grafana's own header, menu and logo: inside this page there is
-       one product with two tabs, not two products sharing a browser. -->
+  <!-- Grafana's own nav stays: the side menu carries Explore, Alerting and the
+       rest, and hiding it to keep the tab bar clean cost more than it saved. -->
   <iframe id="charts-frame" title="charts" loading="lazy" src="about:blank"></iframe>
 </main>
 <script>
 // The charts load the first time somebody asks for them: a tab nobody opened
 // should not be polling Grafana every thirty seconds behind the page.
-const CHARTS = "{{charts}}/d/ammit/ammit?kiosk&theme=dark&refresh=30s";
+const CHARTS = "{{charts}}/d/ammit/ammit?theme=dark&refresh=30s";
 let earliest = 0;
 function chartsURL() {
   // A little before the first run, a little after now: the whole record and no
