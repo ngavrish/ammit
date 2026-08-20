@@ -432,6 +432,40 @@ func itemFacts(run, item string) (string, string) {
 	return kind, agent
 }
 
+// contextPerTurn is what each agent's messages carried, on average, in the
+// sessions of this run that have finished.
+//
+// Everything a turn reads is in it — the system prompt, the map somebody
+// inlined, the whole conversation so far — because that is what gets sent. A
+// growing conversation raises this honestly; a document in the prompt raises it
+// from the first turn and never gives it back, which is what the number is
+// watched for.
+func contextPerTurn(run string) map[string]float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	rows, err := db.Query(`
+		SELECT coalesce(agent,'?'),
+		       sum(coalesce(json_extract(payload,'$.tokens_in'),0)
+		         + coalesce(json_extract(payload,'$.cache_read'),0)
+		         + coalesce(json_extract(payload,'$.cache_write'),0)),
+		       sum(coalesce(json_extract(payload,'$.turns'),0))
+		FROM events WHERE run=? AND kind='session_end' GROUP BY 1`, run)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var who string
+		var read, turns float64
+		if err := rows.Scan(&who, &read, &turns); err != nil || turns <= 0 {
+			continue
+		}
+		out[who] = read / turns
+	}
+	return out
+}
+
 func quietFor(run string) (float64, string, string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -542,6 +576,28 @@ func weigh(conf Config) {
 				act(action, conf, ctx))
 			finish(r.run, "BLOCKED", "ammit: over limits.usd_per_run")
 			continue
+		}
+		// What the pipeline is carrying, turn after turn.
+		//
+		// A cost limit says a run spent too much and a turn limit says it took
+		// too many; neither says the prompt was three times the size it needed
+		// to be, which is the cheapest thing to fix and the easiest to not
+		// notice. One run carried a 253 KB document in every message: 27 million
+		// tokens re-sent, a quarter of the run, invisible in both the dollars and
+		// the turns because it looked exactly like ordinary work.
+		//
+		// Measured per session as the context each of its turns carried, which is
+		// what a prompt costs when it is sent again and again.
+		if limit, ok := conf.num("limits", "context_tokens"); ok && limit > 0 {
+			for who, size := range contextPerTurn(r.run) {
+				if size <= limit || recently("limits.context_tokens", r.run+who, 900) {
+					continue
+				}
+				action := conf.str("actions", "on_context", "warn")
+				ctx["agent"] = who
+				judge("context", r.run, who, "limits.context_tokens", limit, size,
+					action, act(action, conf, ctx))
+			}
 		}
 		if limit, ok := conf.num("limits", "turns_per_run"); ok && float64(r.turns) > limit {
 			judge("run", r.run, r.name, "limits.turns_per_run", limit, float64(r.turns),

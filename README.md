@@ -190,7 +190,17 @@ with the limit drawn on each: `limits.usd_per_run`, `limits.turns_per_run`,
 `timeouts.run`, `timeouts.phase`, `timeouts.session`, `timeouts.request`,
 `timeouts.turn`, `limits.memory_mb`, `queue.parallel`.
 
-Two of these exist because nothing else could see them. **A request to the model
+Three of these exist because nothing else could see them.
+
+**What a prompt carries** is the newest, and the one that cost the most. A run
+that spends too much says so in dollars; a run whose prompt is three times the
+size it needs to be says nothing at all and looks like ordinary work. One run
+carried a 253 KB document in every message — 27 million tokens re-sent, a quarter
+of that run, invisible in both the money and the turns. `limits.context_tokens`
+is what each of a session's turns was actually sent, and the chart separates a
+conversation growing honestly from a document that was there from the first turn
+and never left.
+ **A request to the model
 that never comes back** has no error to log and no retry to fire — from inside it
 is indistinguishable from a long think, and one sat for two hours twice in a
 single run. It is timed from out here, and `timeouts.request` is a thing that can

@@ -285,6 +285,34 @@ ts("Cost by agent", "Which agent is spending the money.", "currencyUSD", [
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.usd_per_run")], 0)
 
+ts("What each turn carries, by agent",
+   "The context every message of that session was sent with: the system prompt, "
+   "whatever was inlined into it, and the conversation so far. A conversation "
+   "raises this honestly as it grows; a document in the prompt raises it from the "
+   "first turn and never gives it back. That is what this chart is for — one run "
+   "carried a 253 KB map in every message and it looked like ordinary work.",
+   "short", [
+    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric,
+         (coalesce(json_extract(payload,'$.tokens_in'),0)
+        + coalesce(json_extract(payload,'$.cache_read'),0)
+        + coalesce(json_extract(payload,'$.cache_write'),0))
+         / max(coalesce(json_extract(payload,'$.turns'),1),1) AS value
+         FROM events WHERE kind = 'session_end'
+         AND coalesce(json_extract(payload,'$.turns'),0) > 0 ORDER BY at"""),
+    limit_of("limits.context_tokens")], 0, points=True)
+
+ts("Tokens read per run",
+   "Everything the models were sent, cached or not. A subscription counts these "
+   "whether they came from cache or not, which is why a cheap run can still empty "
+   "an allowance.", "short", [
+    q("""SELECT e.at*1000 AS time, r.name AS metric,
+         sum(coalesce(json_extract(e.payload,'$.tokens_in'),0)
+           + coalesce(json_extract(e.payload,'$.cache_read'),0)
+           + coalesce(json_extract(e.payload,'$.cache_write'),0))
+           OVER (PARTITION BY e.run ORDER BY e.at) AS value
+         FROM events e JOIN runs r ON r.run = e.run
+         WHERE e.kind = 'session_end' ORDER BY e.at""")], 12)
+
 ts("Turns by agent", "Which agent is taking the turns.", "short", [
     q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
          count(*) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value

@@ -81,6 +81,40 @@
           // the actual input-wrapper is the one that has to grow.
           var box = search.querySelector('[class*="input-wrapper"]');
           if (box) box.style.width = (2 * box.getBoundingClientRect().width) + 'px';
+
+          // Only this dashboard: Share, Edit and the collapse arrow give way
+          // to a single kiosk-mode link, in the same actions container the
+          // search box was just excused from having to share. Re-hides on
+          // every call, not just the first: the refresh cycle re-renders
+          // that Share/Edit wrapper and React reasserts its own style prop
+          // over it, quietly reversing a display:none set once and never
+          // touched again.
+          if (!/^\/d\/ammit\//.test(location.pathname)) return;
+          var actions = toolbar.querySelector('[class*="NavToolbar-actions"]');
+          if (!actions) return;
+          var chevronClass = '';
+          for (var j = 0; j < actions.children.length; j++) {
+            var c = actions.children[j];
+            if (c.hasAttribute('data-ammit-kiosk')) continue;
+            if (c.tagName === 'BUTTON' && c.title === 'Toggle top search bar') chevronClass = c.className;
+            if (c.style.display !== 'none') c.style.display = 'none';
+          }
+          if (actions.querySelector('[data-ammit-kiosk]')) return;
+          // Built by hand, not URLSearchParams: Grafana's own kiosk detection
+          // reads the query string as a bare flag — "kiosk", no "=" — and
+          // URLSearchParams always serializes a set value as "kiosk=", which
+          // it silently does not recognise.
+          var href = location.href.split('#')[0];
+          href += (href.indexOf('?') === -1 ? '?' : '&') + 'kiosk';
+          var kioskLink = document.createElement('a');
+          kioskLink.href = href;
+          kioskLink.title = 'Kiosk mode';
+          kioskLink.textContent = 'Kiosk mode';
+          kioskLink.setAttribute('data-ammit-kiosk', '1');
+          kioskLink.className = chevronClass;
+          kioskLink.style.cssText = 'display:flex;align-items:center;padding:0 10px;' +
+            'color:#ccccdc;font:12px sans-serif;text-decoration:none;white-space:nowrap;height:32px';
+          actions.appendChild(kioskLink);
         }
         var pending = false;
         function schedule() {
