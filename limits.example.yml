@@ -62,7 +62,11 @@ commands:
   # the ticket merely became free for another run to claim on top of it.
   stop_run: docker exec {worker} sh -c "touch /runs/{name}/.cancel"
   stop_phase: docker exec {worker} sh -c "touch /runs/{name}/.cancel.phase.{phase}"
-  stop_session: docker exec {worker} sh -c "touch /runs/{name}/.cancel.session.{agent}"
+  # A file cannot interrupt a process that is waiting on a model, and that is
+  # the one wait worth interrupting. These call the worker's control handle, so
+  # the session ends inside the second rather than whenever the call returns.
+  stop_session: curl -sS -X POST {control} -d '{"scope":"session","id":"{agent}","run":"{name}","action":"stop"}'
+  stop_session_file: docker exec {worker} sh -c "touch /runs/{name}/.cancel.session.{agent}"
   stop_branch: docker exec {worker} sh -c "touch /runs/{name}/.cancel.branch.{branch}"
   # And the other half: start that one thing again instead of abandoning it.
   # Fires once — the runner eats the marker — and gives up after RUN_RETRY_MAX
@@ -70,9 +74,12 @@ commands:
   # billing.
   retry_phase: docker exec {worker} sh -c "touch /runs/{name}/.retry.phase.{phase}"
   retry_branch: docker exec {worker} sh -c "touch /runs/{name}/.retry.branch.{branch}"
-  retry_session: docker exec {worker} sh -c "touch /runs/{name}/.retry.session.{agent}"
-  start_run: curl -sS -X POST {starter} -H "Content-Type: application/json" -d {payload}
+  retry_session: curl -sS -X POST {control} -d '{"scope":"session","id":"{agent}","run":"{name}","action":"retry"}' 
+  # The payload is quoted here, not in the template's user: unquoted, the shell
+  # eats the JSON's own quotes and the request arrives as {key:APF-1934}.
+  start_run: curl -sS -X POST {starter} -H "Content-Type: application/json" -d '{payload}' 
 
 context:
   worker: my-pipeline-worker-1
-  starter: http://orchestrator:8081/api/run
+  starter: http://orchestrator:8081/run
+  control: http://agent-runner:9099/cancel
