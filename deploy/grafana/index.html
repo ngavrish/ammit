@@ -59,16 +59,23 @@
       (function () {
         function relocate() {
           var toolbar = document.querySelector('[data-testid="data-testid Nav toolbar"]');
-          var actions = toolbar && toolbar.querySelector('[class*="NavToolbar-actions"]');
-          if (!actions) return;
+          if (!toolbar) return;
           var wrappers = document.querySelectorAll('[data-testid="wrapper"]');
           var search = null;
           for (var i = 0; i < wrappers.length; i++) {
             if (wrappers[i].querySelector('input, [class*="input"]')) { search = wrappers[i]; break; }
           }
-          if (!search || actions.firstChild === search) return;
-          actions.insertBefore(search, actions.firstChild);
-          search.style.marginRight = 'auto';
+          if (!search || search.parentElement === toolbar) return;
+          // Absolute and centered on the toolbar itself, not flexed in among
+          // the breadcrumbs and the action buttons: their widths change (edit
+          // mode alone adds four buttons) and a flex position would drift with
+          // them. This holds dead center regardless of what is on either side.
+          toolbar.style.position = 'relative';
+          toolbar.appendChild(search);
+          search.style.position = 'absolute';
+          search.style.left = '50%';
+          search.style.top = '50%';
+          search.style.transform = 'translate(-50%, -50%)';
         }
         var pending = false;
         function schedule() {
@@ -76,7 +83,10 @@
           pending = true;
           requestAnimationFrame(function () { pending = false; relocate(); });
         }
-        new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+        // documentElement, not body: this script runs from <head>, while the
+        // parser is still there and document.body is still null — observing
+        // body threw here and killed the whole script before it did anything.
+        new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
         schedule();
       })();
     </script>
