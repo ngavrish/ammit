@@ -286,6 +286,30 @@ func recently(rule, subject string, cooldown float64) bool {
 	return false
 }
 
+// Twice a limit is a different event from a limit.
+//
+// Crossing one is ordinary — an estimate was low, a phase was unlucky, and a
+// warning is the right size of response. Crossing it twice over is not the same
+// thing happening more: it is a claim that whatever the limit encoded is no
+// longer true of this run, and it wants looking at rather than noting. A run
+// that took 1600 turns needs a bigger number in the file; a run that took 3200
+// needs somebody to read what it was doing.
+//
+// So a rule may name a second action for its own multiple, and the multiple is
+// one setting for all of them.
+func escalated(conf Config, rule string, threshold, observed float64,
+	action string) (string, bool) {
+	factor, ok := conf.num("escalate", "factor")
+	if !ok || factor <= 1 || threshold <= 0 || observed < threshold*factor {
+		return action, false
+	}
+	key := "on_" + strings.TrimPrefix(strings.TrimPrefix(rule, "limits."), "timeouts.")
+	if over := conf.str("actions", key+"_over", ""); over != "" {
+		return over, true
+	}
+	return conf.str("actions", "on_escalation", action), true
+}
+
 func judge(scope, run, subject, rule string, threshold, observed float64,
 	action, outcome string) {
 	mu.Lock()
@@ -450,40 +474,6 @@ func heaviestTurn(run string) (float64, string, string) {
 	return size, who, phase
 }
 
-// contextPerTurn is what each agent's messages carried, on average, in the
-// sessions of this run that have finished.
-//
-// Everything a turn reads is in it — the system prompt, the map somebody
-// inlined, the whole conversation so far — because that is what gets sent. A
-// growing conversation raises this honestly; a document in the prompt raises it
-// from the first turn and never gives it back, which is what the number is
-// watched for.
-func contextPerTurn(run string) map[string]float64 {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(`
-		SELECT coalesce(agent,'?'),
-		       sum(coalesce(json_extract(payload,'$.tokens_in'),0)
-		         + coalesce(json_extract(payload,'$.cache_read'),0)
-		         + coalesce(json_extract(payload,'$.cache_write'),0)),
-		       sum(coalesce(json_extract(payload,'$.turns'),0))
-		FROM events WHERE run=? AND kind='session_end' GROUP BY 1`, run)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	out := map[string]float64{}
-	for rows.Next() {
-		var who string
-		var read, turns float64
-		if err := rows.Scan(&who, &read, &turns); err != nil || turns <= 0 {
-			continue
-		}
-		out[who] = read / turns
-	}
-	return out
-}
-
 func quietFor(run string) (float64, string, string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -597,6 +587,11 @@ func weigh(conf Config) {
 		}
 		// What the pipeline is carrying, turn after turn.
 		//
+		// One number, not two. An average per session is this number multiplied
+		// by the turns the session took and divided by them again — a third
+		// figure derived from two that are already here, arriving only once the
+		// session is over, which is after every turn in it has been paid for.
+		//
 		// A cost limit says a run spent too much and a turn limit says it took
 		// too many; neither says the prompt was three times the size it needed
 		// to be, which is the cheapest thing to fix and the easiest to not
@@ -618,20 +613,18 @@ func weigh(conf Config) {
 					action, act(action, conf, ctx))
 			}
 		}
-		if limit, ok := conf.num("limits", "context_tokens"); ok && limit > 0 {
-			for who, size := range contextPerTurn(r.run) {
-				if size <= limit || recently("limits.context_tokens", r.run+who, 900) {
-					continue
+		if limit, ok := conf.num("limits", "turns_per_run"); ok && float64(r.turns) > limit {
+			action := conf.str("actions", "on_turns", "warn")
+			action, over := escalated(conf, "limits.turns_per_run", limit,
+				float64(r.turns), action)
+			if !recently("limits.turns_per_run", r.run+action, 1800) {
+				rule := "limits.turns_per_run"
+				if over {
+					rule += " (twice over)"
 				}
-				action := conf.str("actions", "on_context", "warn")
-				ctx["agent"] = who
-				judge("context", r.run, who, "limits.context_tokens", limit, size,
+				judge("run", r.run, r.name, rule, limit, float64(r.turns),
 					action, act(action, conf, ctx))
 			}
-		}
-		if limit, ok := conf.num("limits", "turns_per_run"); ok && float64(r.turns) > limit {
-			judge("run", r.run, r.name, "limits.turns_per_run", limit, float64(r.turns),
-				"warn", "")
 		}
 
 		if limit, ok := conf.num("timeouts", "turn"); ok {

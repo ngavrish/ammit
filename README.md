@@ -122,6 +122,24 @@ container, a pod or a process. The file is re-read every tick, so a limit can be
 changed while a run is going. Zero means no limit, and writing zero is a decision
 rather than an omission.
 
+## Twice a limit
+
+Crossing a limit is ordinary: an estimate was low, a phase was unlucky, and a
+warning is the right size of answer. Crossing it twice over is a different claim
+— that whatever the limit encoded is no longer true of this run — and it wants
+reading rather than noting.
+
+```yaml
+escalate:
+  factor: 2
+actions:
+  on_turns: warn                    # 1600 turns is a note
+  on_turns_per_run_over: stop_run   # 3200 is a run to go and read
+```
+
+Any rule may name its own second action as `on_<rule>_over`; without one,
+`actions.on_escalation` applies, and without that the ordinary action stands.
+
 ## The queue
 
 ```bash
@@ -193,13 +211,11 @@ with the limit drawn on each: `limits.usd_per_run`, `limits.turns_per_run`,
 Three of these exist because nothing else could see them.
 
 **What a prompt carries** is the newest, and the one that cost the most. A run
-that spends too much says so in dollars; a run whose prompt is three times the
-size it needs to be says nothing at all and looks like ordinary work. One run
-carried a 253 KB document in every message — 27 million tokens re-sent, a quarter
-of that run, invisible in both the money and the turns. `limits.context_tokens`
-is what each of a session's turns was actually sent, and the chart separates a
-conversation growing honestly from a document that was there from the first turn
-and never left.
+that spends too much says so in dollars; a run whose prompt is twice the size it
+needs to be says nothing at all and looks like ordinary work. One run carried a
+253 KB document in every message — 27 million tokens re-sent, a quarter of that
+run, invisible in both the money and the turns. `limits.turn_tokens` is what one
+turn was sent, weighed while the next turn has not been paid for yet.
  **A request to the model
 that never comes back** has no error to log and no retry to fire — from inside it
 is indistinguishable from a long think, and one sat for two hours twice in a

@@ -20,7 +20,7 @@ timeouts:
   # .feature file here, a test file or a class elsewhere — so the client says
   # what kind of thing it started and the limit is looked up under that name.
   # Add timeouts.<kind> for any other unit a stack wants bounded.
-  test: 300                # one test: a scenario, a test case
+  test: 3600               # one test: a scenario, a test case
   module: 1200             # one test module: a .feature file, a test file
 retention:
   # Finished runs older than this move into archive/ammit-YYYY-MM.db and leave
@@ -29,17 +29,22 @@ retention:
   days: 30
   dir: /data/archive
 
+# Twice a limit is a different event from a limit. Crossing one is ordinary and a
+# warning is the right size of answer; crossing it twice over says the limit no
+# longer describes this run, and that wants reading rather than noting. Any rule
+# may name its own second action as on_<rule>_over.
+escalate:
+  factor: 2
+
 limits:
   usd_per_run: 150
-  turns_per_run: 4000
-  # What each turn carries: the system prompt, whatever was inlined into it, and
-  # the conversation so far. A run that spends too much says so in dollars; a run
-  # whose prompt is three times the size it needs to be says nothing at all, and
-  # looks like ordinary work. One carried a 253 KB document in every message —
-  # 27 million tokens re-sent, a quarter of that run.
-  context_tokens: 120000
-  # And one turn on its own. The average above says a session was heavy once it
-  # is over; this says a turn is heavy while the next one has not been paid for.
+  turns_per_run: 1600
+  # What one turn was sent: the system prompt, whatever was inlined into it, and
+  # the conversation so far. Cached or not — an allowance is spent on tokens
+  # read. A run that spends too much says so in dollars; a run whose prompt is
+  # twice the size it needs says nothing and looks like ordinary work. One
+  # carried a 253 KB map in every message: 27 million tokens re-sent, a quarter
+  # of that run.
   turn_tokens: 150000
   # Megabytes, per container. A worker that swells until the kernel kills it
   # leaves no evidence behind, because the process that would have said so is
@@ -64,7 +69,8 @@ actions:
   on_turn_timeout_blind: restart_worker
   on_request_timeout: retry_session
   on_memory: warn
-  on_context: warn
+  on_turns: warn
+  on_turns_per_run_over: stop_run   # 1600 is a note; 3200 is a run to go and read
   on_turn_tokens: warn
   on_module_timeout: retry_session
   on_test_timeout: warn
