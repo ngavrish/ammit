@@ -66,6 +66,37 @@ func Send(kind string, fields map[string]any) {
 	}()
 }
 
+func encode(kind string, fields map[string]any) []byte {
+	payload := map[string]any{"kind": kind,
+		"at": float64(time.Now().UnixNano()) / 1e9}
+	for k, v := range fields {
+		payload[k] = v
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	return body
+}
+
+// SendAndWait is Send for the events whose loss leaves a shape behind: the ones
+// that close a span. Everything else is fire-and-forget on purpose.
+func SendAndWait(kind string, fields map[string]any) {
+	if !enabled {
+		return
+	}
+	body := encode(kind, fields)
+	if body == nil {
+		return
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Post(endpoint+"/events", "application/json",
+		bytes.NewReader(body))
+	if err == nil {
+		resp.Body.Close()
+	}
+}
+
 func id() string {
 	b := make([]byte, 6)
 	rand.Read(b)
@@ -89,6 +120,68 @@ func NewRun(name string, tags map[string]string) *Run {
 func (r *Run) Finish(verdict, summary string) {
 	Send("run_end", map[string]any{"run": r.ID, "verdict": verdict, "summary": summary,
 		"seconds": time.Since(r.t0).Seconds()})
+}
+
+// Adopt joins a run somebody else opened, instead of starting another one.
+//
+// The work does not always begin where the reporting does. One service kicks a
+// ticket off and deploys an environment for minutes before a second service is
+// even dispatched to do the thinking; if each mints its own id, one piece of
+// work becomes two runs, neither of which is the whole thing, and a limit on
+// "the run" applies to half of it. Whoever starts the work opens the id and
+// hands it over — through a shared file, a queue message, an environment
+// variable, whatever the two already have between them.
+func Adopt(id, name string) *Run {
+	return &Run{ID: id, Name: name, started: time.Now()}
+}
+
+// StepSpan is one unit of work that is not a conversation with a model: a
+// deploy, a build, a migration, a test module.
+//
+// It exists because these are the steps that go quiet. A phase full of model
+// calls reports itself for free — thousands of events. A phase that is one
+// command sends nothing between its start and its end, and from outside that is
+// indistinguishable from a process that died, because it is the same thing: no
+// events. Report the start, a line a minute while it runs, and the end.
+type StepSpan struct {
+	run     *Run
+	name    string
+	kind    string
+	started time.Time
+}
+
+// Step opens a unit of work. `kind` is what sort it is — "deploy", "module",
+// "gate" — and the server looks up timeouts.<kind> under that name, so a
+// pipeline can bound its own units without this library knowing what they are.
+func (r *Run) Step(name, kind string) *StepSpan {
+	s := &StepSpan{run: r, name: name, kind: kind, started: time.Now()}
+	Send("item_start", map[string]any{"run": r.ID, "item": name, "session": name,
+		"itemkind": kind, "phase": name})
+	return s
+}
+
+// Log says the step is still going, and what it is doing. Once a minute is
+// enough: it is not for the log, it is for the difference between working and
+// wedged, which nothing else can tell.
+func (s *StepSpan) Log(text string) {
+	Send("log", map[string]any{"run": s.run.ID, "item": s.name, "session": s.name,
+		"phase": s.name, "level": "tool", "text": text})
+}
+
+// End closes the step with how long it took and whether it worked.
+//
+// Sent and waited for, unlike everything else here. A step that opens and never
+// closes reads, to anything watching, as a step still running — for ever — and a
+// short-lived process that fires this into a goroutine and then exits kills the
+// goroutine before it sends anything.
+func (s *StepSpan) End(err error) {
+	fields := map[string]any{"run": s.run.ID, "item": s.name, "session": s.name,
+		"itemkind": s.kind, "phase": s.name, "ok": err == nil,
+		"seconds": time.Since(s.started).Seconds()}
+	if err != nil {
+		fields["error"] = err.Error()
+	}
+	SendAndWait("item_end", fields)
 }
 
 func (r *Run) Note(text string) {
@@ -119,12 +212,12 @@ func (p *PhaseSpan) End(err error) {
 // Turn is the heartbeat the server watches: a session that stops calling it is
 // waiting on something that is not coming back.
 type SessionSpan struct {
-	run                   *Run
-	ID, Agent, Branch     string
-	Model                 string
-	turns                 int
-	usd                   float64
-	t0                    time.Time
+	run               *Run
+	ID, Agent, Branch string
+	Model             string
+	turns             int
+	usd               float64
+	t0                time.Time
 }
 
 func (r *Run) Session(agent, branch, model string) *SessionSpan {
