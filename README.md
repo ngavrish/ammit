@@ -75,6 +75,47 @@ the phase had never said either.
 So: **a long-running step reports a line a minute.** Not for the log — for the
 difference between working and wedged, which nothing else can tell.
 
+### Every phase, not most of them
+
+A pipeline is only as visible as its quietest step. The phases full of model
+calls report themselves for free — thousands of events. The ones that are a
+single command report nothing at all, and those are the slow ones: the build, the
+deploy, the migration, the suite.
+
+Two examples. A step that talks to a model:
+
+```python
+with run.phase("implementing"):
+    with run.session("coder", branch="req-3", model="sonnet") as s:
+        s.turn()
+        s.spend(usd=0.42, tokens_in=120_000, tokens_out=3_400)
+```
+
+And a step that is a command — the one that usually gets left out:
+
+```python
+import subprocess, time
+
+with run.phase("deploy"):
+    proc = subprocess.Popen(["./deploy.sh"], stdout=subprocess.PIPE, text=True)
+    said = 0.0
+    for line in proc.stdout:            # line by line, not captured in a lump:
+        if time.time() - said > 60:     # output that arrives at the end says
+            said = time.time()          # nothing while it matters
+            run.note(line.strip())
+    proc.wait()
+```
+
+In a language without an SDK, the same thing is one line of shell:
+
+```bash
+curl -sS -m 3 -X POST "$AMMIT_URL/events" -H 'Content-Type: application/json' \
+  -d "{\"kind\":\"log\",\"run\":\"$RUN\",\"phase\":\"deploy\",\"text\":\"$line\"}" &
+```
+
+Fire it and move on — reporting must never be why a deploy is slower, and a
+dropped line costs nothing. A missing minute of them costs a run.
+
 ## Clients
 
 One call in the pipeline's language, and none of them can slow it down: every
