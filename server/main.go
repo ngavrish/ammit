@@ -393,11 +393,47 @@ func act(name string, conf Config, ctx map[string]string) string {
 
 func finish(run, verdict, summary string) {
 	mu.Lock()
-	defer mu.Unlock()
 	now := float64(time.Now().UnixNano()) / 1e9
 	db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
 		now, verdict, summary, run)
 	db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, now, run)
+	mu.Unlock()
+	closeSpansOf(run, now, "the run ended")
+}
+
+// closeSpansOf writes the closing events for everything still open under a run
+// that is over.
+//
+// A run does not end tidily. It is stopped from outside, or its worker is
+// restarted under it, and whatever was in flight at that moment — a request, a
+// session, a phase, a deploy — never sends the event that would close it. Left
+// alone those spans read as still running, for ever: the charts draw them
+// growing, and anything asking "what is open" gets an answer about a run that
+// finished last night. Two of them have been sitting in this database since a
+// three-second restart yesterday.
+//
+// A span cannot outlive its run. So the run's end is their end, recorded as
+// what it is — closed because the run ended, not because the work finished —
+// and never mistaken for a clean one: ok is false and the reason says who did
+// it.
+func closeSpansOf(run string, at float64, why string) {
+	pairs := []struct{ start, end, column string }{
+		{"request_start", "request_end", "session"},
+		{"item_start", "item_end", "session"},
+		{"session_start", "session_end", "agent"},
+		{"phase_start", "phase_end", "phase"},
+	}
+	for _, p := range pairs {
+		for name, age := range openSpans(run, p.start, p.end, p.column) {
+			e := event{"kind": p.end, "at": at, "run": run, p.column: name,
+				"ok": false, "seconds": age,
+				"error": "closed by ammit: " + why}
+			if p.column != "session" {
+				e["session"] = name
+			}
+			store(e)
+		}
+	}
 }
 
 type openRun struct {
