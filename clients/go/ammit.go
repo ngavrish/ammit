@@ -132,7 +132,7 @@ func (r *Run) Finish(verdict, summary string) {
 // hands it over — through a shared file, a queue message, an environment
 // variable, whatever the two already have between them.
 func Adopt(id, name string) *Run {
-	return &Run{ID: id, Name: name, started: time.Now()}
+	return &Run{ID: id, Name: name, t0: time.Now()}
 }
 
 // StepSpan is one unit of work that is not a conversation with a model: a
