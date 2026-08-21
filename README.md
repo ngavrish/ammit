@@ -211,6 +211,25 @@ actions:
 Any rule may name its own second action as `on_<rule>_over`; without one,
 `actions.on_escalation` applies, and without that the ordinary action stands.
 
+## Gates and repair
+
+A pipeline that checks its own work has two questions nobody usually answers:
+how often each check refuses, and how long the repair then takes. Between them
+they separate a gate that earns its cost from a tollbooth.
+
+```python
+run.gate("planrules", verdict="red", findings=18, seconds=3)
+```
+
+The round is counted here rather than taken from the caller: the pipeline knows
+what it found, this service knows how many times it has been told. What counts
+as a finding stays the pipeline's business — a watchdog that parses somebody
+else's log is a watchdog that breaks when the log is reworded.
+
+Charted: findings per gate round by round, what a round costs, and a table of
+rounds-to-green per gate. One round is a check doing its job; three is a repair
+that cannot hear what is being asked.
+
 ## The queue
 
 ```bash
@@ -228,6 +247,7 @@ button first.
 | `POST /events` | what the client reports |
 | `POST /queue` | queue an item |
 | `GET /runs` | runs with cost, turns, verdicts |
+| `GET /gates` | what each check decided, and how many rounds it took |
 | `GET /judgements` | every limit crossed, what was observed, what was done |
 | `GET /queue` | what is waiting |
 | `GET /limits` | the config as the server currently reads it |

@@ -3240,13 +3240,241 @@
   },
   {
    "type": "row",
-   "title": "Where the time went",
+   "title": "Gates and repair",
    "collapsed": false,
    "gridPos": {
     "h": 1,
     "w": 24,
     "x": 0,
     "y": 263
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "title": "Findings per gate, each time it ran",
+   "description": "How much each check refuses, round by round. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 264
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "always",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT at*1000 AS time, phase AS metric, findings AS value FROM gates ORDER BY at",
+     "queryText": "SELECT at*1000 AS time, phase AS metric, findings AS value FROM gates ORDER BY at"
+    }
+   ]
+  },
+  {
+   "type": "timeseries",
+   "title": "How long a round takes, by gate",
+   "description": "The check plus the repair it caused. A loop that costs more than the fault is a loop worth removing.",
+   "transparent": true,
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 272
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels.metric}",
+     "unit": "s",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 6,
+      "spanNulls": true,
+      "showPoints": "always",
+      "pointSize": 5
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/^(timeouts|limits|queue|retention|sample)\\./"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       },
+       {
+        "id": "custom.lineStyle",
+        "value": {
+         "fill": "dash",
+         "dash": [
+          10,
+          8
+         ]
+        }
+       },
+       {
+        "id": "custom.lineWidth",
+        "value": 2
+       },
+       {
+        "id": "custom.fillOpacity",
+        "value": 0
+       },
+       {
+        "id": "custom.lineInterpolation",
+        "value": "stepAfter"
+       },
+       {
+        "id": "custom.showPoints",
+        "value": "never"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "queryType": "time series",
+     "timeColumns": [
+      "time"
+     ],
+     "rawQueryText": "SELECT at*1000 AS time, phase AS metric, seconds AS value FROM gates WHERE seconds > 0 ORDER BY at",
+     "queryText": "SELECT at*1000 AS time, phase AS metric, seconds AS value FROM gates WHERE seconds > 0 ORDER BY at"
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "title": "Rounds to green, per gate",
+   "description": "How many times each check had to run before it stopped refusing, and what the rounds cost. One round is a check doing its job; three is a repair that cannot hear what is being asked.",
+   "transparent": true,
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 280
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "targets": [
+    {
+     "queryType": "table",
+     "timeColumns": [],
+     "rawQueryText": "SELECT phase, coalesce(nullif(branch,''),'\u2014') AS branch, max(round) AS rounds, sum(findings) AS findings_total, ROUND(sum(seconds)/60.0,1) AS minutes, max(CASE WHEN verdict='green' THEN 'reached green' ELSE verdict END) AS ended FROM gates GROUP BY phase, branch ORDER BY minutes DESC LIMIT 60",
+     "queryText": "SELECT phase, coalesce(nullif(branch,''),'\u2014') AS branch, max(round) AS rounds, sum(findings) AS findings_total, ROUND(sum(seconds)/60.0,1) AS minutes, max(CASE WHEN verdict='green' THEN 'reached green' ELSE verdict END) AS ended FROM gates GROUP BY phase, branch ORDER BY minutes DESC LIMIT 60"
+    }
+   ]
+  },
+  {
+   "type": "row",
+   "title": "Where the time went",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 289
    },
    "panels": []
   },
@@ -3259,7 +3487,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 264
+    "y": 290
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3290,7 +3518,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 273
+    "y": 299
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3320,7 +3548,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 282
+    "y": 308
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3350,7 +3578,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 291
+    "y": 317
    },
    "datasource": {
     "type": "frser-sqlite-datasource",
@@ -3381,7 +3609,7 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 300
+    "y": 326
    },
    "datasource": {
     "type": "frser-sqlite-datasource",

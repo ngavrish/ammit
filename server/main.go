@@ -75,6 +75,26 @@ CREATE TABLE IF NOT EXISTS judgements (
 );
 CREATE INDEX IF NOT EXISTS judgements_at ON judgements (at);
 
+-- What a check said, and how many rounds it took to stop saying it.
+--
+-- A pipeline that reviews its own work has two questions nobody could answer:
+-- how often each check refuses, and how long the repair takes. Both are the
+-- difference between a gate that is earning its cost and a gate that is a
+-- tollbooth. Reported by the pipeline rather than read out of its logs, because
+-- what counts as a finding is the pipeline's business and not this service's.
+CREATE TABLE IF NOT EXISTS gates (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    at       REAL NOT NULL,
+    run      TEXT,
+    phase    TEXT NOT NULL,
+    branch   TEXT,
+    verdict  TEXT NOT NULL,      -- red | green | blocked
+    findings INTEGER DEFAULT 0,
+    round    INTEGER DEFAULT 1,  -- how many times this check has run here
+    seconds  REAL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS gates_run ON gates (run, phase);
+
 CREATE TABLE IF NOT EXISTS documents (
     id    INTEGER PRIMARY KEY AUTOINCREMENT,
     at    REAL NOT NULL,
@@ -259,6 +279,18 @@ func store(e event) {
 		db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
 			at, e.s("verdict"), e.s("summary"), e.s("run"))
 		db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, at, e.s("run"))
+	case "gate":
+		// The round is counted here rather than trusted from the caller: a
+		// pipeline knows what it found, and this service knows how many times it
+		// has been told.
+		var round int
+		db.QueryRow(`SELECT count(*) FROM gates WHERE run=? AND phase=? AND
+		             coalesce(branch,'')=?`, e.s("run"), e.s("phase"),
+			e.s("branch")).Scan(&round)
+		db.Exec(`INSERT INTO gates (at, run, phase, branch, verdict, findings,
+		         round, seconds) VALUES (?,?,?,?,?,?,?,?)`,
+			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("verdict"),
+			int(e.f("findings")), round+1, e.f("seconds"))
 	case "spend":
 		db.Exec(`UPDATE runs SET usd = coalesce(usd,0) + ? WHERE run=?`,
 			e.f("usd"), e.s("run"))
@@ -1150,6 +1182,10 @@ func main() {
 	mux.HandleFunc("GET /runs", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT * FROM runs ORDER BY started DESC LIMIT 50`)
 	})
+	mux.HandleFunc("GET /gates", func(w http.ResponseWriter, r *http.Request) {
+		rows2json(w, `SELECT * FROM gates ORDER BY id DESC LIMIT 500`)
+	})
+
 	mux.HandleFunc("GET /judgements", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT * FROM judgements ORDER BY id DESC LIMIT 200`)
 	})

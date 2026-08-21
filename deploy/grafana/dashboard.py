@@ -451,6 +451,33 @@ panels.append({
                        GROUP BY 1) ORDER BY time""", "table", ("time",))]})
 Y[0] += 8
 
+# ------------------------------------------------------- gates and repair
+row("Gates and repair")
+
+ts("Findings per gate, each time it ran",
+   "How much each check refuses, round by round. A gate that never finds "
+   "anything is a tollbooth; one whose findings do not fall between rounds is "
+   "asking for something the repair cannot give.", "short", [
+    q("""SELECT at*1000 AS time, phase AS metric, findings AS value
+         FROM gates ORDER BY at""")], 0, points=True)
+
+ts("How long a round takes, by gate",
+   "The check plus the repair it caused. A loop that costs more than the fault "
+   "is a loop worth removing.", "s", [
+    q("""SELECT at*1000 AS time, phase AS metric, seconds AS value
+         FROM gates WHERE seconds > 0 ORDER BY at""")], 12, points=True)
+
+tbl("Rounds to green, per gate",
+    "How many times each check had to run before it stopped refusing, and what "
+    "the rounds cost. One round is a check doing its job; three is a repair that "
+    "cannot hear what is being asked.",
+    """SELECT phase, coalesce(nullif(branch,''),'—') AS branch,
+       max(round) AS rounds, sum(findings) AS findings_total,
+       ROUND(sum(seconds)/60.0,1) AS minutes,
+       max(CASE WHEN verdict='green' THEN 'reached green' ELSE verdict END) AS ended
+       FROM gates GROUP BY phase, branch ORDER BY minutes DESC LIMIT 60""",
+    0, [], w=24)
+
 # ------------------------------------------------------ where time went
 row("Where the time went")
 
