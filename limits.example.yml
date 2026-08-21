@@ -39,6 +39,12 @@ escalate:
 limits:
   usd_per_run: 150
   turns_per_run: 1600
+  # And one session's turns. The run-wide count cannot see this: a fan-out of
+  # twenty-three branches made 1336 turns between them while every session
+  # stayed under its own ceiling and the run stayed under its own, so nothing
+  # anywhere had an opinion about the middle. Measured over 213 finished
+  # sessions: median 1, 99th percentile 64, longest 68. Twice the worst seen.
+  turns_per_session: 150
   # What one turn was sent: the system prompt, whatever was inlined into it, and
   # the conversation so far. Cached or not — an allowance is spent on tokens
   # read. A run that spends too much says so in dollars; a run whose prompt is
@@ -75,6 +81,7 @@ actions:
   on_request_timeout: retry_session
   on_memory: warn
   on_turns: warn
+  on_session_turns: warn
   on_turns_per_run_over: stop_run   # 1600 is a note; 3200 is a run to go and read
   on_turn_tokens: warn
   on_module_timeout: retry_session

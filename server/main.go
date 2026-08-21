@@ -553,6 +553,34 @@ func itemFacts(run, item string) (string, string) {
 	return kind, agent
 }
 
+// turnsPerSession is how many turns each agent has taken in the session it has
+// open now — not across the run, which is a different question with a different
+// answer when an agent runs once per branch.
+func turnsPerSession(run string) map[string]float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	rows, err := db.Query(`
+		SELECT coalesce(t.agent,''), count(*) FROM events t
+		WHERE t.run=? AND t.kind='turn' AND ifnull(t.agent,'') <> ''
+		  AND t.at >= coalesce((SELECT max(s.at) FROM events s
+		      WHERE s.run=t.run AND s.kind='session_start'
+		        AND coalesce(s.agent,'')=coalesce(t.agent,'')), 0)
+		GROUP BY 1`, run)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var who string
+		var n float64
+		if err := rows.Scan(&who, &n); err == nil {
+			out[who] = n
+		}
+	}
+	return out
+}
+
 // heaviestTurn is the largest single prompt this run has sent recently, and who
 // sent it. Recently rather than ever, because a run is judged on what it is
 // doing now: one heavy turn an hour ago is history, and a limit that keeps
@@ -743,6 +771,26 @@ func weigh(conf Config) {
 				ctx["agent"], ctx["phase"] = who, phase
 				judge("turn", r.run, who, "limits.turn_tokens", limit, size,
 					action, act(action, conf, ctx))
+			}
+		}
+		// One session's turns. The run-wide count above cannot see this: a fan-out
+		// of twenty-three branches made 1336 turns between them and every session
+		// stayed under its own ceiling while the run stayed under its own, so
+		// nothing anywhere had an opinion about the middle.
+		if limit, ok := conf.num("limits", "turns_per_session"); ok && limit > 0 {
+			for who, turns := range turnsPerSession(r.run) {
+				if turns <= limit || recently("limits.turns_per_session", r.run+who, 900) {
+					continue
+				}
+				action := conf.str("actions", "on_session_turns", "warn")
+				ctx["agent"] = who
+				judge("session", r.run, who, "limits.turns_per_session", limit, turns,
+					action, act(action, conf, ctx))
+				if endsRun(conf, action) {
+					finish(r.run, "BLOCKED", fmt.Sprintf(
+						"ammit: %s took %.0f turns in one session", who, turns))
+					break
+				}
 			}
 		}
 		if limit, ok := conf.num("limits", "turns_per_run"); ok && float64(r.turns) > limit {
