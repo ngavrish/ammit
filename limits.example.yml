@@ -22,6 +22,7 @@ timeouts:
   # Add timeouts.<kind> for any other unit a stack wants bounded.
   test: 3600               # one test: a scenario, a test case
   module: 1200             # one test module: a .feature file, a test file
+  deploy: 600              # bringing an environment up
 retention:
   # Finished runs older than this move into archive/ammit-YYYY-MM.db and leave
   # the live database small. Nothing is deleted: an archive is a database like
@@ -85,6 +86,7 @@ actions:
   on_turns_per_run_over: stop_run   # 1600 is a note; 3200 is a run to go and read
   on_turn_tokens: warn
   on_module_timeout: retry_session
+  on_deploy_timeout: warn
   on_test_timeout: warn
   on_start: start_run
   # Actions after which a run is not running any more, whatever they were called
