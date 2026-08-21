@@ -452,7 +452,10 @@ func closeSpansOf(run string, at float64, why string) {
 	pairs := []struct{ start, end, column string }{
 		{"request_start", "request_end", "session"},
 		{"item_start", "item_end", "session"},
-		{"session_start", "session_end", "agent"},
+		// Keyed on the session, not on the agent: a fan-out runs seven
+		// branches of one agent at once, and under the agent's name they are a
+		// single span opening seven times. The client sends agent@branch.
+		{"session_start", "session_end", "session"},
 		{"phase_start", "phase_end", "phase"},
 	}
 	for _, p := range pairs {
