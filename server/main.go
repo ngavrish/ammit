@@ -95,6 +95,35 @@ CREATE TABLE IF NOT EXISTS gates (
 );
 CREATE INDEX IF NOT EXISTS gates_run ON gates (run, phase);
 
+-- Every call an agent made: a shell command, a file read, a search, an MCP
+-- tool, one of our own command-line programs. One row each, with what makes two
+-- of them the same thing written down beside them.
+--
+-- The transcript already held these, as display strings inside a log line, and a
+-- question as ordinary as "what did this session do twice" meant parsing prose.
+-- Measured by hand that way: one branch read a single step module twenty times
+-- and ran the same grep for step phrases eleven times. Nobody knew until
+-- somebody counted, and counting is what a database is for.
+CREATE TABLE IF NOT EXISTS calls (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    at        REAL NOT NULL,
+    run       TEXT,
+    phase     TEXT,
+    branch    TEXT,
+    agent     TEXT,
+    session   TEXT,
+    tool      TEXT NOT NULL,       -- Bash | Read | Grep | mcp__map | …
+    kind      TEXT,                -- search | read | write | test | map | cli | other
+    target    TEXT,                -- what it acted on: a path, a pattern, a program
+    signature TEXT NOT NULL,       -- normalised: what makes two calls the same call
+    repeat    INTEGER DEFAULT 1,   -- how many times this signature has run in this run
+    on_target INTEGER DEFAULT 1,   -- and how many times anything has touched this target
+    seconds   REAL DEFAULT 0,
+    ok        INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS calls_run ON calls (run, signature);
+CREATE INDEX IF NOT EXISTS calls_target ON calls (run, target);
+
 CREATE TABLE IF NOT EXISTS documents (
     id    INTEGER PRIMARY KEY AUTOINCREMENT,
     at    REAL NOT NULL,
@@ -291,6 +320,29 @@ func store(e event) {
 		         round, seconds) VALUES (?,?,?,?,?,?,?,?)`,
 			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("verdict"),
 			int(e.f("findings")), round+1, e.f("seconds"))
+	case "call":
+		// The counts are worked out here rather than trusted from the caller:
+		// the client knows what it just did, this service knows how often it has
+		// been told, and only one of those is a count.
+		input, _ := e["input"].(map[string]any)
+		kind, target, signature := classify(e.s("tool"), input)
+		var repeat, onTarget int
+		db.QueryRow(`SELECT count(*) FROM calls WHERE run=? AND signature=?`,
+			e.s("run"), signature).Scan(&repeat)
+		if target != "" {
+			db.QueryRow(`SELECT count(*) FROM calls WHERE run=? AND target=?`,
+				e.s("run"), target).Scan(&onTarget)
+		}
+		ok := 1
+		if v, is := e["ok"].(bool); is && !v {
+			ok = 0
+		}
+		db.Exec(`INSERT INTO calls (at, run, phase, branch, agent, session, tool,
+		         kind, target, signature, repeat, on_target, seconds, ok)
+		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("agent"),
+			e.s("session"), e.s("tool"), kind, target, signature,
+			repeat+1, onTarget+1, e.f("seconds"), ok)
 	case "spend":
 		db.Exec(`UPDATE runs SET usd = coalesce(usd,0) + ? WHERE run=?`,
 			e.f("usd"), e.s("run"))
@@ -1015,9 +1067,9 @@ func pumpQueue(conf Config) {
 	judge("queue", "", name, "queue.parallel", slots, float64(active+1), "started", outcome)
 }
 
-func rows2json(w http.ResponseWriter, query string) {
+func rows2json(w http.ResponseWriter, query string, args ...any) {
 	mu.Lock()
-	rows, err := db.Query(query)
+	rows, err := db.Query(query, args...)
 	mu.Unlock()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1187,6 +1239,54 @@ func main() {
 	})
 	mux.HandleFunc("GET /gates", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT * FROM gates ORDER BY id DESC LIMIT 500`)
+	})
+
+	// Every call, newest first. ?run= narrows it; ?repeats=1 keeps only the ones
+	// that had already run — which is the question this table was added for.
+	mux.HandleFunc("GET /calls", func(w http.ResponseWriter, r *http.Request) {
+		where, args := "1=1", []any{}
+		if run := r.URL.Query().Get("run"); run != "" {
+			where, args = where+" AND run=?", append(args, run)
+		}
+		if r.URL.Query().Get("repeats") != "" {
+			where += " AND repeat > 1"
+		}
+		rows2json(w, `SELECT * FROM calls WHERE `+where+
+			` ORDER BY id DESC LIMIT 2000`, args...)
+	})
+
+	// The same calls, added up: what ran more than once and how often. One row
+	// per distinct call rather than per occurrence, because "this session made
+	// four hundred and fifty-five calls" is not a finding and "it ran this one
+	// eleven times" is.
+	mux.HandleFunc("GET /calls/repeated", func(w http.ResponseWriter, r *http.Request) {
+		where, args := "1=1", []any{}
+		if run := r.URL.Query().Get("run"); run != "" {
+			where, args = where+" AND run=?", append(args, run)
+		}
+		rows2json(w, `SELECT max(run) AS run, agent, branch, kind, tool, target,
+		              signature, count(*) AS times, round(sum(seconds),1) AS seconds
+		              FROM calls WHERE `+where+`
+		              GROUP BY agent, branch, signature
+		              HAVING times > 1 ORDER BY times DESC LIMIT 500`, args...)
+	})
+
+	// And by what was touched rather than how: the same file read with Read,
+	// then with cat, then with three sed windows is five calls and one target.
+	mux.HandleFunc("GET /calls/targets", func(w http.ResponseWriter, r *http.Request) {
+		where, args := "1=1", []any{}
+		if run := r.URL.Query().Get("run"); run != "" {
+			where, args = where+" AND run=?", append(args, run)
+		}
+		// Every kind that touched it, not whichever row the group happened to
+		// yield: a file that was searched six times and written once came back
+		// labelled "write", which is the opposite of what it says.
+		rows2json(w, `SELECT max(run) AS run, agent, branch, target,
+		              group_concat(DISTINCT kind) AS kinds,
+		              count(*) AS times, count(DISTINCT signature) AS ways
+		              FROM calls WHERE `+where+` AND ifnull(target,'') <> ''
+		              GROUP BY agent, branch, target
+		              HAVING times > 1 ORDER BY times DESC LIMIT 500`, args...)
 	})
 
 	mux.HandleFunc("GET /judgements", func(w http.ResponseWriter, r *http.Request) {

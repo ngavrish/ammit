@@ -3629,6 +3629,141 @@
      "queryText": "SELECT name, value, at AS changed FROM limits WHERE id IN (SELECT max(id) FROM limits GROUP BY name) ORDER BY name"
     }
    ]
+  },
+  {
+   "type": "row",
+   "title": "What was done twice",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 335
+   },
+   "panels": []
+  },
+  {
+   "type": "table",
+   "title": "The same call, again",
+   "description": "One row per distinct call that ran more than once in the window. This is the question the calls table was added for: a branch ran the same search for step phrases eleven times, and nobody knew until somebody counted by hand.",
+   "transparent": true,
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 336
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "times",
+      "desc": true
+     }
+    ]
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "left"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "queryType": "table",
+     "timeColumns": [],
+     "rawQueryText": "SELECT agent, branch, kind, count(*) AS times, signature FROM calls WHERE at*1000 BETWEEN $__from AND $__to GROUP BY agent, branch, signature HAVING times > 1 ORDER BY times DESC LIMIT 60",
+     "queryText": "SELECT agent, branch, kind, count(*) AS times, signature FROM calls WHERE at*1000 BETWEEN $__from AND $__to GROUP BY agent, branch, signature HAVING times > 1 ORDER BY times DESC LIMIT 60"
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "title": "The same file, however it was reached",
+   "description": "Grouped by what was touched rather than how it was touched. Read, then cat, then three sed windows is five calls and one file \u2014 which is how a single step module came to be opened fifteen times in fourteen different ways.",
+   "transparent": true,
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 345
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "times",
+      "desc": true
+     }
+    ]
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "left"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "queryType": "table",
+     "timeColumns": [],
+     "rawQueryText": "SELECT agent, branch, target, group_concat(DISTINCT kind) AS kinds, count(*) AS times, count(DISTINCT signature) AS ways FROM calls WHERE at*1000 BETWEEN $__from AND $__to AND ifnull(target,'') <> '' GROUP BY agent, branch, target HAVING times > 1 ORDER BY times DESC LIMIT 60",
+     "queryText": "SELECT agent, branch, target, group_concat(DISTINCT kind) AS kinds, count(*) AS times, count(DISTINCT signature) AS ways FROM calls WHERE at*1000 BETWEEN $__from AND $__to AND ifnull(target,'') <> '' GROUP BY agent, branch, target HAVING times > 1 ORDER BY times DESC LIMIT 60"
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "title": "What each phase spent its calls on",
+   "description": "Every call of the window by kind. Writing and running tests are the work; everything else is what it cost to get there.",
+   "transparent": true,
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 354
+   },
+   "datasource": {
+    "type": "frser-sqlite-datasource",
+    "uid": "ammit"
+   },
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "times",
+      "desc": true
+     }
+    ]
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "left"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "queryType": "table",
+     "timeColumns": [],
+     "rawQueryText": "SELECT phase, kind, count(*) AS times FROM calls WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase, kind ORDER BY times DESC LIMIT 80",
+     "queryText": "SELECT phase, kind, count(*) AS times FROM calls WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase, kind ORDER BY times DESC LIMIT 80"
+    }
+   ]
   }
  ]
 }

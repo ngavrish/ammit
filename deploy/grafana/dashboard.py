@@ -95,6 +95,21 @@ def limit_of(name):
              f"WHERE name = '{name}' AND at*1000 < $__from)) ORDER BY at")
 
 
+def table(title, desc, sql, h=9):
+    """A list, not a curve. Some questions have rows for answers: what ran more
+    than once, and how many times."""
+    panels.append({
+        "type": "table", "title": title, "description": desc,
+        "transparent": True,
+        "gridPos": {"h": h, "w": 24, "x": 0, "y": Y[0]}, "datasource": DS,
+        "options": {"showHeader": True, "sortBy": [{"displayName": "times",
+                                                    "desc": True}]},
+        "fieldConfig": {"defaults": {"custom": {"align": "left"}}, "overrides": []},
+        "targets": [q(sql, kind="table", time_cols=[])],
+    })
+    Y[0] += h
+
+
 def row(title):
     panels.append({"type": "row", "title": title, "collapsed": False,
                    "gridPos": {"h": 1, "w": 24, "x": 0, "y": Y[0]}, "panels": []})
@@ -556,6 +571,37 @@ dash = {
     ]},
     "panels": panels,
 }
+
+row("What was done twice")
+
+table("The same call, again",
+      "One row per distinct call that ran more than once in the window. This is "
+      "the question the calls table was added for: a branch ran the same search "
+      "for step phrases eleven times, and nobody knew until somebody counted by "
+      "hand.",
+      """SELECT agent, branch, kind, count(*) AS times, signature
+         FROM calls WHERE at*1000 BETWEEN $__from AND $__to
+         GROUP BY agent, branch, signature HAVING times > 1
+         ORDER BY times DESC LIMIT 60""")
+
+table("The same file, however it was reached",
+      "Grouped by what was touched rather than how it was touched. Read, then "
+      "cat, then three sed windows is five calls and one file — which is how a "
+      "single step module came to be opened fifteen times in fourteen different "
+      "ways.",
+      """SELECT agent, branch, target, group_concat(DISTINCT kind) AS kinds,
+                count(*) AS times, count(DISTINCT signature) AS ways
+         FROM calls WHERE at*1000 BETWEEN $__from AND $__to
+           AND ifnull(target,'') <> ''
+         GROUP BY agent, branch, target HAVING times > 1
+         ORDER BY times DESC LIMIT 60""")
+
+table("What each phase spent its calls on",
+      "Every call of the window by kind. Writing and running tests are the work; "
+      "everything else is what it cost to get there.",
+      """SELECT phase, kind, count(*) AS times
+         FROM calls WHERE at*1000 BETWEEN $__from AND $__to
+         GROUP BY phase, kind ORDER BY times DESC LIMIT 80""")
 
 out = pathlib.Path(__file__).with_name("dashboards") / "ammit.json"
 out.write_text(json.dumps(dash, indent=1) + "\n")
