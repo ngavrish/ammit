@@ -80,6 +80,12 @@ actions:
   on_module_timeout: retry_session
   on_test_timeout: warn
   on_start: start_run
+  # Actions after which a run is not running any more, whatever they were called
+  # to fix. Restarting a worker does not repair a run — it destroys every run
+  # that worker was carrying — so the row is closed here rather than left open to
+  # be judged again sixteen minutes later. A pipeline whose restart genuinely
+  # resumes work says so by leaving it out of this list.
+  ends_run: stop_run, restart_worker
 
 # {run}, {name}, {phase}, {agent}, {session} and anything under `context` are
 # substituted before the command runs.

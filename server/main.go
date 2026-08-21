@@ -344,6 +344,28 @@ func orDash(s string) string {
 //
 // Commands rather than code: the watchdog does not need to know what kind of
 // thing it is watching, only what to run when a number crosses a line.
+// endsRun says whether an action leaves the run it was applied to alive.
+//
+// Restarting a worker does not "fix" a run — it destroys every run that worker
+// was carrying, and the row here stays open as though nothing happened. Last
+// night that meant one dead run was judged silent fourteen times over four
+// hours, each judgement restarting a worker to save a run that the previous
+// restart had already killed, until the four-hour timeout finally closed it.
+//
+// So an action that cannot leave a run running closes the run here, in the
+// record, at the moment it is applied. What is listed is a decision, not a
+// guess: a pipeline whose "restart" genuinely resumes work says so by leaving
+// it out.
+func endsRun(conf Config, action string) bool {
+	for _, name := range strings.Split(conf.str("actions", "ends_run",
+		"stop_run,restart_worker"), ",") {
+		if strings.TrimSpace(name) == action && action != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func act(name string, conf Config, ctx map[string]string) string {
 	tmpl := conf.str("commands", name, "")
 	if tmpl == "" {
@@ -693,6 +715,11 @@ func weigh(conf Config) {
 				}
 				judge("turn", r.run, strings.TrimSpace(agent+" "+phase), "timeouts.turn",
 					limit, quiet, action, act(action, conf, ctx))
+				if endsRun(conf, action) {
+					finish(r.run, "BLOCKED", fmt.Sprintf(
+						"ammit: silent for %.0fs, and %s ends the run", quiet, action))
+					continue
+				}
 			}
 		}
 		// One request to the model, timed from out here. Inside the run this is
@@ -743,6 +770,11 @@ func weigh(conf Config) {
 				ctx["request"], ctx["agent"] = request, who
 				judge("request", r.run, request, rule, against, age,
 					action, act(action, conf, ctx))
+				if endsRun(conf, action) {
+					finish(r.run, "BLOCKED", fmt.Sprintf(
+						"ammit: a request ran %.0fs, and %s ends the run", age, action))
+					break
+				}
 			}
 		}
 		// A test and a test module are different sizes of the same thing, and a
