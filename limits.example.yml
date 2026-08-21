@@ -22,7 +22,10 @@ timeouts:
   # Add timeouts.<kind> for any other unit a stack wants bounded.
   test: 3600               # one test: a scenario, a test case
   module: 1200             # one test module: a .feature file, a test file
-  deploy: 600              # bringing an environment up
+  # Bringing an environment up. One was still going at 593 seconds and the phase
+  # that waited for it took 592 — so ten minutes is the edge of what has actually
+  # happened, not a margin above it.
+  deploy: 900
 retention:
   # Finished runs older than this move into archive/ammit-YYYY-MM.db and leave
   # the live database small. Nothing is deleted: an archive is a database like
