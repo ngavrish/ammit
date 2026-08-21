@@ -529,6 +529,60 @@ type openRun struct {
 	turns        int
 }
 
+
+// sweepAbandoned closes runs nothing has reported on for longer than a run is
+// allowed to take.
+//
+// Every rule works from openRuns, which asks for runs started in the last
+// seventy-two hours. That window was meant to keep the loop off ancient rows,
+// and it also means a row still open after seventy-two hours can never be
+// closed by anything: not judged, not timed out, not swept. Twenty of them were
+// sitting in this database, one genuinely open and nineteen that had ended
+// without the event that says so.
+//
+// Silence is the signal, not age. A run reports constantly while it lives — a
+// turn, a call, a phase — so nothing heard for longer than timeouts.run means
+// the run is not running, whether it was killed, whether its worker was
+// replaced, or whether this service was down when it ended. It is closed as
+// what it is: abandoned, not finished, and never confused with a verdict
+// somebody's work produced.
+func sweepAbandoned(conf Config) {
+	limit, ok := conf.num("timeouts", "run")
+	if !ok || limit <= 0 {
+		return
+	}
+	mu.Lock()
+	rows, err := db.Query(`SELECT r.run, coalesce(max(e.at), r.started)
+	                       FROM runs r LEFT JOIN events e ON e.run = r.run
+	                       WHERE r.finished IS NULL GROUP BY r.run`)
+	type quiet struct {
+		run string
+		at  float64
+	}
+	var found []quiet
+	if err == nil {
+		for rows.Next() {
+			var q quiet
+			if rows.Scan(&q.run, &q.at) == nil {
+				found = append(found, q)
+			}
+		}
+		rows.Close()
+	}
+	mu.Unlock()
+	now := float64(time.Now().UnixNano()) / 1e9
+	for _, q := range found {
+		silent := now - q.at
+		if silent <= limit {
+			continue
+		}
+		finish(q.run, "ABANDONED", fmt.Sprintf(
+			"nothing has reported on this run for %.0f minutes, which is longer "+
+				"than timeouts.run — closed as abandoned, not as finished",
+			silent/60))
+	}
+}
+
 func openRuns() []openRun {
 	mu.Lock()
 	defer mu.Unlock()
@@ -1142,6 +1196,7 @@ func main() {
 			conf := loadConfig(confPath)
 			if len(conf) > 0 {
 				recordLimits(conf)
+				sweepAbandoned(conf)
 				weigh(conf)
 				pumpQueue(conf)
 				// Every tick: deciding whether there is anything to archive is one
