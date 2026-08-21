@@ -555,6 +555,39 @@ func quietFor(run string) (float64, string, string) {
 // find the two that were still open — and doing it again for phases and again
 // for sessions. The answer was always "the ones with no end", which is a
 // sentence SQL can say by itself.
+// openPhases is the phase this run is in and how long it has been in it.
+//
+// Derived, not reported. Every event already carries the phase it happened in —
+// that is what the charts are coloured by — so a phase begins at its first event
+// and ends at its phase_end, and asking the pipeline to send a phase_start as
+// well would be asking it to repeat something it has already said 15,000 times.
+// The pair-of-events version never worked precisely because nothing sent the
+// first half, and timeouts.phase had quietly never fired.
+func openPhases(run string) map[string]float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	rows, err := db.Query(`
+		SELECT coalesce(phase,''), min(at) FROM events
+		WHERE run=? AND ifnull(phase,'') <> ''
+		  AND coalesce(phase,'') NOT IN (
+		      SELECT coalesce(phase,'') FROM events WHERE run=? AND kind='phase_end')
+		GROUP BY 1`, run, run)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	now := float64(time.Now().UnixNano()) / 1e9
+	live := map[string]float64{}
+	for rows.Next() {
+		var phase string
+		var at float64
+		if err := rows.Scan(&phase, &at); err == nil {
+			live[phase] = now - at
+		}
+	}
+	return live
+}
+
 func openSpans(run, startKind, endKind, column string) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
@@ -807,7 +840,7 @@ func weigh(conf Config) {
 				act(action, conf, ctx))
 		}
 		if limit, ok := conf.num("timeouts", "phase"); ok {
-			for phase, age := range openSpans(r.run, "phase_start", "phase_end", "phase") {
+			for phase, age := range openPhases(r.run) {
 				if age > limit && !recently("timeouts.phase", phase, limit) {
 					action := conf.str("actions", "on_phase_timeout", "warn")
 					ctx["phase"] = phase
