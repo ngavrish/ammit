@@ -272,6 +272,12 @@ func store(e event) {
 // which is how a watchdog turns into the outage. Once per cooldown, then again
 // if it is still going.
 var judged = map[string]float64{}
+var judgedCount = map[string]int{}
+
+// timesJudged is how often this rule has already been applied to this subject.
+func timesJudged(rule, subject string) int {
+	return judgedCount[rule+"\x1f"+subject]
+}
 
 func recently(rule, subject string, cooldown float64) bool {
 	if cooldown < 60 {
@@ -283,6 +289,7 @@ func recently(rule, subject string, cooldown float64) bool {
 		return true
 	}
 	judged[key] = now
+	judgedCount[key]++
 	return false
 }
 
@@ -656,7 +663,15 @@ func weigh(conf Config) {
 		}
 
 		if limit, ok := conf.num("timeouts", "turn"); ok {
+			// The same run, judged silent again and again, is one fault reported
+			// many times. Fourteen judgements in one night, each restarting a
+			// worker that could not resume the run it had killed, and the run's
+			// row stayed open through all of it — so the cooldown grew to the
+			// gap between them and nothing changed. Twice, then leave it: if the
+			// action was going to work it worked, and if it was not, repeating it
+			// is only more damage.
 			if quiet, agent, phase := quietFor(r.run); quiet > limit &&
+				timesJudged("timeouts.turn", r.run) < 2 &&
 				!recently("timeouts.turn", r.run, limit) {
 				// When a whole run goes quiet, the last thing that spoke is the
 				// thing that stopped speaking — so this can be aimed at that one

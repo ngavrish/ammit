@@ -66,7 +66,12 @@ actions:
   # so aim at that session; only when the last thing said names no agent is
   # there nothing left but restarting the container.
   on_turn_timeout: retry_session
-  on_turn_timeout_blind: restart_worker
+  # Not restart_worker. A restart that cannot resume the run destroys the thing
+  # it was called to save and leaves the row open, so the same silence is judged
+  # again sixteen minutes later — fourteen times in one night, each one killing a
+  # run that was already dead. Ending the run closes the row and stops the loop;
+  # a person can start it again knowing why it ended.
+  on_turn_timeout_blind: stop_run
   on_request_timeout: retry_session
   on_memory: warn
   on_turns: warn
