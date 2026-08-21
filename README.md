@@ -45,6 +45,36 @@ No dependencies. Every send is best-effort and off the caller's thread, so a
 server that is down costs the pipeline milliseconds. Point it somewhere with
 `AMMIT_URL`; silence it entirely with `AMMIT_DISABLE=1`.
 
+## What a pipeline must report
+
+Every unit of work says when it starts, that it is still going, and how it ended.
+All three, or the unit is invisible — and an invisible unit is one this service
+will eventually mistake for a dead one.
+
+| | at the start | while it runs | at the end |
+|---|---|---|---|
+| run | `run_start` | — | `run_end` |
+| phase | `phase_start` | — | `phase_end` |
+| agent session | `session_start` | `turn`, `log` | `session_end`, `spend` |
+| one wait for a model | `request_start` | — | `request_end` |
+| test / test module | `item_start` | — | `item_end` |
+| **anything that runs for minutes without talking** | | **a line a minute** | |
+
+That last row is the one that gets skipped, and it is the one that costs. A phase
+that is a single shell command — bring the environment up, build a venv, run a
+suite — sends nothing between its start and its end. From out here that is
+indistinguishable from a process that died, because it is the same thing: no
+events.
+
+It happened. A phase brought an environment up for ten minutes in silence, this
+service concluded the run was dead, restarted its worker fourteen times over four
+hours, and each restart killed a run the previous restart had already killed.
+Nothing in the record could say whether the run was working or wedged, because
+the phase had never said either.
+
+So: **a long-running step reports a line a minute.** Not for the log — for the
+difference between working and wedged, which nothing else can tell.
+
 ## Clients
 
 One call in the pipeline's language, and none of them can slow it down: every
