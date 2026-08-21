@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_run ON events (run, at);
 CREATE INDEX IF NOT EXISTS events_kind ON events (kind, at);
+-- Spans are looked up by what is still open in one run, which is a question
+-- about (run, kind, session) and nothing else.
+CREATE INDEX IF NOT EXISTS events_span ON events (run, kind, session);
+CREATE INDEX IF NOT EXISTS events_phase ON events (run, kind, phase);
 
 CREATE TABLE IF NOT EXISTS runs (
     run      TEXT PRIMARY KEY,
@@ -522,32 +526,34 @@ func quietFor(run string) (float64, string, string) {
 	return float64(time.Now().UnixNano())/1e9 - at, agent, phase
 }
 
+// openSpans is what this run has begun and not yet finished, by name.
+//
+// Asked of the database rather than replayed in here. Replaying meant reading
+// every request this run had ever made — fifteen thousand rows, every tick, to
+// find the two that were still open — and doing it again for phases and again
+// for sessions. The answer was always "the ones with no end", which is a
+// sentence SQL can say by itself.
 func openSpans(run, startKind, endKind, column string) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(fmt.Sprintf(
-		`SELECT coalesce(%s,''), kind, at FROM events WHERE run=? AND kind IN (?,?)
-		 ORDER BY id`, column), run, startKind, endKind)
+	rows, err := db.Query(fmt.Sprintf(`
+		SELECT coalesce(%[1]s,''), max(at) FROM events
+		WHERE run=? AND kind=? AND ifnull(%[1]s,'') <> ''
+		  AND coalesce(%[1]s,'') NOT IN (
+		      SELECT coalesce(%[1]s,'') FROM events WHERE run=? AND kind=?)
+		GROUP BY 1`, column), run, startKind, run, endKind)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
+	now := float64(time.Now().UnixNano()) / 1e9
 	live := map[string]float64{}
 	for rows.Next() {
-		var key, kind string
+		var key string
 		var at float64
-		if err := rows.Scan(&key, &kind, &at); err != nil {
-			continue
+		if err := rows.Scan(&key, &at); err == nil {
+			live[key] = now - at
 		}
-		if kind == startKind {
-			live[key] = at
-		} else {
-			delete(live, key)
-		}
-	}
-	now := float64(time.Now().UnixNano()) / 1e9
-	for key, t0 := range live {
-		live[key] = now - t0
 	}
 	return live
 }
@@ -558,11 +564,11 @@ var limitsSeen = map[string]struct{ value, at float64 }{}
 
 // recordLimits writes the limits down as a series, so a chart can draw the line
 // a run was measured against instead of a number somebody typed into a panel
-// months ago. A limit that is edited mid-run bends its own line at the minute it
-// was edited, and the run underneath it is right there to compare.
+// months ago. A limit edited mid-run bends its own line at the minute it was
+// edited, and the run underneath it is right there to compare.
 //
-// Every numeric setting is recorded, whatever it is called: this service does not
-// get to decide which of somebody's limits are the interesting ones.
+// Every numeric setting is recorded, whatever it is called: this service does
+// not get to decide which of somebody's limits are the interesting ones.
 func recordLimits(conf Config) {
 	now := float64(time.Now().UnixNano()) / 1e9
 	for section, kv := range conf {
@@ -881,12 +887,25 @@ func main() {
 		log.Fatalf("ammit: could not make the tables: %v", err)
 	}
 
+	// Readings on their own thread. Judging must never wait for a machine
+	// reading: one is a call out to a daemon that answers when it feels like it,
+	// the other is the entire point of this service. They shared a loop for one
+	// night and the daemon won — eighteen minutes at a stretch with nothing
+	// weighed at all, while a run was going.
+	go func() {
+		for {
+			if conf := loadConfig(confPath); len(conf) > 0 {
+				keepSamples(conf)
+			}
+			time.Sleep(15 * time.Second)
+		}
+	}()
+
 	go func() {
 		for {
 			conf := loadConfig(confPath)
 			if len(conf) > 0 {
 				recordLimits(conf)
-				keepSamples(conf)
 				weigh(conf)
 				pumpQueue(conf)
 				// Every tick: deciding whether there is anything to archive is one

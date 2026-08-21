@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os/exec"
 	"strconv"
@@ -29,10 +30,21 @@ type sample struct {
 }
 
 // sampleMachine asks the container client for one reading of everything running.
+//
+// Bounded, because this is a call out to a daemon that has its own bad days.
+// Unbounded it took minutes whenever images were being built, and it took the
+// whole judging loop with it: no readings, no verdicts, no timeouts enforced —
+// the watchdog wedged by exactly the kind of call it exists to catch in others.
+// A reading that is late is worth nothing anyway; the next tick will take one.
 func sampleMachine(match string) []sample {
-	out, err := exec.Command("docker", "stats", "--no-stream", "--format",
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format",
 		"{{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}\t{{.PIDs}}").Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			log.Printf("ammit: the container client did not answer in 10s; no reading this tick")
+		}
 		return nil
 	}
 	var taken []sample
