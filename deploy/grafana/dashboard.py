@@ -607,3 +607,30 @@ out = pathlib.Path(__file__).with_name("dashboards") / "ammit.json"
 out.write_text(json.dumps(dash, indent=1) + "\n")
 charts = [p for p in panels if p["type"] != "row"]
 print(f"{out}: {len(panels) - len(charts)} rows, {len(charts)} panels")
+
+# The same panels, without Grafana's vocabulary.
+#
+# Grafana is six hundred and thirty-one megabytes to draw forty-three charts from
+# one sqlite file for one page that already exists. What each panel actually is:
+# a title, a sentence, a kind, and a query returning time/metric/value. That is
+# what this writes, and what ammit renders.
+spec = {"panels": []}
+for p in panels:
+    if p["type"] == "row":
+        spec["panels"].append({"kind": "row", "title": p["title"]})
+        continue
+    for t in p.get("targets", []):
+        pass
+    spec["panels"].append({
+        "kind": {"timeseries": "series", "table": "table",
+                 "state-timeline": "states"}.get(p["type"], "series"),
+        "title": p["title"],
+        "about": p.get("description", ""),
+        "unit": ((p.get("fieldConfig") or {}).get("defaults") or {}).get("unit", ""),
+        "height": (p.get("gridPos") or {}).get("h", 8),
+        "queries": [q.get("rawQueryText", "") for q in p.get("targets", [])],
+    })
+
+out2 = pathlib.Path(__file__).with_name("panels.json")
+out2.write_text(json.dumps(spec, indent=1, ensure_ascii=False) + "\n")
+print(f"{out2}: {len([x for x in spec['panels'] if x['kind'] != 'row'])} panels")

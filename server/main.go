@@ -1354,7 +1354,11 @@ func main() {
 		writeJSON(w, http.StatusOK, loadConfig(confPath))
 	})
 
-	serveUI(mux, confPath, env("AMMIT_CHARTS_URL", "http://localhost:3301"))
+	serveCharts(mux)
+	// The charts are this service's own page now, on its own port. The variable
+	// stays so a deployment that still points at a Grafana can, but the default
+	// is us.
+	serveUI(mux, confPath, env("AMMIT_CHARTS_URL", "/charts"))
 
 	log.Printf("ammit: listening on :%s, limits from %s, db %s%s", port, confPath, dbPath,
 		map[bool]string{true: " (dry run)", false: ""}[dryRun])
