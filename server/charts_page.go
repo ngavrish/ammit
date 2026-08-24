@@ -60,7 +60,7 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:60px;
 .brand-text b{font:800 12px/1 var(--sans);letter-spacing:.17em;color:#F7FAFC}
 .brand-text small{font:600 8px/1.5 var(--sans);letter-spacing:.31em;color:var(--bronze)}
 
-#tabs{justify-self:end;display:flex;gap:2px;background:var(--bar-soft);
+#tabs{margin-left:auto;display:flex;gap:2px;background:var(--bar-soft);
   border:1px solid var(--bar-hair);border-radius:9px;padding:3px;flex:none}
 .tab{border:0;background:none;border-radius:6px;padding:7px 15px;
   color:var(--on-bar-dim);font:600 12.5px/1 var(--sans);cursor:pointer;
