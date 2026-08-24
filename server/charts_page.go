@@ -38,15 +38,35 @@ th{color:var(--bronze);position:sticky;top:0;background:var(--navy)}
 .err{color:#E06C5A;font-size:12px}
 .empty{color:var(--dim);font-size:12px;padding:6px 0}
 .u-legend{font-size:11px}
+input{background:#00294F;color:var(--ink);border:1px solid var(--line);
+  border-radius:2px;padding:5px 8px;font:inherit;font-size:12px}
+.when{color:var(--dim);font-size:11.5px;display:flex;gap:5px;align-items:center}
+.tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.tile{border:1px solid var(--line);border-left:3px solid var(--dim);border-radius:2px;
+  padding:11px 13px;cursor:pointer;background:#00223f}
+.tile:hover{border-color:var(--bronze)}
+.tile.green{border-left-color:#73BF69}
+.tile.red{border-left-color:#E06C5A}
+.tile.going{border-left-color:#E0B400}
+.tile b{font:600 13px/1.3 "Plus Jakarta Sans",system-ui,sans-serif;display:block}
+.tile .verdict{font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.tile dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:8px 0 0;
+  font-size:11.5px;font-variant-numeric:tabular-nums}
+.tile dt{color:var(--dim)}
+.tile dd{margin:0;text-align:right}
+.back{color:var(--bronze);cursor:pointer;font-size:12px}
 </style>
 <header>
   <h1>ammit</h1>
   <select id=scope>
-    <option value=window selected>a window</option>
-    <option value=run>one run</option>
+    <option value=runs selected>runs</option>
+    <option value=window>a window</option>
     <option value=lifetime>every run there has been</option>
   </select>
-  <select id=run style=display:none></select>
+  <input id=q placeholder="ticket" size=12>
+  <label class=when>started <input id=sf type=date> to <input id=st type=date></label>
+  <label class=when>finished <input id=ff type=date> to <input id=ft type=date></label>
+  <button id=clear>clear</button>
   <select id=range>
     <option value=3>last 3 hours</option>
     <option value=12 selected>last 12 hours</option>
@@ -65,22 +85,36 @@ const main=document.getElementById("main");
 let panels=[];
 
 function hours(){return +document.getElementById("range").value}
-let runs=[], scope="window";
+let runs=[], scope="runs", chosen="";
+
+// A verdict is a word this pipeline chose, and there are several for each of the
+// two outcomes. Colour is about which of the two it was.
+function shade(r){
+  if(!r.finished) return "going";
+  const v=(r.verdict||"").toUpperCase();
+  if(/PASS|GREEN|DONE|APPROVE|SHIPPED/.test(v)) return "green";
+  if(!v) return "";
+  return "red";
+}
+function ago(sec){
+  if(!sec) return "—";
+  const m=Math.round(sec/60);
+  if(m<60) return m+" min";
+  const h=Math.floor(m/60); return h+"h "+(m%60)+"m";
+}
+function when(t){return new Date(t*1000).toLocaleString()}
 
 // Picking a run sends the run, and the server narrows every table to it. The
 // window still travels because some queries draw against it, and it is opened
 // wide enough to hold the whole run.
 function windowMs(){
-  if(scope==="run"){
-    const r=runs.find(x=>x.run===document.getElementById("run").value);
+  if(chosen){
+    const r=runs.find(x=>x.run===chosen);
     if(r) return [r.started*1000-2000, (r.finished||Date.now()/1000)*1000+2000];
   }
   const to=Date.now();return[to-hours()*3600e3,to];
 }
-function runParam(){
-  return scope==="run"
-    ? "&run="+encodeURIComponent(document.getElementById("run").value) : "";
-}
+function runParam(){ return chosen?"&run="+encodeURIComponent(chosen):"" }
 
 // The series come back as rows of (time, metric, value) — one long table, many
 // lines. uPlot wants a column per line over one shared clock, so the rows are
@@ -148,36 +182,79 @@ async function load(){
   note.textContent=drawn+" panels";
 }
 
+function filters(){
+  const day=id=>{const v=document.getElementById(id).value;
+    return v?Math.floor(new Date(v).getTime()/1000):""};
+  const p=new URLSearchParams();
+  const n=document.getElementById("q").value.trim();
+  if(n) p.set("name",n);
+  const sf=day("sf"), st=day("st"), ff=day("ff"), ft=day("ft");
+  if(sf) p.set("started_from",sf);
+  if(st) p.set("started_to",st+86399);
+  if(ff) p.set("finished_from",ff);
+  if(ft) p.set("finished_to",ft+86399);
+  return p.toString();
+}
+
 async function fillRuns(){
-  runs=await (await fetch("/charts/runs")).json();
-  const sel=document.getElementById("run");
-  sel.innerHTML=runs.map(r=>{
-    const when=new Date(r.started*1000).toLocaleString();
-    const how=r.verdict||(r.finished?"":"running");
-    return '<option value="'+r.run+'">'+(r.name||r.run)+" — "+when+
-           (how?" — "+how:"")+(r.usd?" — $"+r.usd.toFixed(2):"")+'</option>';
-  }).join("");
+  runs=await (await fetch("/charts/runs?"+filters())).json();
+}
+
+function drawTiles(){
+  document.getElementById("note").textContent=runs.length+" runs";
+  if(!runs.length){
+    main.innerHTML='<div class=empty>no run matches that</div>';return;
+  }
+  main.innerHTML='<div class=tiles>'+runs.map(r=>
+    '<div class="tile '+shade(r)+'" data-run="'+r.run+'">'+
+      '<b>'+(r.name||r.run)+'</b>'+
+      '<span class=verdict>'+(r.finished?(r.verdict||"no verdict"):"running")+'</span>'+
+      '<dl>'+
+        '<dt>started</dt><dd>'+when(r.started)+'</dd>'+
+        '<dt>took</dt><dd>'+(r.finished?ago(r.finished-r.started):ago(Date.now()/1000-r.started))+'</dd>'+
+        '<dt>turns</dt><dd>'+(r.turns||0)+'</dd>'+
+        '<dt>cost</dt><dd>$'+(r.usd||0).toFixed(2)+'</dd>'+
+      '</dl></div>').join("")+'</div>';
+  main.querySelectorAll(".tile").forEach(t=>t.onclick=()=>{
+    chosen=t.dataset.run; boot();
+  });
 }
 
 async function boot(){
-  await fillRuns();
+  const picking = scope==="runs" && !chosen;
+  document.querySelectorAll(".when").forEach(e=>e.style.display=picking?"":"none");
+  document.getElementById("q").style.display=picking?"":"none";
+  document.getElementById("clear").style.display=picking?"":"none";
+  document.getElementById("range").style.display=scope==="window"?"":"none";
+  if(picking){ await fillRuns(); drawTiles(); return; }
+  if(scope==="runs") await fillRuns();
   panels=(await (await fetch("/charts/panels"+(scope==="lifetime"?"?scope=lifetime":""))).json()).panels;
-  main.innerHTML=panels.map((p,i)=>p.kind==="row"
+  const r=runs.find(x=>x.run===chosen);
+  const head=r?'<div class=back id=back>← every run</div><div class=row>'+
+    (r.name||r.run)+" — "+when(r.started)+" — "+(r.verdict||"running")+
+    " — "+(r.turns||0)+" turns — $"+(r.usd||0).toFixed(2)+'</div>':"";
+  main.innerHTML=head+panels.map((p,i)=>p.kind==="row"
     ? '<div class=row>'+p.title+'</div>'
     : '<section class=panel><h2>'+p.title+'</h2>'+
       (p.about?'<p>'+p.about.replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;")+'</p>':'')+
       '<div class=plot id=plot-'+i+'></div></section>').join("");
+  const back=document.getElementById("back");
+  if(back) back.onclick=()=>{chosen="";boot()};
   await load();
 }
 document.getElementById("refresh").onclick=load;
 document.getElementById("range").onchange=load;
 document.getElementById("scope").onchange=async e=>{
-  scope=e.target.value;
-  document.getElementById("run").style.display=scope==="run"?"":"none";
-  document.getElementById("range").style.display=scope==="window"?"":"none";
-  await boot();
+  scope=e.target.value; chosen=""; await boot();
 };
-document.getElementById("run").onchange=load;
+["q","sf","st","ff","ft"].forEach(id=>{
+  const el=document.getElementById(id);
+  el.oninput=()=>{clearTimeout(window._f);window._f=setTimeout(boot,300)};
+});
+document.getElementById("clear").onclick=()=>{
+  ["q","sf","st","ff","ft"].forEach(id=>document.getElementById(id).value="");
+  boot();
+};
 addEventListener("resize",()=>{clearTimeout(window._t);window._t=setTimeout(load,250)});
 boot();
 </script>`
