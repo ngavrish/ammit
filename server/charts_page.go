@@ -82,7 +82,11 @@ main{padding:20px 22px 72px;display:flex;flex-direction:column;gap:26px}
   color:var(--bronze);border-bottom:1px solid var(--hair);padding-bottom:8px;margin-top:12px}
 .panel h2{font:700 14px/1.3 var(--sans);margin:0 0 3px;color:var(--navy)}
 .panel p{margin:0 0 10px;color:var(--slate);font-size:12px;max-width:92ch}
-.plot{min-height:360px}
+/* Height for a plot, not for a message. A panel with nothing in this window
+   holds one line of text, and reserving two thirds of the screen under it turns
+   an empty window into a page of scrolling. */
+.plot{min-height:0}
+.plot.drawn{min-height:360px}
 
 table{border-collapse:collapse;width:100%;font:12px/1.5 var(--mono);display:block;
   overflow:auto;max-height:360px;border:1px solid var(--hair);border-radius:6px}
@@ -202,8 +206,9 @@ function pivot(cols,rows){
 
 function drawSeries(box,payload){
   const s=payload.series[0]||{};
-  if(s.error){box.innerHTML='<div class=err>'+s.error+'</div>';return}
+  if(s.error){box.classList.remove("drawn");box.innerHTML='<div class=err>'+s.error+'</div>';return}
   const p=pivot(s.columns||[],s.rows||[]);
+  box.classList.toggle("drawn", !!(p&&p.data[0].length));
   if(!p||!p.data[0].length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
   const opts={
     width:box.clientWidth||900,
