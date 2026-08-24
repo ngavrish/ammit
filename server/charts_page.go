@@ -14,59 +14,99 @@ var uplotCSS string
 var chartsPage = `<!doctype html><meta charset="utf-8">
 <title>ammit — charts</title>
 <style>` + uplotCSS + `
-:root{--navy:#001F3F;--bronze:#CD7F32;--ink:#E8EDF4;--dim:#8FA3BC;--line:#123A63}
+/* Light, on the palette the rest of Chiron uses: bronze against navy text on
+   white, with the greys that sit between them. The charts were navy-on-navy and
+   the header had grown one control at a time until the row wrapped into itself. */
+:root{
+  --bronze:#CD7F32; --bronze-wash:rgba(205,127,50,.10);
+  --navy:#001F3F; --ink:#0F1520; --slate:#4A5568; --mute:#A0AEC0;
+  --hair:#E5E7EB; --hair-soft:#F1F3F6; --ground:#FFFFFF; --raised:#FAFBFC;
+  --sky:#0EA5E9; --good:#22C55E; --bad:#EF4444; --warm:#FB923C;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"Plus Jakarta Sans",system-ui,-apple-system,sans-serif;
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--navy);color:var(--ink);
-  font:14px/1.5 "JetBrains Mono",ui-monospace,Menlo,monospace}
-header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;
-  gap:16px;align-items:baseline;position:sticky;top:0;background:var(--navy);z-index:5}
-h1{font:600 15px/1 "Plus Jakarta Sans",system-ui,sans-serif;margin:0;letter-spacing:.02em}
-select,button{background:#00294F;color:var(--ink);border:1px solid var(--line);
-  border-radius:2px;padding:5px 9px;font:inherit;font-size:12px}
-main{padding:16px 20px 60px;display:flex;flex-direction:column;gap:22px}
-.row{font:600 12px/1 "Plus Jakarta Sans",system-ui,sans-serif;letter-spacing:.12em;
-  text-transform:uppercase;color:var(--bronze);border-bottom:1px solid var(--line);
-  padding-bottom:7px;margin-top:14px}
-.panel h2{font:600 13px/1.3 "Plus Jakarta Sans",system-ui,sans-serif;margin:0 0 3px}
-.panel p{margin:0 0 9px;color:var(--dim);font-size:11.5px;max-width:95ch}
+body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--sans)}
+
+/* One row that does not reflow when a control is hidden: the filters live in
+   their own group and the group collapses whole. */
+header{position:sticky;top:0;z-index:20;background:var(--ground);
+  border-bottom:1px solid var(--hair);padding:11px 22px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+h1{margin:0;font:800 17px/1 var(--sans);letter-spacing:-.01em;color:var(--navy)}
+h1 span{color:var(--bronze)}
+#filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* Three places to be, all three visible. A dropdown hid two of them behind the
+   third and made the current one a thing you had to open something to read. */
+#tabs{display:flex;gap:2px;background:var(--hair-soft);border-radius:8px;padding:3px}
+.tab{border:0;background:none;border-radius:6px;padding:6px 13px;color:var(--slate);
+  font:600 12.5px/1 var(--sans);cursor:pointer}
+.tab:hover{color:var(--navy)}
+.tab.on{background:var(--ground);color:var(--navy);
+  box-shadow:0 1px 3px rgba(15,21,32,.10)}
+select,button,input{font:inherit;font-size:12.5px;color:var(--ink);
+  background:var(--ground);border:1px solid var(--hair);border-radius:6px;
+  padding:6px 10px}
+select{cursor:pointer}
+button{cursor:pointer;color:var(--slate)}
+button:hover{border-color:var(--bronze);color:var(--bronze)}
+input:focus,select:focus{outline:2px solid var(--bronze-wash);border-color:var(--bronze)}
+#note{margin-left:auto;color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
+
+main{padding:20px 22px 72px;display:flex;flex-direction:column;gap:26px}
+.row{font:700 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--bronze);border-bottom:1px solid var(--hair);padding-bottom:8px;margin-top:12px}
+.panel h2{font:700 14px/1.3 var(--sans);margin:0 0 3px;color:var(--navy)}
+.panel p{margin:0 0 10px;color:var(--slate);font-size:12px;max-width:92ch}
 .plot{min-height:60px}
-table{border-collapse:collapse;width:100%;font-size:12px;display:block;
-  overflow-x:auto;max-height:340px}
-th,td{border-bottom:1px solid var(--line);padding:4px 9px;text-align:left;
+
+table{border-collapse:collapse;width:100%;font:12px/1.5 var(--mono);display:block;
+  overflow:auto;max-height:360px;border:1px solid var(--hair);border-radius:6px}
+th,td{border-bottom:1px solid var(--hair-soft);padding:6px 11px;text-align:left;
   white-space:nowrap;font-variant-numeric:tabular-nums}
-th{color:var(--bronze);position:sticky;top:0;background:var(--navy)}
-.err{color:#E06C5A;font-size:12px}
-.empty{color:var(--dim);font-size:12px;padding:6px 0}
-.u-legend{font-size:11px}
-input{background:#00294F;color:var(--ink);border:1px solid var(--line);
-  border-radius:2px;padding:5px 8px;font:inherit;font-size:12px}
-.when{color:var(--dim);font-size:11.5px;display:flex;gap:5px;align-items:center}
-.tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
-.tile{border:1px solid var(--line);border-left:3px solid var(--dim);border-radius:2px;
-  padding:11px 13px;cursor:pointer;background:#00223f}
-.tile:hover{border-color:var(--bronze)}
-.tile.green{border-left-color:#73BF69}
-.tile.red{border-left-color:#E06C5A}
-.tile.going{border-left-color:#E0B400}
-.tile b{font:600 13px/1.3 "Plus Jakarta Sans",system-ui,sans-serif;display:block}
-.tile .verdict{font-size:11px;letter-spacing:.08em;text-transform:uppercase}
-.tile dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:8px 0 0;
-  font-size:11.5px;font-variant-numeric:tabular-nums}
-.tile dt{color:var(--dim)}
-.tile dd{margin:0;text-align:right}
-.back{color:var(--bronze);cursor:pointer;font-size:12px}
+th{color:var(--slate);position:sticky;top:0;background:var(--raised);
+  font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.04em;
+  text-transform:uppercase}
+tbody tr:hover{background:var(--bronze-wash)}
+.err{color:var(--bad);font-size:12px}
+.empty{color:var(--mute);font-size:12px;padding:8px 0}
+.u-legend{font-size:11px;color:var(--slate)}
+
+.tiles{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(258px,1fr))}
+.tile{border:1px solid var(--hair);border-left:3px solid var(--mute);border-radius:8px;
+  padding:13px 15px;cursor:pointer;background:var(--ground);transition:.12s}
+.tile:hover{border-color:var(--hair);border-left-color:var(--bronze);
+  box-shadow:0 2px 10px rgba(15,21,32,.07);transform:translateY(-1px)}
+.tile.green{border-left-color:var(--good)}
+.tile.red{border-left-color:var(--bad)}
+.tile.going{border-left-color:var(--warm)}
+.tile b{font:700 14px/1.3 var(--sans);display:block;color:var(--navy)}
+.tile .verdict{font:700 10px/1.6 var(--sans);letter-spacing:.11em;
+  text-transform:uppercase;color:var(--slate)}
+.tile.green .verdict{color:var(--good)}
+.tile.red .verdict{color:var(--bad)}
+.tile.going .verdict{color:var(--warm)}
+.tile dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:10px 0 0;
+  font:11.5px/1.5 var(--mono);font-variant-numeric:tabular-nums}
+.tile dt{color:var(--mute);font-family:var(--sans)}
+.tile dd{margin:0;text-align:right;color:var(--ink)}
+.back{color:var(--bronze);cursor:pointer;font-size:12.5px;font-weight:600;
+  display:inline-block;margin-bottom:4px}
+.back:hover{text-decoration:underline}
 </style>
 <header>
-  <h1>ammit</h1>
-  <select id=scope>
-    <option value=runs selected>runs</option>
-    <option value=window>a window</option>
-    <option value=lifetime>every run there has been</option>
-  </select>
-  <input id=q placeholder="ticket" size=12>
-  <label class=when>started <input id=sf type=date> to <input id=st type=date></label>
-  <label class=when>finished <input id=ff type=date> to <input id=ft type=date></label>
-  <button id=clear>clear</button>
+  <h1>ammit<span>.</span></h1>
+  <nav id=tabs>
+    <button class="tab on" data-scope=runs>Runs</button>
+    <button class=tab data-scope=window>A window</button>
+    <button class=tab data-scope=lifetime>All time</button>
+  </nav>
+  <div id=filters>
+    <input id=q placeholder="ticket" size=10>
+    <label class=when>started <input id=sf type=date> <input id=st type=date></label>
+    <label class=when>finished <input id=ff type=date> <input id=ft type=date></label>
+    <button id=clear>clear</button>
+  </div>
   <select id=range>
     <option value=3>last 3 hours</option>
     <option value=12 selected>last 12 hours</option>
@@ -79,8 +119,8 @@ input{background:#00294F;color:var(--ink);border:1px solid var(--line);
 <main id=main></main>
 <script>` + uplotJS + `</script>
 <script>
-const COLORS=["#CD7F32","#5794F2","#73BF69","#E0B400","#E06C5A","#B877D9",
-  "#37A2A6","#F2CC0C","#8AB8FF","#FF9830"];
+const COLORS=["#CD7F32","#0EA5E9","#22C55E","#FB923C","#EF4444","#8B5CF6",
+  "#0891B2","#CA8A04","#2563EB","#DB2777"];
 const main=document.getElementById("main");
 let panels=[];
 
@@ -141,8 +181,8 @@ function drawSeries(box,payload){
   const opts={
     width:box.clientWidth||900,height:(payload.panel.height||8)*26,
     scales:{x:{time:true}},
-    axes:[{stroke:"#8FA3BC",grid:{stroke:"#123A63"},ticks:{stroke:"#123A63"}},
-          {stroke:"#8FA3BC",grid:{stroke:"#123A63"},ticks:{stroke:"#123A63"}}],
+    axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"}},
+          {stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"}}],
     series:[{},...p.names.map((n,i)=>({
       label:n,stroke:COLORS[i%COLORS.length],width:1.4,
       // A limit is drawn as it behaves: flat until it is changed.
@@ -221,10 +261,9 @@ function drawTiles(){
 }
 
 async function boot(){
+  // The filter group collapses whole, so the row cannot half-empty and reflow.
   const picking = scope==="runs" && !chosen;
-  document.querySelectorAll(".when").forEach(e=>e.style.display=picking?"":"none");
-  document.getElementById("q").style.display=picking?"":"none";
-  document.getElementById("clear").style.display=picking?"":"none";
+  document.getElementById("filters").style.display=picking?"flex":"none";
   document.getElementById("range").style.display=scope==="window"?"":"none";
   if(picking){ await fillRuns(); drawTiles(); return; }
   if(scope==="runs") await fillRuns();
@@ -244,9 +283,10 @@ async function boot(){
 }
 document.getElementById("refresh").onclick=load;
 document.getElementById("range").onchange=load;
-document.getElementById("scope").onchange=async e=>{
-  scope=e.target.value; chosen=""; await boot();
-};
+document.querySelectorAll(".tab").forEach(t=>t.onclick=async ()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===t));
+  scope=t.dataset.scope; chosen=""; await boot();
+});
 ["q","sf","st","ff","ft"].forEach(id=>{
   const el=document.getElementById(id);
   el.oninput=()=>{clearTimeout(window._f);window._f=setTimeout(boot,300)};
