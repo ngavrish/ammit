@@ -189,10 +189,10 @@ tbody tr:hover{background:var(--bronze-wash)}
   </span>
 
   <nav id=tabs>
-    <a class=tab href="/" title="the limits every run is judged against, and the queue">Limits</a>
-    <button class="tab on" data-scope=runs>Runs</button>
-    <button class=tab data-scope=window>A window</button>
-    <button class=tab data-scope=lifetime>All time</button>
+    <a class=tab href="/ammit/limits">Limits</a>
+    <a class=tab data-scope=runs href="/ammit/runs">Runs</a>
+    <a class=tab data-scope=window href="/ammit/window">A window</a>
+    <a class=tab data-scope=lifetime href="/ammit/lifetime">All time</a>
   </nav>
 </header>
 
@@ -357,7 +357,7 @@ function drawTiles(){
         '<dt>turns</dt><dd>'+(r.turns||0)+'</dd>'+
         '<dt>cost</dt><dd>$'+(r.usd||0).toFixed(2)+'</dd>'+
       '</dl></div>').join("")+'</div>';
-  main.querySelectorAll(".tile").forEach(t=>t.onclick=()=>go("run="+t.dataset.run));
+  main.querySelectorAll(".tile").forEach(t=>t.onclick=()=>go("/ammit/runs/"+t.dataset.run));
 }
 
 async function boot(){
@@ -378,13 +378,16 @@ async function boot(){
       (p.about?'<p>'+p.about.replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;")+'</p>':'')+
       '<div class=plot id=plot-'+i+'></div></section>').join("");
   const back=document.getElementById("back");
-  if(back) back.onclick=()=>go("");
+  if(back) back.onclick=()=>go("/ammit/runs");
   await load();
 }
 document.getElementById("refresh").onclick=load;
 document.getElementById("range").onchange=load;
-document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>
-  go(t.dataset.scope==="runs" ? "" : t.dataset.scope));
+// The tabs are links: they work with the middle button, they can be copied, and
+// a keyboard reaches them. The handler only spares the page a reload.
+document.querySelectorAll(".tab[data-scope]").forEach(t=>t.onclick=e=>{
+  e.preventDefault(); go(t.getAttribute("href"));
+});
 ["q","sf","st","ff","ft"].forEach(id=>{
   const el=document.getElementById(id);
   el.oninput=()=>{clearTimeout(window._f);window._f=setTimeout(boot,300)};
@@ -400,21 +403,22 @@ addEventListener("resize",()=>{clearTimeout(window._t);window._t=setTimeout(load
 // hash draws the page. Keeping a copy beside it is what made the page fight
 // itself — one wrote, the other read what was there a moment ago, and every
 // switch landed on the view you had just left.
-function go(where){
-  const want = where ? "#"+where : "";
-  if(location.hash === want) { render(); return; }
-  location.hash = want;          // fires hashchange, which renders
+function go(path){
+  if(location.pathname === path){ render(); return; }
+  history.pushState(null,"",path);
+  render();
 }
 
 async function render(){
-  const h=(location.hash||"").slice(1);
-  chosen = h.startsWith("run=") ? h.slice(4) : "";
-  scope  = chosen ? "runs" : (["window","lifetime"].includes(h) ? h : "runs");
+  const parts=location.pathname.split("/").filter(Boolean);   // ammit, view, id?
+  const view=parts[1]||"runs";
+  chosen = view==="runs" && parts[2] ? parts[2] : "";
+  scope  = ["window","lifetime"].includes(view) ? view : "runs";
   document.querySelectorAll(".tab").forEach(x=>
-    x.classList.toggle("on", x.dataset.scope===scope));
+    x.classList.toggle("on", !chosen && x.dataset.scope===scope));
   await boot();
 }
 
-addEventListener("hashchange", render);
+addEventListener("popstate", render);
 render();
 </script>` }

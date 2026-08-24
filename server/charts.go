@@ -252,8 +252,26 @@ func serveCharts(mux *http.ServeMux) {
 		json.NewEncoder(w).Encode(out)
 	})
 
-	mux.HandleFunc("GET /charts", func(w http.ResponseWriter, r *http.Request) {
+	// Every view is a path. /ammit/runs, /ammit/runs/<id>, /ammit/window,
+	// /ammit/lifetime — the same page, told by its address which of them it is.
+	// A fragment was the first attempt and it is not an address a server can be
+	// asked about: it never leaves the browser.
+	page := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, chartsPageHTML())
-	})
+	}
+	mux.HandleFunc("GET /ammit/runs", page)
+	mux.HandleFunc("GET /ammit/runs/{id}", page)
+	mux.HandleFunc("GET /ammit/window", page)
+	mux.HandleFunc("GET /ammit/lifetime", page)
+
+	// Where the old addresses went, so anything already sent still arrives.
+	for from, to := range map[string]string{
+		"/charts": "/ammit/runs", "/ammit": "/ammit/runs",
+	} {
+		where := to
+		mux.HandleFunc("GET "+from, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, where, http.StatusFound)
+		})
+	}
 }

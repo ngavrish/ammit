@@ -168,7 +168,7 @@ nav.tabs{justify-self:end;margin-left:auto;align-self:center;display:flex;
   font:400 14px/20px var(--mono);letter-spacing:0;text-transform:none;
   transition:color .15s,background .15s}
 .tabs button:hover,.tabs .tab-link:hover{color:#F7FAFC}
-.tabs button[aria-selected="true"]{background:#CD7F32;color:#001F3F;font-weight:700}
+.tabs button[aria-selected="true"],.tabs .tab-link.on{background:#CD7F32;color:#001F3F;font-weight:700}
 #charts{max-width:none;padding:0;display:block;height:calc(100vh - 5.4rem)}
 </style></head><body>
 <header>
@@ -200,10 +200,10 @@ nav.tabs{justify-self:end;margin-left:auto;align-self:center;display:flex;
   <span class="brand-text"><b>AMMIT</b><small>Chiron.consulting</small></span>
 </span>
 <nav class="tabs" role="tablist">
-  <button id="tab-scales" role="tab" aria-selected="true">Limits</button>
-  <a class="tab-link" href="/charts">Runs</a>
-  <a class="tab-link" href="/charts#window">A window</a>
-  <a class="tab-link" href="/charts#lifetime">All time</a>
+  <a class="tab-link on" href="/ammit/limits">Limits</a>
+  <a class="tab-link" href="/ammit/runs">Runs</a>
+  <a class="tab-link" href="/ammit/window">A window</a>
+  <a class="tab-link" href="/ammit/lifetime">All time</a>
 </nav></header>
 <main id="scales">
   <section>
@@ -395,13 +395,19 @@ load(); refresh(); setInterval(refresh, 10000);
 
 // serveUI wires the page and the routes it edits the config through.
 func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
+	limits := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, strings.ReplaceAll(pageHTML(), "{{charts}}", chartsURL))
+	}
+	mux.HandleFunc("GET /ammit/limits", limits)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		io.WriteString(w, strings.ReplaceAll(pageHTML(), "{{charts}}", chartsURL))
+		// Every view has a path of its own; this one had the root, which said
+		// nothing about which view it was.
+		http.Redirect(w, r, "/ammit/limits", http.StatusFound)
 	})
 
 	mux.HandleFunc("GET /limits.yml", func(w http.ResponseWriter, r *http.Request) {
