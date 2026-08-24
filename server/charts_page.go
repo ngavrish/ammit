@@ -45,7 +45,11 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:60px;
   background:var(--navy-bar);border-bottom:1px solid var(--bar-hair);
   display:flex;align-items:center;gap:22px}
 
-.brand{display:flex;align-items:center;gap:9px;flex:none}
+/* The mark goes back to dokimos. It is the same mark and the same company, and
+   a page that cannot get you back to the thing it is about is a dead end. */
+.brand{display:flex;align-items:center;gap:9px;flex:none;text-decoration:none;
+  opacity:.95}
+.brand:hover{opacity:1}
 .brand-text{display:flex;flex-direction:column;line-height:1}
 .brand-text b{font:800 12px/1 var(--sans);letter-spacing:.17em;color:#F7FAFC}
 .brand-text small{font:600 8px/1.5 var(--sans);letter-spacing:.31em;color:var(--bronze)}
@@ -59,7 +63,8 @@ h1 em{font:400 11px/1 var(--sans);font-style:normal;letter-spacing:.02em;
 #tabs{margin-left:auto;display:flex;gap:2px;background:var(--bar-soft);
   border:1px solid var(--bar-hair);border-radius:9px;padding:3px;flex:none}
 .tab{border:0;background:none;border-radius:6px;padding:7px 15px;
-  color:var(--on-bar-dim);font:600 12.5px/1 var(--sans);cursor:pointer}
+  color:var(--on-bar-dim);font:600 12.5px/1 var(--sans);cursor:pointer;
+  text-decoration:none;display:inline-flex;align-items:center}
 .tab:hover{color:#F7FAFC}
 .tab.on{background:var(--bronze);color:#001F3F}
 
@@ -135,7 +140,7 @@ tbody tr:hover{background:var(--bronze-wash)}
 .back:hover{text-decoration:underline}
 </style>
 <header>
-  <span class=brand aria-hidden=true>
+  <a class=brand href="https://dokimos.chiron.systems" title="dokimos">
     <svg width="30" height="27" viewBox="0 0 180 160">
       <defs>
         <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -157,11 +162,12 @@ tbody tr:hover{background:var(--bronze-wash)}
       </g>
     </svg>
     <span class=brand-text><b>CHIRON</b><small>SYSTEMS</small></span>
-  </span>
+  </a>
 
   <h1>ammit<em>the scales, the record, and the eating</em></h1>
 
   <nav id=tabs>
+    <a class=tab href="/" title="the limits every run is judged against, and the queue">Limits</a>
     <button class="tab on" data-scope=runs>Runs</button>
     <button class=tab data-scope=window>A window</button>
     <button class=tab data-scope=lifetime>All time</button>
@@ -327,7 +333,14 @@ function drawTiles(){
         '<dt>cost</dt><dd>$'+(r.usd||0).toFixed(2)+'</dd>'+
       '</dl></div>').join("")+'</div>';
   main.querySelectorAll(".tile").forEach(t=>t.onclick=()=>{
-    chosen=t.dataset.run; boot();
+    chosen=t.dataset.run; // Arriving from the other page with a tab already named.
+if(location.hash){
+  const want=location.hash.slice(1);
+  const t=[...document.querySelectorAll(".tab")].find(x=>x.dataset.scope===want);
+  if(t){ document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===t));
+         scope=want; }
+}
+boot();
   });
 }
 

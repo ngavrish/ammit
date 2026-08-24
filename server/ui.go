@@ -58,7 +58,7 @@ header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5r
    rather than a flex child that would shove its neighbours. Full strength,
    not dimmed — the reference never fades this mark, and doing it here read
    as washed out next to the real thing. */
-.brand{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+.brand{text-decoration:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
        display:flex;align-items:center;gap:.5rem;pointer-events:none}
 .brand svg{display:block}
 /* Block children, not <b><br><small> — a bare <br> takes the browser's
@@ -129,20 +129,20 @@ a:hover{border-bottom-color:var(--bronze)}
 /* One page, two tabs. The charts are not a different product and should not
    look like one: same bar, same bronze, no second logo to explain. */
 nav.tabs{margin-left:auto;display:flex;gap:.25rem;align-self:center}
-nav.tabs button{background:transparent;border:1px solid transparent;border-radius:2px;
+.tab-link{text-decoration:none;display:inline-flex;align-items:center}
+.tabs button,.tabs .tab-link{background:transparent;border:1px solid transparent;border-radius:2px;
   padding:.45rem .9rem;color:var(--mute);cursor:pointer;
   font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase}
 nav.tabs button:hover{background:var(--bronze-wash);color:var(--ink)}
 nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
   border-color:var(--bronze-dim);color:var(--bronze)}
 #charts{max-width:none;padding:0;display:block;height:calc(100vh - 5.4rem)}
-#charts iframe{width:100%;height:100%;border:0;display:block;background:var(--navy)}
 </style></head><body>
 <header><h1>ammit</h1><span class="sub">the scales, the record, and the eating</span>
 <!-- Same mark, same bow-and-arrow path, as dokimos.chiron.systems — the light
      variant, since this header is dark. Static: the animation there is for a
      page somebody arrives at once, not a bar redrawn every refresh. -->
-<span class="brand" aria-hidden="true">
+<a class="brand" href="https://dokimos.chiron.systems" title="dokimos">
   <svg width="36" height="32" viewBox="0 0 180 160">
     <defs>
       <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -165,9 +165,14 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
   </svg>
   <span class="brand-text"><b>CHIRON</b><small>SYSTEMS</small></span>
 </span>
+<!-- One navigation across both pages. The charts used to hang in an iframe here,
+     which meant two ways to reach them and one of them without a URL you could
+     send anybody. -->
 <nav class="tabs" role="tablist">
-  <button id="tab-scales" role="tab" aria-selected="true" onclick="tab('scales')">scales</button>
-  <button id="tab-charts" role="tab" aria-selected="false" onclick="tab('charts')">charts</button>
+  <button id="tab-scales" role="tab" aria-selected="true">Limits</button>
+  <a class="tab-link" href="/charts">Runs</a>
+  <a class="tab-link" href="/charts#window">A window</a>
+  <a class="tab-link" href="/charts#lifetime">All time</a>
 </nav></header>
 <main id="scales">
   <section>
@@ -194,31 +199,12 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
   <section><h2>What ammit did <small>every limit crossed, and what followed</small></h2>
     <table id="judgements"></table></section>
 </main>
-<main id="charts" hidden>
-  <!-- Grafana's own nav stays: the side menu carries Explore, Alerting and the
-       rest, and hiding it to keep the tab bar clean cost more than it saved. -->
-  <iframe id="charts-frame" title="charts" loading="lazy" src="about:blank"></iframe>
-</main>
 <script>
 // The charts load the first time somebody asks for them: a tab nobody opened
 // should not be polling Grafana every thirty seconds behind the page.
 const CHARTS = "{{charts}}/d/ammit/ammit?theme=dark&refresh=30s";
 let earliest = 0;
-function chartsURL() {
-  // A little before the first run, a little after now: the whole record and no
-  // more. Falls back to six hours when there is nothing to measure against.
-  const from = earliest ? Math.round((earliest - 120) * 1000) : "now-6h";
-  return CHARTS + "&from=" + from + "&to=now";
-}
-function tab(which) {
-  for (const name of ["scales", "charts"]) {
-    document.getElementById(name).hidden = name !== which;
-    document.getElementById("tab-" + name).setAttribute("aria-selected", name === which);
-  }
-  const f = document.getElementById("charts-frame");
-  if (which === "charts" && f.getAttribute("src") === "about:blank") f.src = chartsURL();
-  history.replaceState(null, "", which === "charts" ? "#charts" : "#");
-}
+// The charts are a page of their own now, not a panel that hides.
 if (location.hash === "#charts") addEventListener("DOMContentLoaded", () => tab("charts"));
 
 const j = (p) => fetch(p).then(r => r.json());
