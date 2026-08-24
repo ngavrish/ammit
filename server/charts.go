@@ -185,15 +185,48 @@ func serveCharts(mux *http.ServeMux) {
 		})
 	})
 
-	// The runs, newest first, for the picker. Selecting one narrows the window to
-	// its own span rather than rewriting forty-three queries: the queue runs one
-	// at a time, so a run's span holds that run and nothing else.
+	// The runs, newest first. Every filter optional and every one absent by
+	// default: asked for nothing, this answers with everything there has ever
+	// been, which is the question somebody opening the page is usually asking.
+	//
+	//   ?name=      part of a ticket, matched anywhere in it
+	//   ?started_from= / ?started_to=   unix seconds
+	//   ?finished_from= / ?finished_to=
 	mux.HandleFunc("GET /charts/runs", func(w http.ResponseWriter, r *http.Request) {
+		where := []string{"1=1"}
+		var args []any
+		q := r.URL.Query()
+		if v := strings.TrimSpace(q.Get("name")); v != "" {
+			where = append(where, "coalesce(name,'') LIKE ?")
+			args = append(args, "%"+v+"%")
+		}
+		for _, f := range []struct{ param, col, op string }{
+			{"started_from", "started", ">="},
+			{"started_to", "started", "<="},
+			{"finished_from", "finished", ">="},
+			{"finished_to", "finished", "<="},
+		} {
+			v := strings.TrimSpace(q.Get(f.param))
+			if v == "" {
+				continue
+			}
+			n, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				continue
+			}
+			// A finish filter means finished runs. An unfinished run has no
+			// finish to compare, and treating its absence as zero would put every
+			// run still going into "finished before yesterday".
+			where = append(where, fmt.Sprintf("%s IS NOT NULL AND %s %s ?",
+				f.col, f.col, f.op))
+			args = append(args, n)
+		}
 		mu.Lock()
 		rs, err := db.Query(`SELECT run, coalesce(name,''), started,
 		                     coalesce(finished,0), coalesce(verdict,''),
 		                     coalesce(usd,0), coalesce(turns,0)
-		                     FROM runs ORDER BY started DESC LIMIT 200`)
+		                     FROM runs WHERE `+strings.Join(where, " AND ")+`
+		                     ORDER BY started DESC LIMIT 500`, args...)
 		type row struct {
 			Run      string  `json:"run"`
 			Name     string  `json:"name"`
