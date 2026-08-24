@@ -58,8 +58,8 @@ body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)
 .home{justify-self:start;flex:none;display:inline-flex;align-items:center;gap:9px;
   align-self:center;height:36px;padding:0 20px 0 16px;text-decoration:none;
   border:1px solid rgba(205,127,50,.35);border-radius:0;background:none;
-  color:#A0AEC0;font:400 14px/20px var(--mono);
-  transition:color .15s,border-color .15s}
+  color:#A0AEC0;font:400 14px/20px var(--mono);text-transform:none;
+  letter-spacing:0;transition:color .15s,border-color .15s}
 .home::before{content:"";width:13px;height:9px;flex:none;
   background:var(--bronze);
   -webkit-mask:var(--arrow) center/contain no-repeat;
@@ -91,9 +91,11 @@ header{position:relative;display:grid;grid-template-columns:1fr auto 1fr;
    stacks two block elements in a flex column instead), and that inherited
    leading was inflating this line's box past its own font-size. */
 .brand-text{display:flex;flex-direction:column}
-.brand b{display:block;font:800 20px/1 var(--sans);letter-spacing:-.01em;color:var(--ink)}
-.brand small{display:block;font:600 7px/1 var(--mono);letter-spacing:.32em;color:var(--mute);
-             text-transform:uppercase;margin-top:3px}
+/* The wordmark, the same as on the charts page. These rules predate it and were
+   still winning: the name in a different size, the line under it in caps. */
+.brand b{display:block;font:700 15px/1 var(--sans);letter-spacing:.13em;color:#F7FAFC}
+.brand small{display:block;font:400 9px/1.6 var(--mono);letter-spacing:.13em;
+             color:#CD7F32;text-transform:none;margin-top:0}
 h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
    color:var(--bronze)}
 header .sub{color:var(--dim);font-size:13px;letter-spacing:.04em}
