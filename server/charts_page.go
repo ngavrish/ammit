@@ -40,38 +40,42 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
  *
  * No product name: the tab that is lit says which of them you are looking at,
  * and the name was taking the widest part of the bar to repeat it. */
-header{position:sticky;top:0;z-index:30;padding:0 24px;height:60px;
-  background:var(--navy-bar);border-bottom:1px solid var(--bar-hair);
+/* The menu from dokimos.chiron.systems, measured rather than guessed: the bar is
+   eighty-one pixels of navy at nine tenths, the items are JetBrains Mono at
+   fourteen over twenty in #A0AEC0 with no tracking, and the one you are on is the
+   same face at seven hundred, navy on bronze, thirty-six tall with twenty-four
+   either side and square corners.
+ *
+   Everything here is that menu. What differs is the logo, the back button and
+   which buttons there are. */
+header{position:sticky;top:0;z-index:30;padding:0 24px;height:81px;
+  background:rgba(0,31,63,.9);backdrop-filter:saturate(140%) blur(10px);
+  border-bottom:1px solid rgba(255,255,255,.08);
   display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px}
 
-.home{justify-self:start;display:inline-flex;align-items:center;gap:8px;
-  text-decoration:none;padding:7px 14px 7px 11px;border-radius:20px;
-  border:1px solid var(--bar-hair);background:var(--bar-soft);
-  font:700 12px/1 var(--sans);letter-spacing:.03em;color:#F7FAFC;
-  transition:background .14s,border-color .14s}
-.home::before{content:"";width:13px;height:9px;flex:none;background:var(--bronze);
+.home{justify-self:start;display:inline-flex;align-items:center;gap:9px;height:36px;
+  padding:0 20px 0 16px;text-decoration:none;border:1px solid rgba(205,127,50,.35);
+  color:#A0AEC0;font:400 14px/20px var(--mono);transition:color .15s,border-color .15s}
+.home::before{content:"";width:13px;height:9px;flex:none;background:#CD7F32;
   -webkit-mask:var(--arrow) center/contain no-repeat;
-  mask:var(--arrow) center/contain no-repeat;transition:transform .14s}
-.home:hover{background:rgba(205,127,50,.14);border-color:var(--bronze)}
+  mask:var(--arrow) center/contain no-repeat;transition:transform .15s}
+.home:hover{color:#F7FAFC;border-color:#CD7F32}
 .home:hover::before{transform:translateX(-3px)}
 
-.brand{justify-self:center;display:flex;align-items:center;gap:9px}
+.brand{justify-self:center;display:flex;align-items:center;gap:10px}
 .brand-text{display:flex;flex-direction:column;line-height:1}
-.brand-text b{font:800 12px/1 var(--sans);letter-spacing:.17em;color:#F7FAFC}
-.brand-text small{font:600 9.5px/1.45 var(--sans);letter-spacing:.02em;
-  color:var(--bronze)}
+.brand-text b{font:700 15px/1 var(--sans);letter-spacing:.13em;color:#F7FAFC}
+.brand-text small{font:400 9px/1.6 var(--mono);letter-spacing:.13em;color:#CD7F32}
 
-#tabs{margin-left:auto;display:flex;gap:2px;background:var(--bar-soft);
-  border:1px solid var(--bar-hair);border-radius:9px;padding:3px;flex:none}
-.tab{border:0;background:none;border-radius:6px;padding:7px 15px;
-  color:var(--on-bar-dim);font:600 12.5px/1 var(--sans);cursor:pointer;
-  text-decoration:none;display:inline-flex;align-items:center}
+#tabs{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+.tab{border:0;background:none;border-radius:0;height:36px;padding:0 24px;
+  color:#A0AEC0;font:400 14px/20px var(--mono);cursor:pointer;
+  text-decoration:none;display:inline-flex;align-items:center;
+  transition:color .15s,background .15s}
 .tab:hover{color:#F7FAFC}
-.tab.on{background:var(--bronze);color:#001F3F}
+.tab.on{background:#CD7F32;color:#001F3F;font-weight:700}
 
-/* The strip: light, sticky under the bar, and it holds everything with a
-   control on it. */
-#bar{position:sticky;top:60px;z-index:25;padding:9px 24px;
+#bar{position:sticky;top:81px;z-index:25;padding:9px 24px;
   background:var(--raised);border-bottom:1px solid var(--hair);
   display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 #bar select,#bar>button{font:inherit;font-size:12.5px;color:var(--ink);

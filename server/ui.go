@@ -55,115 +55,31 @@ body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)
 /* Back to the project this belongs to. A grey word with an arrow read as a
    footnote; it is the only way out of here, and it is one of two products
    rather than a link in prose — so it looks like something to press. */
-.home{justify-self:start;flex:none;display:inline-flex;align-items:center;gap:8px;align-self:center;
-  text-decoration:none;padding:7px 14px 7px 11px;border-radius:20px;
-  border:1px solid rgba(205,127,50,.28);background:rgba(247,250,252,.07);
-  font:700 12px/1 var(--sans);letter-spacing:.03em;color:#F7FAFC;
-  transition:background .14s,border-color .14s}
-.home::before{content:"";width:13px;height:9px;flex:none;
-  background:var(--bronze);
+/* The menu from dokimos.chiron.systems, measured rather than guessed. Same as
+   the charts page: what differs between the two is the logo, the back button and
+   which buttons there are. */
+.home{justify-self:start;display:inline-flex;align-items:center;gap:9px;height:36px;
+  padding:0 20px 0 16px;text-decoration:none;border:1px solid rgba(205,127,50,.35);
+  color:#A0AEC0;font:400 14px/20px var(--mono);transition:color .15s,border-color .15s}
+.home::before{content:"";width:13px;height:9px;flex:none;background:#CD7F32;
   -webkit-mask:var(--arrow) center/contain no-repeat;
-  mask:var(--arrow) center/contain no-repeat;
-  transition:transform .14s}
-.home:hover{background:rgba(205,127,50,.14);border-color:var(--bronze)}
+  mask:var(--arrow) center/contain no-repeat;transition:transform .15s}
+.home:hover{color:#F7FAFC;border-color:#CD7F32}
 .home:hover::before{transform:translateX(-3px)}
 
-.title{display:flex;flex-direction:column;gap:3px;line-height:1}
-.title b{font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
-.title em{font:400 11px/1 var(--sans);font-style:normal;color:#A0AEC0}
-/* Three columns, so the mark is centred against the bar rather than against
-   whatever sits beside it: back on the left, the company in the middle, where
-   you are on the right. */
-header{position:relative;display:grid;grid-template-columns:1fr auto 1fr;
-       align-items:center;gap:1rem;padding:1rem 2.5rem;
-       border-bottom:1px solid rgba(205,127,50,.28);background:#001F3F;
-       --ink:#F7FAFC; --mute:#A0AEC0; --dim:#A0AEC0; color:#F7FAFC}
-/* Centered independent of how wide the title or the tabs are, positioned
-   rather than a flex child that would shove its neighbours. Full strength,
-   not dimmed — the reference never fades this mark, and doing it here read
-   as washed out next to the real thing. */
-.brand{justify-self:center;display:flex;align-items:center;gap:9px}
-` + footerCSS + `
-.brand svg{display:block}
-/* Block children, not <b><br><small> — a bare <br> takes the browser's
-   default line-height, which the reference component never touches (it
-   stacks two block elements in a flex column instead), and that inherited
-   leading was inflating this line's box past its own font-size. */
-.brand-text{display:flex;flex-direction:column}
-.brand b{display:block;font:800 20px/1 var(--sans);letter-spacing:-.01em;color:var(--ink)}
-.brand small{display:block;font:600 7px/1 var(--mono);letter-spacing:.32em;color:var(--mute);
-             text-transform:uppercase;margin-top:3px}
-h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
-   color:var(--bronze)}
-header .sub{color:var(--dim);font-size:13px;letter-spacing:.04em}
-main{max-width:82rem;margin:0 auto;padding:2.5rem;display:grid;gap:1.5rem}
-section{background:var(--deep);border:1px solid var(--bronze-dim);border-radius:2px;
-        padding:1.5rem 1.75rem;box-shadow:0 1px 3px rgba(15,21,32,.06)}
-h2{margin:0 0 1.25rem;font:600 .8rem/1 var(--mono);letter-spacing:.16em;
-   text-transform:uppercase;color:var(--bronze);display:flex;align-items:baseline;gap:.75rem}
-h2 small{color:var(--dim);font:400 12px/1.4 var(--sans);letter-spacing:.02em;
-         text-transform:none}
-.hint{color:var(--dim);font-size:12px;line-height:1.4}
-fieldset{border:0;border-top:1px solid var(--bronze-dim);margin:0 0 1.5rem;padding:1.1rem 0 0}
-legend{color:var(--bronze);font:500 11px/1 var(--mono);letter-spacing:.22em;
-       text-transform:uppercase;padding-right:.75rem}
-.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(19rem,1fr));
-        gap:1rem 1.75rem}
-label{display:grid;gap:.3rem}
-label .k{font:500 12px/1.4 var(--mono);color:var(--mute);letter-spacing:.04em}
-.field{display:flex;align-items:center;gap:.6rem}
-input,select,textarea{background:var(--deeper);color:var(--ink);
-      border:1px solid var(--bronze-dim);border-radius:2px;padding:.5rem .7rem;
-      font:400 13px/1.5 var(--mono);width:100%}
-input:focus,select:focus,textarea:focus{outline:0;border-color:var(--bronze);
-      box-shadow:0 0 0 1px var(--bronze-dim)}
-input.changed,select.changed,textarea.changed{border-color:var(--bronze);
-      background:var(--bronze-wash)}
-.as{color:var(--dim);font:400 12px/1 var(--mono);white-space:nowrap;min-width:5.5rem}
-textarea{min-height:24rem;line-height:1.7;resize:vertical}
-button{background:transparent;color:var(--bronze);border:1px solid rgba(205,127,50,.4);
-       border-radius:2px;padding:.55rem 1.4rem;cursor:pointer;
-       font:700 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
-       transition:background .15s,color .15s}
-button:hover{background:var(--bronze);color:var(--navy)}
-button.ghost{color:var(--mute);border-color:rgba(160,174,192,.22)}
-button.ghost:hover{background:rgba(160,174,192,.12);color:var(--ink)}
-button:disabled{opacity:.4;cursor:default}
-.row{display:flex;gap:.9rem;align-items:center;flex-wrap:wrap}
-.bar{margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--bronze-dim)}
-.msg{color:var(--mute);font-size:12px;font-family:var(--mono)}
-.msg.bad{color:var(--bad)} .msg.ok{color:var(--ok)}
-table{width:100%;border-collapse:collapse;font:400 13px/1.5 var(--mono)}
-th{text-align:left;color:var(--bronze);font-weight:500;font-size:11px;
-   letter-spacing:.14em;text-transform:uppercase;padding:.5rem .75rem;
-   border-bottom:1px solid var(--bronze-dim)}
-td{padding:.45rem .75rem;border-bottom:1px solid #F1F3F6;
-   vertical-align:top;color:var(--mute)}
-tr:hover td{background:rgba(205,127,50,.04);color:var(--ink)}
-td.n{text-align:right;font-variant-numeric:tabular-nums}
-.tag{padding:.15rem .55rem;border-radius:2px;font-size:11px;letter-spacing:.08em;
-     text-transform:uppercase;border:1px solid}
-.live{color:var(--bronze);border-color:var(--bronze-dim);background:var(--bronze-wash)}
-.ok{color:var(--ok);border-color:rgba(79,169,124,.35);background:rgba(79,169,124,.08)}
-.bad{color:var(--bad);border-color:rgba(224,108,90,.35);background:rgba(224,108,90,.08)}
-a{color:var(--bronze);text-decoration:none;border-bottom:1px solid var(--bronze-dim);
-  font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase}
-a:hover{border-bottom-color:var(--bronze)}
-[hidden]{display:none!important}
-/* One page, two tabs. The charts are not a different product and should not
-   look like one: same bar, same bronze, no second logo to explain. */
-/* The same control as on the charts page. This one had drifted into plain
-   uppercase links, so the two pages disagreed about what a tab looks like while
-   sharing the tabs. */
-nav.tabs{justify-self:end;margin-left:auto;align-self:center;display:flex;gap:2px;
-  background:rgba(247,250,252,.07);border:1px solid rgba(205,127,50,.28);
-  border-radius:9px;padding:3px}
-.tabs button,.tabs .tab-link{background:none;border:0;border-radius:6px;
-  padding:7px 15px;color:#A0AEC0;cursor:pointer;text-decoration:none;
+.brand{justify-self:center;display:flex;align-items:center;gap:10px}
+.brand-text b{font:700 15px/1 var(--sans);letter-spacing:.13em;color:#F7FAFC}
+.brand-text small{font:400 9px/1.6 var(--mono);letter-spacing:.13em;color:#CD7F32}
+
+nav.tabs{justify-self:end;margin-left:auto;align-self:center;display:flex;
+  align-items:center;gap:8px;background:none;border:0;border-radius:0;padding:0}
+.tabs button,.tabs .tab-link{background:none;border:0;border-radius:0;height:36px;
+  padding:0 24px;color:#A0AEC0;cursor:pointer;text-decoration:none;
   display:inline-flex;align-items:center;
-  font:600 12.5px/1 var(--sans);letter-spacing:0;text-transform:none}
-.tabs button:hover,.tabs .tab-link:hover{color:#F7FAFC}
-.tabs button[aria-selected="true"]{background:var(--bronze);color:#001F3F}
+  font:400 14px/20px var(--mono);letter-spacing:0;text-transform:none;
+  transition:color .15s,background .15s}
+.tabs button:hover,.tabs .tab-link:hover{color:#F7FAFC;background:none}
+.tabs button[aria-selected="true"]{background:#CD7F32;color:#001F3F;font-weight:700}
 #charts{max-width:none;padding:0;display:block;height:calc(100vh - 5.4rem)}
 </style></head><body>
 <header>
