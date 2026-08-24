@@ -190,6 +190,28 @@ function hours(){
   const on=document.querySelector(".span.on");
   return on ? +on.dataset.h : 12;
 }
+
+// Open on a window that holds something.
+//
+// Twelve hours was the default and the last run was the day before yesterday, so
+// the page opened empty and three of the four lengths were indistinguishable from
+// each other — every one of them showed nothing, so switching between them did
+// nothing. The smallest window that reaches the newest run is the one worth
+// opening on.
+let pickedWindow=false;
+async function windowForNewest(){
+  if(pickedWindow) return; pickedWindow=true;
+  try{
+    const rows=await (await fetch("/charts/runs")).json();
+    if(!rows.length) return;
+    const ageH=(Date.now()/1000 - rows[0].started)/3600;
+    const fits=[...document.querySelectorAll(".span")]
+      .map(b=>+b.dataset.h).sort((a,b)=>a-b).find(h=>h>ageH);
+    const want=fits||168;
+    document.querySelectorAll(".span").forEach(x=>
+      x.classList.toggle("on", +x.dataset.h===want));
+  }catch(e){/* leave the default */}
+}
 let runs=[], scope="runs", chosen="";
 
 // A verdict is a word this pipeline chose, and there are several for each of the
@@ -294,7 +316,10 @@ async function load(){
       drawn++;
     }catch(e){ box.innerHTML='<div class=err>'+e+'</div>' }
   }));
-  note.textContent=drawn+" panels";
+  const withData=[...document.querySelectorAll(".plot")]
+    .filter(b=>b.classList.contains("drawn")||b.querySelector("table")).length;
+  note.textContent = withData===drawn ? drawn+" panels"
+    : withData+" of "+drawn+" panels have data";
 }
 
 function filters(){
@@ -338,6 +363,7 @@ async function boot(){
   const picking = scope==="runs" && !chosen;
   document.getElementById("filters").style.display=picking?"flex":"none";
   document.getElementById("range").style.display=scope==="window"?"flex":"none";
+  if(scope==="window") await windowForNewest();
   if(picking){ await fillRuns(); drawTiles(); return; }
   if(scope==="runs") await fillRuns();
   panels=(await (await fetch("/charts/panels"+(scope==="lifetime"?"?scope=lifetime":""))).json()).panels;
