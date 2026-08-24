@@ -272,7 +272,11 @@ function drawSeries(box,payload){
     // squeezed into two hundred pixels is a line that goes up: the shape is the
     // whole point of drawing it, and the shape needs room.
     height:Math.max(360, Math.round(innerHeight*0.66)),
-    scales:{x:{time:true}},
+    // The window that was asked for, not the extent of whatever came back. Some
+    // queries return every point of a run that merely overlaps the window, so a
+    // chart labelled three hours was drawing twenty-four and saying so along its
+    // own axis.
+    scales:{x:{time:true,range:()=>[payload.from/1000, payload.to/1000]}},
     axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:34},
           // Wide enough for the number. Left at its default the axis cut its own
           // labels — a chart of turns per run read "0,000" down the side.
@@ -320,6 +324,7 @@ async function load(){
     .filter(b=>b.classList.contains("drawn")||b.querySelector("table")).length;
   note.textContent = withData===drawn ? drawn+" panels"
     : withData+" of "+drawn+" panels have data";
+  sink();
 }
 
 function filters(){
@@ -356,6 +361,22 @@ function drawTiles(){
         '<dt>cost</dt><dd>$'+(r.usd||0).toFixed(2)+'</dd>'+
       '</dl></div>').join("")+'</div>';
   main.querySelectorAll(".tile").forEach(t=>t.onclick=()=>go("/ammit/runs/"+t.dataset.run));
+}
+
+// Panels with nothing in them go to the bottom, together, under a line. Left
+// where they are, they put a gap between every pair of charts and reading the
+// page became scrolling past what is not there.
+function sink(){
+  const empties=[...document.querySelectorAll(".panel")]
+    .filter(p=>{const b=p.querySelector(".plot");
+                return b && !b.classList.contains("drawn") && !b.querySelector("table")});
+  document.getElementById("nothing")?.remove();
+  if(!empties.length) return;
+  const rule=document.createElement("div");
+  rule.id="nothing"; rule.className="row";
+  rule.textContent="Nothing in this window ("+empties.length+")";
+  main.appendChild(rule);
+  empties.forEach(p=>main.appendChild(p));
 }
 
 async function boot(){

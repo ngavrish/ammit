@@ -7,7 +7,7 @@
   {
    "kind": "series",
    "title": "Cost per run against limits.usd_per_run",
-   "about": "Each line is one run's spend as it accrued. The dashed line is the limit in force at that moment: edit it on the ammit page and the line bends here.",
+   "about": "Each line is one run's spend as it accrued",
    "unit": "currencyUSD",
    "height": 8,
    "queries": [
@@ -18,7 +18,7 @@
   {
    "kind": "series",
    "title": "Turns per run against limits.turns_per_run",
-   "about": "One per tool call, which is what the pipeline reports as a turn: the heartbeat that proves a session is still moving. Not the number of exchanges with the model.",
+   "about": "One per tool call, which is what the pipeline reports as a turn: the heartbeat that proves…",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -29,7 +29,7 @@
   {
    "kind": "series",
    "title": "How long a run has been going, against timeouts.run",
-   "about": "A line that reaches the dashed one is a run ammit stopped; the annotation there says what it ran to stop it.",
+   "about": "A line that reaches the dashed one is a run ammit stopped",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -40,7 +40,7 @@
   {
    "kind": "series",
    "title": "Idle time piling up, per run",
-   "about": "Every gap over two minutes, added up as the run went. A staircase that climbs as fast as the run is a run that is mostly waiting: 377 of 636 minutes, once.",
+   "about": "Every gap over two minutes, added up as the run went",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -54,7 +54,7 @@
   {
    "kind": "series",
    "title": "How long one request takes, by agent, against timeouts.request",
-   "about": "One point per wait for the model: ask, and get an answer back. Inside the run this is invisible — a call that never returns has no error and no retry — so it is timed out here, where something can act on it.",
+   "about": "One point per wait for the model: ask, and get an answer back",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -65,7 +65,7 @@
   {
    "kind": "series",
    "title": "Requests that died, per minute",
-   "about": "A request that came back as an error rather than an answer, by agent. A row here and a gap on the chart beside it is a retry; a row here and nothing after it is a session that stopped.",
+   "about": "A request that came back as an error rather than an answer, by agent",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -75,7 +75,7 @@
   {
    "kind": "series",
    "title": "Request time by phase, against timeouts.request",
-   "about": "The same waits, grouped by what the run was doing. A design phase that waits twice as long per request as an implementing one is a prompt problem, not a network problem.",
+   "about": "The same waits, grouped by what the run was doing",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -86,7 +86,7 @@
   {
    "kind": "table",
    "title": "Requests that died, in full",
-   "about": "What the error was, whose request it was, and how long it had been waiting.",
+   "about": "What the error was, whose request it was, and how long it had been waiting",
    "unit": "",
    "height": 8,
    "queries": [
@@ -100,7 +100,7 @@
   {
    "kind": "series",
    "title": "Cost by phase",
-   "about": "What each phase is costing, as it accrues. \"What is the design costing us\" is this chart and no other.",
+   "about": "What each phase is costing, as it accrues",
    "unit": "currencyUSD",
    "height": 8,
    "queries": [
@@ -111,7 +111,7 @@
   {
    "kind": "series",
    "title": "Turns by phase",
-   "about": "One per tool call — runsdb emits a turn from log() when the line is a tool line, so this counts tool calls, not exchanges with the model.",
+   "about": "One per tool call",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -121,7 +121,7 @@
   {
    "kind": "series",
    "title": "Phase length against timeouts.phase",
-   "about": "One point per finished phase.",
+   "about": "One point per finished phase",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -132,7 +132,7 @@
   {
    "kind": "series",
    "title": "Idle inside a phase, against timeouts.turn",
-   "about": "The gap between one thing happening and the next, within a phase. Which phase the waiting happens in is the difference between a slow model and a stuck gate.",
+   "about": "The gap between one thing happening and the next, within a phase",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -143,7 +143,7 @@
   {
    "kind": "series",
    "title": "Memory while each phase ran, against limits.memory_mb",
-   "about": "Every sampled container added up, labelled with the phase that was open when the reading was taken. It is a claim about time, not about blame: several branches share a worker.",
+   "about": "Every sampled container added up, labelled with the phase that was open when the reading…",
    "unit": "mbytes",
    "height": 8,
    "queries": [
@@ -154,7 +154,7 @@
   {
    "kind": "series",
    "title": "Time in a phase, minute by minute",
-   "about": "How long the open phase has been open. A climb that does not reset is a phase nothing is ending.",
+   "about": "How long the open phase has been open",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -169,7 +169,7 @@
   {
    "kind": "series",
    "title": "Cost by agent",
-   "about": "Which agent is spending the money.",
+   "about": "Which agent is spending the money",
    "unit": "currencyUSD",
    "height": 8,
    "queries": [
@@ -180,7 +180,7 @@
   {
    "kind": "series",
    "title": "What one turn carried, against limits.turn_tokens",
-   "about": "Every turn as it was sent — the system prompt, whatever was inlined into it, and the conversation so far. The per-session average below is a summary that arrives once the session is over; this is the number while the next turn has not been paid for yet.",
+   "about": "Every turn as it was sent",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -191,7 +191,7 @@
   {
    "kind": "series",
    "title": "Output per turn, by agent",
-   "about": "What the model actually wrote. Read this beside the chart on the left: three hundred tokens read for every one written is a prompt problem, not a model having a hard think.",
+   "about": "What the model actually wrote",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -201,7 +201,7 @@
   {
    "kind": "series",
    "title": "Turns by agent",
-   "about": "Which agent is taking the turns.",
+   "about": "Which agent is taking the turns",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -211,7 +211,7 @@
   {
    "kind": "series",
    "title": "Session length against timeouts.session",
-   "about": "One point per finished session, by agent.",
+   "about": "One point per finished session, by agent",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -222,7 +222,7 @@
   {
    "kind": "series",
    "title": "Silence between turns, against timeouts.turn",
-   "about": "The gap between one turn and the next, per agent.",
+   "about": "The gap between one turn and the next, per agent",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -233,7 +233,7 @@
   {
    "kind": "series",
    "title": "Memory while each agent ran, against limits.memory_mb",
-   "about": "The same readings, labelled with the session that was open when they were taken.",
+   "about": "The same readings, labelled with the session that was open when they were taken",
    "unit": "mbytes",
    "height": 8,
    "queries": [
@@ -244,7 +244,7 @@
   {
    "kind": "series",
    "title": "Time in a session, minute by minute",
-   "about": "How long the open session has been open, by agent.",
+   "about": "How long the open session has been open, by agent",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -259,7 +259,7 @@
   {
    "kind": "series",
    "title": "Tokens out, per run",
-   "about": "Generated tokens as they accrued. This is the number that moves the bill; cache read below is charged at a fraction of it.",
+   "about": "Generated tokens as they accrued",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -269,7 +269,7 @@
   {
    "kind": "series",
    "title": "Tokens out, by phase",
-   "about": "Which phase is generating the volume.",
+   "about": "Which phase is generating the volume",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -279,7 +279,7 @@
   {
    "kind": "series",
    "title": "Tokens out, by agent",
-   "about": "And which agent inside it.",
+   "about": "And which agent inside it",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -289,7 +289,7 @@
   {
    "kind": "series",
    "title": "Cache read, per run",
-   "about": "Context read back rather than re-sent. Large is good here: it is the same prompt not being paid for twice.",
+   "about": "Context read back rather than re-sent",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -299,7 +299,7 @@
   {
    "kind": "series",
    "title": "Cache written, per run",
-   "about": "Context put into the cache. Written once, read many times — a run where this keeps climbing is a run whose prompt will not settle.",
+   "about": "Context put into the cache",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -309,7 +309,7 @@
   {
    "kind": "table",
    "title": "Tokens and what they cost",
-   "about": "Every run in the window: what it generated, what it read back, and the bill.",
+   "about": "Every run in the window: what it generated, what it read back, and the bill",
    "unit": "",
    "height": 9,
    "queries": [
@@ -323,7 +323,7 @@
   {
    "kind": "series",
    "title": "Memory by container against limits.memory_mb",
-   "about": "Read from outside every sample.every seconds. A worker the kernel kills leaves no evidence of its own: the process that would have said so is the one that died.",
+   "about": "Read from outside every sample.every seconds",
    "unit": "mbytes",
    "height": 8,
    "queries": [
@@ -334,7 +334,7 @@
   {
    "kind": "series",
    "title": "CPU by container",
-   "about": "Percent of one core, as the container client reports it.",
+   "about": "Percent of one core, as the container client reports it",
    "unit": "percent",
    "height": 8,
    "queries": [
@@ -344,7 +344,7 @@
   {
    "kind": "series",
    "title": "Processes by container",
-   "about": "A count that climbs and never falls is something not being reaped — the browser runs this pipeline leaves behind, most often.",
+   "about": "A count that climbs and never falls is something not being reaped",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -354,7 +354,7 @@
   {
    "kind": "states",
    "title": "Phases and branches",
-   "about": "What each branch was doing, minute by minute.",
+   "about": "What each branch was doing, minute by minute",
    "unit": "",
    "height": 8,
    "queries": [
@@ -368,7 +368,7 @@
   {
    "kind": "series",
    "title": "Findings per gate, each time it ran",
-   "about": "How much each check refuses, round by round. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
+   "about": "How much each check refuses, round by round",
    "unit": "short",
    "height": 8,
    "queries": [
@@ -378,7 +378,7 @@
   {
    "kind": "series",
    "title": "How long a round takes, by gate",
-   "about": "The check plus the repair it caused. A loop that costs more than the fault is a loop worth removing.",
+   "about": "The check plus the repair it caused",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -388,7 +388,7 @@
   {
    "kind": "table",
    "title": "Rounds to green, per gate",
-   "about": "How many times each check had to run before it stopped refusing, and what the rounds cost. One round is a check doing its job; three is a repair that cannot hear what is being asked.",
+   "about": "How many times each check had to run before it stopped refusing, and what the rounds cost",
    "unit": "",
    "height": 9,
    "queries": [
@@ -402,7 +402,7 @@
   {
    "kind": "table",
    "title": "Busy and idle, per run",
-   "about": "Elapsed against the part of it where nothing happened for more than two minutes.",
+   "about": "Elapsed against the part of it where nothing happened for more than two minutes",
    "unit": "",
    "height": 9,
    "queries": [
@@ -412,7 +412,7 @@
   {
    "kind": "table",
    "title": "The longest gaps",
-   "about": "Every stretch over five minutes where nothing was reported, newest first. What was open when it started is the first place to look.",
+   "about": "Every stretch over five minutes where nothing was reported, newest first",
    "unit": "",
    "height": 9,
    "queries": [
@@ -422,7 +422,7 @@
   {
    "kind": "table",
    "title": "What ammit did",
-   "about": "Every limit crossed, what it did about it, and what the command said back.",
+   "about": "Every limit crossed, what it did about it, and what the command said back",
    "unit": "",
    "height": 9,
    "queries": [
@@ -442,7 +442,7 @@
   {
    "kind": "table",
    "title": "Limits, as they stand",
-   "about": "What every chart above is drawn against, and when it last changed.",
+   "about": "What every chart above is drawn against, and when it last changed",
    "unit": "",
    "height": 9,
    "queries": [
@@ -456,7 +456,7 @@
   {
    "kind": "table",
    "title": "The same call, again",
-   "about": "One row per distinct call that ran more than once in the window. This is the question the calls table was added for: a branch ran the same search for step phrases eleven times, and nobody knew until somebody counted by hand.",
+   "about": "One row per distinct call that ran more than once in the window",
    "unit": "",
    "height": 9,
    "queries": [
@@ -466,7 +466,7 @@
   {
    "kind": "table",
    "title": "The same file, however it was reached",
-   "about": "Grouped by what was touched rather than how it was touched. Read, then cat, then three sed windows is five calls and one file — which is how a single step module came to be opened fifteen times in fourteen different ways.",
+   "about": "Grouped by what was touched rather than how it was touched",
    "unit": "",
    "height": 9,
    "queries": [
@@ -476,7 +476,7 @@
   {
    "kind": "table",
    "title": "What each phase spent its calls on",
-   "about": "Every call of the window by kind. Writing and running tests are the work; everything else is what it cost to get there.",
+   "about": "Every call of the window by kind",
    "unit": "",
    "height": 9,
    "queries": [
