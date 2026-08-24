@@ -67,15 +67,19 @@ let panels=[];
 function hours(){return +document.getElementById("range").value}
 let runs=[], scope="window";
 
-// Picking a run narrows the window to that run's own span rather than rewriting
-// forty-three queries to take a run id. The queue runs one at a time, so a run's
-// span holds that run and nothing else — which is the assumption, said out loud.
+// Picking a run sends the run, and the server narrows every table to it. The
+// window still travels because some queries draw against it, and it is opened
+// wide enough to hold the whole run.
 function windowMs(){
   if(scope==="run"){
     const r=runs.find(x=>x.run===document.getElementById("run").value);
     if(r) return [r.started*1000-2000, (r.finished||Date.now()/1000)*1000+2000];
   }
   const to=Date.now();return[to-hours()*3600e3,to];
+}
+function runParam(){
+  return scope==="run"
+    ? "&run="+encodeURIComponent(document.getElementById("run").value) : "";
 }
 
 // The series come back as rows of (time, metric, value) — one long table, many
@@ -127,7 +131,7 @@ function drawTable(box,payload){
 
 async function load(){
   const [from,to]=windowMs();
-  const q=scope==="lifetime"?"&scope=lifetime":"";
+  const q=(scope==="lifetime"?"&scope=lifetime":"")+runParam();
   const note=document.getElementById("note");
   let drawn=0;
   await Promise.all(panels.map(async (p,i)=>{

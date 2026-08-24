@@ -91,6 +91,33 @@ func fill(sql string, from, to int64) string {
 	return strings.ReplaceAll(sql, "$__to", strconv.FormatInt(to, 10))
 }
 
+// Every table a panel reads that belongs to a run. limits is not one of them:
+// it is the config as it stood, and it stood the same for everybody.
+var runScoped = []string{"events", "runs", "gates", "judgements", "calls"}
+
+// scope narrows a query to one run without touching the query.
+//
+// Narrowing by time was the first attempt and it is wrong the moment two runs
+// overlap — queue.parallel is a number in a file, it is 1 today and can be 2
+// tomorrow, and then a run's span holds somebody else's work as well.
+//
+// So the tables are shadowed instead. SQLite resolves a bare name to the
+// common table expression and a schema-qualified one to the real table, so
+// each becomes itself filtered to this run, and sixty queries go on saying
+// exactly what they said before.
+func scope(sql, run string) string {
+	if run == "" {
+		return sql
+	}
+	quoted := strings.ReplaceAll(run, "'", "''")
+	var parts []string
+	for _, t := range runScoped {
+		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM main.%s WHERE run = '%s')",
+			t, t, quoted))
+	}
+	return "WITH " + strings.Join(parts, ",\n     ") + "\n" + sql
+}
+
 // rows runs one query and returns its columns and rows, whatever shape it has.
 // Reporting the error as data rather than as a status: a panel that cannot run
 // says so in its own box, and the other forty-two still draw.
@@ -148,8 +175,9 @@ func serveCharts(mux *http.ServeMux) {
 			from, to = 0, time.Now().UnixMilli()+86400000
 		}
 		var series []any
+		run := r.URL.Query().Get("run")
 		for _, q := range spec.Panels[idx].Queries {
-			series = append(series, rows(fill(q, from, to)))
+			series = append(series, rows(scope(fill(q, from, to), run)))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
