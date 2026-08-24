@@ -49,24 +49,17 @@ func pageHTML() string { return `<!doctype html>
   --sans:'Plus Jakarta Sans','Inter',ui-sans-serif,system-ui,-apple-system,sans-serif;
 }
 *{box-sizing:border-box}
+` + headerCSS + `
 body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)}
 /* The bar stays navy on a light page: it is the house style, the same one
    dokimos.chiron.systems wears, and the mark is drawn for that ground. */
 /* Back to the project this belongs to. A grey word with an arrow read as a
    footnote; it is the only way out of here, and it is one of two products
    rather than a link in prose — so it looks like something to press. */
-.home{justify-self:start;flex:none;display:inline-flex;align-items:center;gap:9px;
-  align-self:center;height:36px;padding:0 20px 0 16px;text-decoration:none;
-  border:1px solid rgba(205,127,50,.35);border-radius:0;background:none;
-  color:#A0AEC0;font:400 14px/20px var(--mono);
-  transition:color .15s,border-color .15s}
-.home::before{content:"";width:13px;height:9px;flex:none;
-  background:var(--bronze);
-  -webkit-mask:var(--arrow) center/contain no-repeat;
-  mask:var(--arrow) center/contain no-repeat;
-  transition:transform .14s}
-.home:hover{color:#F7FAFC;border-color:#CD7F32}
-.home:hover::before{transform:translateX(-3px)}
+
+
+
+
 
 .title{display:flex;flex-direction:column;gap:3px;line-height:1}
 .title b{font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
@@ -83,17 +76,16 @@ header{position:relative;display:grid;grid-template-columns:1fr auto 1fr;
    rather than a flex child that would shove its neighbours. Full strength,
    not dimmed — the reference never fades this mark, and doing it here read
    as washed out next to the real thing. */
-.brand{justify-self:center;display:flex;align-items:center;gap:9px}
+
 ` + footerCSS + `
-.brand svg{display:block}
+
 /* Block children, not <b><br><small> — a bare <br> takes the browser's
    default line-height, which the reference component never touches (it
    stacks two block elements in a flex column instead), and that inherited
    leading was inflating this line's box past its own font-size. */
-.brand-text{display:flex;flex-direction:column}
-.brand b{display:block;font:800 20px/1 var(--sans);letter-spacing:-.01em;color:var(--ink)}
-.brand small{display:block;font:600 7px/1 var(--mono);letter-spacing:.32em;color:var(--mute);
-             text-transform:uppercase;margin-top:3px}
+
+
+
 h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
    color:var(--bronze)}
 header .sub{color:var(--dim);font-size:13px;letter-spacing:.04em}
@@ -160,51 +152,13 @@ a:hover{border-bottom-color:var(--bronze)}
    guessed: JetBrains Mono at fourteen over twenty in #A0AEC0 with no tracking,
    and the one you are on at seven hundred — navy on bronze, thirty-six tall,
    twenty-four either side, square corners. */
-nav.tabs{justify-self:end;margin-left:auto;align-self:center;display:flex;
-  align-items:center;gap:8px}
-.tabs button,.tabs .tab-link{background:none;border:0;border-radius:0;height:36px;
-  padding:0 24px;color:#A0AEC0;cursor:pointer;text-decoration:none;
-  display:inline-flex;align-items:center;
-  font:400 14px/20px var(--mono);letter-spacing:0;text-transform:none;
-  transition:color .15s,background .15s}
-.tabs button:hover,.tabs .tab-link:hover{color:#F7FAFC}
-.tabs button[aria-selected="true"],.tabs .tab-link.on{background:#CD7F32;color:#001F3F;font-weight:700}
+
+
+
+
 #charts{max-width:none;padding:0;display:block;height:calc(100vh - 5.4rem)}
 </style></head><body>
-<header>
-<!-- Same mark, same bow-and-arrow path, as dokimos.chiron.systems — the light
-     variant, since this header is dark. Static: the animation there is for a
-     page somebody arrives at once, not a bar redrawn every refresh. -->
-<a class="home" href="https://dokimos.chiron.systems">back</a>
-<span class="brand" aria-hidden="true">
-  <svg width="30" height="27" viewBox="0 0 180 160">
-    <defs>
-      <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
-        <stop offset="40%" stop-color="#CD7F32" stop-opacity=".4"/>
-        <stop offset="85%" stop-color="#CD7F32" stop-opacity=".9"/>
-        <stop offset="100%" stop-color="#CD7F32"/>
-      </linearGradient>
-      <mask id="brandCut">
-        <rect width="180" height="160" fill="#fff"/>
-        <line x1="5" y1="80" x2="180" y2="80" stroke="#000" stroke-width="15" stroke-linecap="round"/>
-      </mask>
-    </defs>
-    <g transform="rotate(-30 90 80)">
-      <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
-               C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
-            fill="#F7FAFC" mask="url(#brandCut)"/>
-      <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
-    </g>
-  </svg>
-  <span class="brand-text"><b>AMMIT</b><small>Chiron.consulting</small></span>
-</span>
-<nav class="tabs" role="tablist">
-  <a class="tab-link on" href="/ammit/limits">Limits</a>
-  <a class="tab-link" href="/ammit/runs">Runs</a>
-  <a class="tab-link" href="/ammit/window">A window</a>
-  <a class="tab-link" href="/ammit/lifetime">All time</a>
-</nav></header>
+` + headerHTML("limits") + `
 <main id="scales">
   <section>
     <h2>Limits <small id="where"></small></h2>
