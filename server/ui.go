@@ -67,7 +67,8 @@ body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)
   transition:transform .14s}
 .home:hover{background:rgba(205,127,50,.14);border-color:var(--bronze)}
 .home:hover::before{transform:translateX(-3px)}
-.me{display:flex;align-items:center;gap:11px;align-self:center}
+.me{display:flex;align-items:center;gap:11px;align-self:center;
+     padding-left:20px;border-left:1px solid rgba(205,127,50,.28)}
 .title{display:flex;flex-direction:column;gap:3px;line-height:1}
 .title b{font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
 .title em{font:400 11px/1 var(--sans);font-style:normal;color:#A0AEC0}

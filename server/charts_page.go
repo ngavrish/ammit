@@ -63,8 +63,11 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:60px;
 .home:hover{background:rgba(205,127,50,.14);border-color:var(--bronze)}
 .home:hover::before{transform:translateX(-3px)}
 
-/* Whose page this is, said with the thing it is named after. */
-.me{display:flex;align-items:center;gap:11px;flex:none}
+/* Whose page this is, said with the thing it is named after. A rule between the
+   two, because they are two things: the pill sat beside the name with only air
+   between them and the pair read as one row of controls. */
+.me{display:flex;align-items:center;gap:11px;flex:none;
+  padding-left:20px;border-left:1px solid var(--bar-hair)}
 .scales{flex:none;transform:translateY(-1px)}
 h1{margin:0;display:flex;flex-direction:column;gap:3px;
   font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
