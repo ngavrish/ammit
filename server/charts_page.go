@@ -103,8 +103,8 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:81px;
 .find:focus-within{background:var(--bronze-wash);
   box-shadow:0 0 0 1px rgba(205,127,50,.35)}
 .find:focus-within::before{background:var(--bronze);opacity:1}
-#q{font:600 13.5px/1 var(--mono);letter-spacing:.03em;padding:9px 12px 9px 8px;
-  text-transform:uppercase}
+#q{font:600 13.5px/1 var(--mono);letter-spacing:.03em;padding:9px 14px 9px 8px;
+  text-transform:uppercase;min-width:230px}
 #q::placeholder{font-weight:400;letter-spacing:.02em;text-transform:none}
 #q:focus{background:none}
 #filters input[type=date]{font:11.5px/1 var(--mono);color:var(--slate);
@@ -199,7 +199,7 @@ tbody tr:hover{background:var(--bronze-wash)}
 <div id=bar>
   <div id=filters>
     <span class=find>
-      <input id=q placeholder="APF-1934" size=13 autocomplete=off spellcheck=false>
+      <input id=q placeholder="APF-1934" size=22 autocomplete=off spellcheck=false>
     </span>
     <span class=sep></span>
     <label class=when><i>started</i><input id=sf type=date><input id=st type=date></label>
@@ -357,16 +357,7 @@ function drawTiles(){
         '<dt>turns</dt><dd>'+(r.turns||0)+'</dd>'+
         '<dt>cost</dt><dd>$'+(r.usd||0).toFixed(2)+'</dd>'+
       '</dl></div>').join("")+'</div>';
-  main.querySelectorAll(".tile").forEach(t=>t.onclick=()=>{
-    chosen=t.dataset.run; // Arriving from the other page with a tab already named.
-if(location.hash){
-  const want=location.hash.slice(1);
-  const t=[...document.querySelectorAll(".tab")].find(x=>x.dataset.scope===want);
-  if(t){ document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===t));
-         scope=want; }
-}
-boot();
-  });
+  main.querySelectorAll(".tile").forEach(t=>t.onclick=()=>go("run="+t.dataset.run));
 }
 
 async function boot(){
@@ -387,15 +378,13 @@ async function boot(){
       (p.about?'<p>'+p.about.replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;")+'</p>':'')+
       '<div class=plot id=plot-'+i+'></div></section>').join("");
   const back=document.getElementById("back");
-  if(back) back.onclick=()=>{chosen="";boot()};
+  if(back) back.onclick=()=>go("");
   await load();
 }
 document.getElementById("refresh").onclick=load;
 document.getElementById("range").onchange=load;
-document.querySelectorAll(".tab").forEach(t=>t.onclick=async ()=>{
-  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===t));
-  scope=t.dataset.scope; chosen=""; await boot();
-});
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>
+  go(t.dataset.scope==="runs" ? "" : t.dataset.scope));
 ["q","sf","st","ff","ft"].forEach(id=>{
   const el=document.getElementById(id);
   el.oninput=()=>{clearTimeout(window._f);window._f=setTimeout(boot,300)};
@@ -405,5 +394,27 @@ document.getElementById("clear").onclick=()=>{
   boot();
 };
 addEventListener("resize",()=>{clearTimeout(window._t);window._t=setTimeout(load,250)});
-boot();
+// The address says where you are: /charts#window, /charts#lifetime, and a run by
+// its id. A view you cannot send anybody is a view you have to describe instead.
+// The address is the state. Nothing else holds it: a click writes the hash, the
+// hash draws the page. Keeping a copy beside it is what made the page fight
+// itself — one wrote, the other read what was there a moment ago, and every
+// switch landed on the view you had just left.
+function go(where){
+  const want = where ? "#"+where : "";
+  if(location.hash === want) { render(); return; }
+  location.hash = want;          // fires hashchange, which renders
+}
+
+async function render(){
+  const h=(location.hash||"").slice(1);
+  chosen = h.startsWith("run=") ? h.slice(4) : "";
+  scope  = chosen ? "runs" : (["window","lifetime"].includes(h) ? h : "runs");
+  document.querySelectorAll(".tab").forEach(x=>
+    x.classList.toggle("on", x.dataset.scope===scope));
+  await boot();
+}
+
+addEventListener("hashchange", render);
+render();
 </script>` }
