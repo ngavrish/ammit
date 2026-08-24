@@ -41,6 +41,7 @@ const page = `<!doctype html>
      jobs — navy is the ground the eye rests against, ink is what is written on
      it — so every rule below goes on meaning what it meant. */
   --navy:#FFFFFF; --deep:#FAFBFC; --deeper:#F1F3F6; --panel:#FFFFFF;
+  --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 13 9'%3E%3Cpath d='M4.8.7 1 4.5l3.8 3.8M1 4.5h11' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   --bronze:#CD7F32; --bronze-dim:#E5E7EB; --bronze-wash:rgba(205,127,50,.09);
   --ink:#0F1520; --mute:#4A5568; --dim:#A0AEC0;
   --ok:#22C55E; --bad:#EF4444;
@@ -51,10 +52,21 @@ const page = `<!doctype html>
 body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)}
 /* The bar stays navy on a light page: it is the house style, the same one
    dokimos.chiron.systems wears, and the mark is drawn for that ground. */
-.home{flex:none;text-decoration:none;color:#A0AEC0;font:600 12.5px/1 var(--sans);
-      padding-right:20px;border-right:1px solid rgba(205,127,50,.28);align-self:center}
-.home::before{content:"\2190 ";color:var(--bronze)}
-.home:hover{color:var(--bronze)}
+/* Back to the project this belongs to. A grey word with an arrow read as a
+   footnote; it is the only way out of here, and it is one of two products
+   rather than a link in prose — so it looks like something to press. */
+.home{flex:none;display:inline-flex;align-items:center;gap:8px;align-self:center;
+  text-decoration:none;padding:7px 14px 7px 11px;border-radius:20px;
+  border:1px solid rgba(205,127,50,.28);background:rgba(247,250,252,.07);
+  font:700 12px/1 var(--sans);letter-spacing:.03em;color:#F7FAFC;
+  transition:background .14s,border-color .14s}
+.home::before{content:"";width:13px;height:9px;flex:none;
+  background:var(--bronze);
+  -webkit-mask:var(--arrow) center/contain no-repeat;
+  mask:var(--arrow) center/contain no-repeat;
+  transition:transform .14s}
+.home:hover{background:rgba(205,127,50,.14);border-color:var(--bronze)}
+.home:hover::before{transform:translateX(-3px)}
 .me{display:flex;align-items:center;gap:11px;align-self:center}
 .title{display:flex;flex-direction:column;gap:3px;line-height:1}
 .title b{font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
