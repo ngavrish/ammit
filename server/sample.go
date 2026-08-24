@@ -129,11 +129,20 @@ func keepSamples(conf Config) {
 	lastSample = now
 
 	limit, hasLimit := conf.num("limits", "memory_mb")
+	// Whose memory this is. Thirty-two thousand samples were written with no run
+	// at all — every sample this database holds — so the memory a run used could
+	// not be asked for, only guessed at from the clock. A sample taken while one
+	// run is going is that run's; with none going it is the machine idling, which
+	// is worth keeping and worth being able to tell apart.
+	inRun := ""
+	if open := openRuns(); len(open) == 1 {
+		inRun = open[0].run
+	}
 	for _, s := range sampleMachine(conf.str("sample", "containers", "")) {
 		store(event{
 			"kind": "sample", "at": now, "container": s.container,
 			"memory_mb": s.memoryMB, "memory_pct": s.memoryPct,
-			"cpu_pct": s.cpuPct, "pids": s.pids,
+			"cpu_pct": s.cpuPct, "pids": s.pids, "run": inRun,
 		})
 		if !hasLimit || s.memoryMB <= limit ||
 			recently("limits.memory_mb", s.container, 600) {

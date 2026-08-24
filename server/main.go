@@ -135,6 +135,24 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS documents_run ON documents (run, kind);
 
+-- How a run is found: by what it is called, by when it started, or by the id
+-- that is neither. A person asks for APF-1934 and means the one from Thursday
+-- afternoon; a query asks for the uuid and means exactly one row.
+--
+-- The pair is unique. Nothing enforced it before, and two rows claiming the same
+-- ticket at the same instant would both have been answered to — quietly, with
+-- whichever the query happened to reach first.
+CREATE UNIQUE INDEX IF NOT EXISTS runs_named ON runs (name, started);
+CREATE INDEX IF NOT EXISTS runs_started ON runs (started);
+CREATE INDEX IF NOT EXISTS runs_name ON runs (name, started DESC);
+
+-- Everything a run produced, found by the run that produced it. events already
+-- had one; the others were full-table scans that nobody had noticed yet because
+-- the tables were small.
+CREATE INDEX IF NOT EXISTS judgements_run ON judgements (run, at);
+CREATE INDEX IF NOT EXISTS gates_run_at ON gates (run, at);
+CREATE INDEX IF NOT EXISTS calls_run_at ON calls (run, at);
+
 CREATE TABLE IF NOT EXISTS limits (
     id    INTEGER PRIMARY KEY AUTOINCREMENT,
     at    REAL NOT NULL,
