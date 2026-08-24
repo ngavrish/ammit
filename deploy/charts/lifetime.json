@@ -8,7 +8,7 @@
    "kind": "table",
    "title": "How runs end",
    "height": 7,
-   "about": "Every verdict this pipeline has recorded, and what each cost. ABANDONED is not a verdict about the work: it is what a run is called when nothing reported on it for longer than a run is allowed to take.",
+   "about": "Every verdict this pipeline has recorded, and what each cost",
    "queries": [
     "SELECT coalesce(nullif(verdict,''),'(none)') AS verdict, count(*) AS runs, round(sum(usd),2) AS usd, sum(turns) AS turns, round(avg(coalesce(finished,started)-started)/60,1) AS avg_minutes FROM runs GROUP BY 1 ORDER BY runs DESC"
    ]
@@ -17,7 +17,7 @@
    "kind": "series",
    "title": "Runs finished, by day",
    "unit": "short",
-   "about": "One line per verdict. A day with more red than green is a day to go and read, and the shape over weeks is the only thing that says whether any of this is improving.",
+   "about": "One line per verdict",
    "queries": [
     "SELECT cast(strftime('%s', date(finished,'unixepoch')) AS INTEGER)*1000 AS time, coalesce(nullif(verdict,''),'(none)') AS metric, count(*) AS value FROM runs WHERE finished IS NOT NULL GROUP BY 1,2 ORDER BY 1"
    ]
@@ -26,7 +26,7 @@
    "kind": "series",
    "title": "What a run costs, by day",
    "unit": "currencyUSD",
-   "about": "Total and average. The average is the one that answers whether a change made runs cheaper; the total is the one that answers whether it mattered.",
+   "about": "Total and average",
    "queries": [
     "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, 'spent that day' AS metric, round(sum(usd),2) AS value FROM runs GROUP BY 1 UNION ALL SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000, 'average per run', round(avg(usd),2) FROM runs GROUP BY 1 ORDER BY 1"
    ]
@@ -35,7 +35,7 @@
    "kind": "series",
    "title": "Turns a run takes, by day",
    "unit": "short",
-   "about": "Counted from what the model actually returned, not from tool calls: a tool call was reported as a turn for a while and the number ran two to three times over.",
+   "about": "Counted from what the model actually returned, not from tool calls: a tool call was…",
    "queries": [
     "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, 'average per run' AS metric, round(avg(turns),0) AS value FROM runs WHERE turns > 0 GROUP BY 1 UNION ALL SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000, 'the longest that day', max(turns) FROM runs WHERE turns > 0 GROUP BY 1 ORDER BY 1"
    ]
@@ -44,7 +44,7 @@
    "kind": "table",
    "title": "Where the money goes, over all runs",
    "height": 9,
-   "about": "Every agent that has ever cost anything, dearest first, with what it charges per session. One phase at thirty-four dollars of a fifty-nine dollar run is the kind of thing only this view shows.",
+   "about": "Every agent that has ever cost anything, dearest first, with what it charges per session",
    "queries": [
     "SELECT json_extract(payload,'$.agent') AS agent, count(*) AS sessions, round(sum(json_extract(payload,'$.usd')),2) AS usd, round(avg(json_extract(payload,'$.usd')),3) AS usd_each, round(sum(json_extract(payload,'$.seconds'))/3600,1) AS hours FROM events WHERE kind='session_end' AND json_extract(payload,'$.agent') IS NOT NULL GROUP BY 1 HAVING usd > 0 ORDER BY usd DESC LIMIT 40"
    ]
@@ -53,7 +53,7 @@
    "kind": "table",
    "title": "What every limit has caught",
    "height": 9,
-   "about": "Each rule, how often it has fired and what was done about it. A rule that has never fired is either a limit nothing reaches or a limit nothing can reach — and the second kind is worth finding.",
+   "about": "Each rule, how often it has fired and what was done about it",
    "queries": [
     "SELECT rule, action, count(*) AS times, round(min(observed),1) AS smallest, round(max(observed),1) AS largest, max(threshold) AS threshold FROM judgements WHERE action <> 'started' GROUP BY rule, action ORDER BY times DESC LIMIT 40"
    ]
@@ -62,7 +62,7 @@
    "kind": "table",
    "title": "Gates, over all runs",
    "height": 8,
-   "about": "How often each check refuses, and how long its repair takes. The difference between a gate that earns its cost and a tollbooth is these two numbers.",
+   "about": "How often each check refuses, and how long its repair takes",
    "queries": [
     "SELECT phase, count(*) AS rounds, sum(verdict='red') AS red, sum(verdict='green') AS green, sum(findings) AS findings, round(avg(seconds)/60,1) AS avg_minutes FROM gates GROUP BY phase ORDER BY rounds DESC LIMIT 40"
    ]
@@ -71,7 +71,7 @@
    "kind": "table",
    "title": "What every run did twice",
    "height": 8,
-   "about": "The same call, across every run there has been. Counted rather than remembered: a branch read one step module twenty times and ran the same search eleven, and nobody knew until somebody counted by hand.",
+   "about": "The same call, across every run there has been",
    "queries": [
     "SELECT kind, count(*) AS calls, count(DISTINCT signature) AS distinct_calls, count(*) - count(DISTINCT signature) AS repeats FROM calls GROUP BY kind ORDER BY calls DESC"
    ]
