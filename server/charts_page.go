@@ -45,17 +45,21 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:60px;
   background:var(--navy-bar);border-bottom:1px solid var(--bar-hair);
   display:flex;align-items:center;gap:22px}
 
-/* The mark goes back to dokimos. It is the same mark and the same company, and
-   a page that cannot get you back to the thing it is about is a dead end. */
-.brand{display:flex;align-items:center;gap:9px;flex:none;text-decoration:none;
-  opacity:.95}
-.brand:hover{opacity:1}
-.brand-text{display:flex;flex-direction:column;line-height:1}
-.brand-text b{font:800 12px/1 var(--sans);letter-spacing:.17em;color:#F7FAFC}
-.brand-text small{font:600 8px/1.5 var(--sans);letter-spacing:.31em;color:var(--bronze)}
+/* Back to the project this belongs to, and nothing else on that side. The
+   wordmark was there and said the company twice — once in the logo, once in
+   letters — while the thing you are actually looking at went unnamed until the
+   middle of the bar. */
+.home{flex:none;text-decoration:none;color:var(--on-bar-dim);
+  font:600 12.5px/1 var(--sans);letter-spacing:.02em;
+  padding:7px 12px 7px 0;border-right:1px solid var(--bar-hair);
+  padding-right:20px}
+.home::before{content:"← ";color:var(--bronze)}
+.home:hover{color:var(--bronze)}
 
-h1{margin:0;padding-left:22px;border-left:1px solid var(--bar-hair);
-  display:flex;flex-direction:column;gap:3px;
+/* Whose page this is, said with the thing it is named after. */
+.me{display:flex;align-items:center;gap:11px;flex:none}
+.scales{flex:none;transform:translateY(-1px)}
+h1{margin:0;display:flex;flex-direction:column;gap:3px;
   font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
 h1 em{font:400 11px/1 var(--sans);font-style:normal;letter-spacing:.02em;
   color:var(--on-bar-dim)}
@@ -140,31 +144,30 @@ tbody tr:hover{background:var(--bronze-wash)}
 .back:hover{text-decoration:underline}
 </style>
 <header>
-  <a class=brand href="https://dokimos.chiron.systems" title="dokimos">
-    <svg width="30" height="27" viewBox="0 0 180 160">
-      <defs>
-        <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
-          <stop offset="40%" stop-color="#CD7F32" stop-opacity=".4"/>
-          <stop offset="85%" stop-color="#CD7F32" stop-opacity=".9"/>
-          <stop offset="100%" stop-color="#CD7F32"/>
-        </linearGradient>
-        <mask id="brandCut">
-          <rect width="180" height="160" fill="#fff"/>
-          <line x1="5" y1="80" x2="180" y2="80" stroke="#000" stroke-width="15" stroke-linecap="round"/>
-        </mask>
-      </defs>
-      <g transform="rotate(-30 90 80)">
-        <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
-                 C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
-              fill="#F7FAFC" mask="url(#brandCut)"/>
-        <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
-      </g>
-    </svg>
-    <span class=brand-text><b>CHIRON</b><small>SYSTEMS</small></span>
-  </a>
+  <a class=home href="https://dokimos.chiron.systems">dokimos</a>
 
-  <h1>ammit<em>the scales, the record, and the eating</em></h1>
+  <span class=me>
+    <!-- Ammit weighed the heart against the feather of Ma'at and ate the ones
+         that came up heavy. The mark is that: a beam, two pans, the feather on
+         one and the heart on the other. Drawn rather than fetched — thirty-two
+         pixels of it, and nothing to load. -->
+    <svg class=scales width="30" height="30" viewBox="0 0 40 40" aria-hidden=true>
+      <g fill="none" stroke="#CD7F32" stroke-width="1.7"
+         stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 7v22"/>
+        <path d="M20 30h-5.5M20 30h5.5"/>
+        <path d="M7 12h26"/>
+        <path d="M7 12l-3.5 7a3.9 3.9 0 0 0 7 0z"/>
+        <path d="M33 12l-3.5 7a3.9 3.9 0 0 0 7 0z"/>
+        <circle cx="20" cy="8.2" r="1.7" fill="#CD7F32" stroke="none"/>
+      </g>
+      <path d="M7 18.4c0-2.2 1-3.9 2.2-4.6" stroke="#F7FAFC" stroke-width="1.2"
+            stroke-linecap="round" fill="none" opacity=".85"/>
+      <path d="M33 18.6a2.3 2.3 0 0 1 1.6-2.1" stroke="#F7FAFC" stroke-width="1.2"
+            stroke-linecap="round" fill="none" opacity=".85"/>
+    </svg>
+    <h1>ammit<em>the scales, the record, and the eating</em></h1>
+  </span>
 
   <nav id=tabs>
     <a class=tab href="/" title="the limits every run is judged against, and the queue">Limits</a>
