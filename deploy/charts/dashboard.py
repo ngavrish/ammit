@@ -603,11 +603,6 @@ table("What each phase spent its calls on",
          FROM calls WHERE at*1000 BETWEEN $__from AND $__to
          GROUP BY phase, kind ORDER BY times DESC LIMIT 80""")
 
-out = pathlib.Path(__file__).with_name("dashboards") / "ammit.json"
-out.write_text(json.dumps(dash, indent=1) + "\n")
-charts = [p for p in panels if p["type"] != "row"]
-print(f"{out}: {len(panels) - len(charts)} rows, {len(charts)} panels")
-
 # The same panels, without Grafana's vocabulary.
 #
 # Grafana is six hundred and thirty-one megabytes to draw forty-three charts from
@@ -631,6 +626,6 @@ for p in panels:
         "queries": [q.get("rawQueryText", "") for q in p.get("targets", [])],
     })
 
-out2 = pathlib.Path(__file__).with_name("panels.json")
-out2.write_text(json.dumps(spec, indent=1, ensure_ascii=False) + "\n")
-print(f"{out2}: {len([x for x in spec['panels'] if x['kind'] != 'row'])} panels")
+out = pathlib.Path(__file__).with_name("panels.json")
+out.write_text(json.dumps(spec, indent=1, ensure_ascii=False) + "\n")
+print(f"{out}: {len([x for x in spec['panels'] if x['kind'] != 'row'])} panels")
