@@ -55,7 +55,7 @@ body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)
 /* Back to the project this belongs to. A grey word with an arrow read as a
    footnote; it is the only way out of here, and it is one of two products
    rather than a link in prose — so it looks like something to press. */
-.home{flex:none;display:inline-flex;align-items:center;gap:8px;align-self:center;
+.home{justify-self:start;flex:none;display:inline-flex;align-items:center;gap:8px;align-self:center;
   text-decoration:none;padding:7px 14px 7px 11px;border-radius:20px;
   border:1px solid rgba(205,127,50,.28);background:rgba(247,250,252,.07);
   font:700 12px/1 var(--sans);letter-spacing:.03em;color:#F7FAFC;
@@ -152,14 +152,18 @@ a:hover{border-bottom-color:var(--bronze)}
 [hidden]{display:none!important}
 /* One page, two tabs. The charts are not a different product and should not
    look like one: same bar, same bronze, no second logo to explain. */
-nav.tabs{justify-self:end;margin-left:auto;display:flex;gap:.25rem;align-self:center}
-.tab-link{text-decoration:none;display:inline-flex;align-items:center}
-.tabs button,.tabs .tab-link{background:transparent;border:1px solid transparent;border-radius:2px;
-  padding:.45rem .9rem;color:var(--mute);cursor:pointer;
-  font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase}
-nav.tabs button:hover{background:var(--bronze-wash);color:var(--ink)}
-nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
-  border-color:var(--bronze-dim);color:var(--bronze)}
+/* The same control as on the charts page. This one had drifted into plain
+   uppercase links, so the two pages disagreed about what a tab looks like while
+   sharing the tabs. */
+nav.tabs{justify-self:end;margin-left:auto;align-self:center;display:flex;gap:2px;
+  background:rgba(247,250,252,.07);border:1px solid rgba(205,127,50,.28);
+  border-radius:9px;padding:3px}
+.tabs button,.tabs .tab-link{background:none;border:0;border-radius:6px;
+  padding:7px 15px;color:#A0AEC0;cursor:pointer;text-decoration:none;
+  display:inline-flex;align-items:center;
+  font:600 12.5px/1 var(--sans);letter-spacing:0;text-transform:none}
+.tabs button:hover,.tabs .tab-link:hover{color:#F7FAFC}
+.tabs button[aria-selected="true"]{background:var(--bronze);color:#001F3F}
 #charts{max-width:none;padding:0;display:block;height:calc(100vh - 5.4rem)}
 </style></head><body>
 <header>
