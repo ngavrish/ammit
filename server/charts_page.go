@@ -55,7 +55,8 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:81px;
 
 .home{justify-self:start;display:inline-flex;align-items:center;gap:9px;height:36px;
   padding:0 20px 0 16px;text-decoration:none;border:1px solid rgba(205,127,50,.35);
-  color:#A0AEC0;font:400 14px/20px var(--mono);transition:color .15s,border-color .15s}
+  color:#A0AEC0;font:400 14px/20px var(--mono);letter-spacing:.12em;
+  text-transform:uppercase;transition:color .15s,border-color .15s}
 .home::before{content:"";width:13px;height:9px;flex:none;background:#CD7F32;
   -webkit-mask:var(--arrow) center/contain no-repeat;
   mask:var(--arrow) center/contain no-repeat;transition:transform .15s}
@@ -64,8 +65,12 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:81px;
 
 .brand{justify-self:center;display:flex;align-items:center;gap:10px}
 .brand-text{display:flex;flex-direction:column;line-height:1}
-.brand-text b{font:700 15px/1 var(--sans);letter-spacing:.13em;color:#F7FAFC}
-.brand-text small{font:400 9px/1.6 var(--mono);letter-spacing:.13em;color:#CD7F32}
+/* Taken off the limits page, which is the one that looks right: the name at
+   twenty in the sans at eight hundred, the line under it at seven in mono with
+   tracking and in capitals, three pixels down. */
+.brand-text b{display:block;font:800 20px/1 var(--sans);letter-spacing:-.01em;color:#F7FAFC}
+.brand-text small{display:block;font:600 7px/1 var(--mono);letter-spacing:.32em;
+  color:#A0AEC0;text-transform:uppercase;margin-top:3px}
 
 #tabs{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
 .tab{border:0;background:none;border-radius:0;height:36px;padding:0 24px;
