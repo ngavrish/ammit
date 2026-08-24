@@ -1344,6 +1344,56 @@ func main() {
 		              HAVING times > 1 ORDER BY times DESC LIMIT 500`, args...)
 	})
 
+	// Is anything running right now — asked by whoever is about to disturb it.
+	//
+	// Not "is there a row without a finish": a run whose worker was killed leaves
+	// one of those behind for as long as it takes something to notice, and on 21
+	// August that was fourteen hours. A run that is alive says so continuously —
+	// a turn, a call, a phase — so this asks when it last said anything.
+	//
+	// ?quiet= is how long a run may be silent and still count as running.
+	// Default two minutes: longer than any gap a working run leaves, shorter than
+	// any outage worth deploying over.
+	mux.HandleFunc("GET /inflight", func(w http.ResponseWriter, r *http.Request) {
+		quiet := 120.0
+		if v := r.URL.Query().Get("quiet"); v != "" {
+			if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
+				quiet = n
+			}
+		}
+		mu.Lock()
+		rows, err := db.Query(`SELECT r.run, coalesce(r.name,''), r.started,
+		                       coalesce(max(e.at), r.started) AS last
+		                       FROM runs r LEFT JOIN events e ON e.run = r.run
+		                       WHERE r.finished IS NULL GROUP BY r.run`)
+		type live struct {
+			Run    string  `json:"run"`
+			Name   string  `json:"name"`
+			Silent float64 `json:"silent_seconds"`
+		}
+		var out []live
+		now := float64(time.Now().UnixNano()) / 1e9
+		if err == nil {
+			for rows.Next() {
+				var l live
+				var started, last float64
+				if rows.Scan(&l.Run, &l.Name, &started, &last) == nil {
+					l.Silent = now - last
+					if l.Silent <= quiet {
+						out = append(out, l)
+					}
+				}
+			}
+			rows.Close()
+		}
+		mu.Unlock()
+		if out == nil {
+			out = []live{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"quiet_allowed": quiet, "running": out})
+	})
+
 	mux.HandleFunc("GET /judgements", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT * FROM judgements ORDER BY id DESC LIMIT 200`)
 	})
