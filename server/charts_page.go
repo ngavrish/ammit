@@ -36,10 +36,34 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
 #bar{position:sticky;top:81px;z-index:25;padding:9px 24px;
   background:var(--raised);border-bottom:1px solid var(--hair);
   display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-#bar select,#bar>button{font:inherit;font-size:12.5px;color:var(--ink);
+#bar>button{font:inherit;font-size:12.5px;color:var(--ink);
   background:var(--ground);border:1px solid var(--hair);border-radius:8px;
   padding:7px 11px;cursor:pointer}
-#bar>button:hover,#bar select:hover{border-color:var(--bronze);color:var(--bronze)}
+#bar>button:hover{border-color:var(--bronze);color:var(--bronze)}
+
+/* How long a window is, as the four lengths anybody picks. A dropdown hid three
+   of them and made the fourth something you had to open a menu to read — the same
+   thing the tabs above stopped doing. */
+#range{display:flex;align-items:center;gap:0;border:1px solid var(--hair);
+  border-radius:8px;overflow:hidden;background:var(--ground)}
+.span{border:0;border-right:1px solid var(--hair);background:none;cursor:pointer;
+  padding:7px 13px;color:var(--slate);
+  font:400 12.5px/1 var(--mono);transition:color .12s,background .12s}
+.span:last-child{border-right:0}
+.span:hover{color:var(--bronze)}
+.span.on{background:var(--bronze);color:#001F3F;font-weight:700}
+
+/* And how often to ask again. Off by default: a page that reloads under you is
+   a page you cannot read a chart on, and most of the time nothing is running. */
+#every{display:flex;align-items:center;gap:0;border:1px solid var(--hair);
+  border-radius:8px;overflow:hidden;background:var(--ground)}
+.tick{border:0;border-right:1px solid var(--hair);background:none;cursor:pointer;
+  padding:7px 11px;color:var(--mute);
+  font:400 12px/1 var(--mono);transition:color .12s,background .12s}
+.tick:last-child{border-right:0}
+.tick:hover{color:var(--bronze)}
+.tick.on{background:var(--hair-soft);color:var(--navy);font-weight:700}
+.tick.on[data-s="0"]{color:var(--mute);font-weight:400}
 
 /* One control rather than six sitting next to each other. */
 #filters{display:flex;align-items:center;gap:0;flex-wrap:wrap;
@@ -136,13 +160,20 @@ tbody tr:hover{background:var(--bronze-wash)}
     <label class=when><i>finished</i><input id=ff type=date><input id=ft type=date></label>
     <button id=clear title="clear every filter">clear</button>
   </div>
-  <select id=range>
-    <option value=3>last 3 hours</option>
-    <option value=12 selected>last 12 hours</option>
-    <option value=48>last 2 days</option>
-    <option value=168>last week</option>
-  </select>
-  <button id=refresh title="run every query again">refresh</button>
+  <nav id=range>
+    <button class=span data-h=3>3 hours</button>
+    <button class="span on" data-h=12>12 hours</button>
+    <button class=span data-h=48>2 days</button>
+    <button class=span data-h=168>a week</button>
+  </nav>
+  <nav id=every title="how often to run every query again">
+    <button class="tick on" data-s=0>manual</button>
+    <button class=tick data-s=5>5s</button>
+    <button class=tick data-s=300>5m</button>
+    <button class=tick data-s=1800>30m</button>
+    <button class=tick data-s=3600>1h</button>
+  </nav>
+  <button id=refresh title="run every query again now">refresh</button>
   <span id=note></span>
 </div>
 
@@ -155,7 +186,10 @@ const COLORS=["#CD7F32","#0EA5E9","#22C55E","#FB923C","#EF4444","#8B5CF6",
 const main=document.getElementById("main");
 let panels=[];
 
-function hours(){return +document.getElementById("range").value}
+function hours(){
+  const on=document.querySelector(".span.on");
+  return on ? +on.dataset.h : 12;
+}
 let runs=[], scope="runs", chosen="";
 
 // A verdict is a word this pipeline chose, and there are several for each of the
@@ -217,8 +251,13 @@ function drawSeries(box,payload){
     // whole point of drawing it, and the shape needs room.
     height:Math.max(360, Math.round(innerHeight*0.66)),
     scales:{x:{time:true}},
-    axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"}},
-          {stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"}}],
+    axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:34},
+          // Wide enough for the number. Left at its default the axis cut its own
+          // labels — a chart of turns per run read "0,000" down the side.
+          {stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:74,
+           values:(u,vs)=>vs.map(v=>v==null?"":
+             Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+"M" :
+             Math.abs(v)>=1e3 ? (v/1e3).toFixed(v%1e3?1:0)+"k" : v)}],
     series:[{},...p.names.map((n,i)=>({
       label:n,stroke:COLORS[i%COLORS.length],width:1.4,
       // A limit is drawn as it behaves: flat until it is changed.
@@ -298,7 +337,7 @@ async function boot(){
   // The filter group collapses whole, so the row cannot half-empty and reflow.
   const picking = scope==="runs" && !chosen;
   document.getElementById("filters").style.display=picking?"flex":"none";
-  document.getElementById("range").style.display=scope==="window"?"":"none";
+  document.getElementById("range").style.display=scope==="window"?"flex":"none";
   if(picking){ await fillRuns(); drawTiles(); return; }
   if(scope==="runs") await fillRuns();
   panels=(await (await fetch("/charts/panels"+(scope==="lifetime"?"?scope=lifetime":""))).json()).panels;
@@ -316,7 +355,21 @@ async function boot(){
   await load();
 }
 document.getElementById("refresh").onclick=load;
-document.getElementById("range").onchange=load;
+
+// Asking again on a timer. One timer, replaced rather than stacked: setting an
+// interval without clearing the last one is how a page ends up making four
+// requests a second and nobody can say why.
+let ticking=0;
+document.querySelectorAll(".tick").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".tick").forEach(x=>x.classList.toggle("on",x===b));
+  clearInterval(ticking);
+  const s=+b.dataset.s;
+  if(s>0) ticking=setInterval(load, s*1000);
+});
+document.querySelectorAll(".span").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".span").forEach(x=>x.classList.toggle("on",x===b));
+  load();
+});
 // The tabs are links: they work with the middle button, they can be copied, and
 // a keyboard reaches them. The handler only spares the page a reload.
 document.querySelectorAll(".tab[data-scope]").forEach(t=>t.onclick=e=>{
