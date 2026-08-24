@@ -188,7 +188,7 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
       <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
     </g>
   </svg>
-  <span class="brand-text"><b>CHIRON</b><small>SYSTEMS</small></span>
+  <span class="brand-text"><b>AMMIT</b><small>Chiron.consulting</small></span>
 </span>
 <nav class="tabs" role="tablist">
   <button id="tab-scales" role="tab" aria-selected="true">Limits</button>

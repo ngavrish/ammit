@@ -58,7 +58,8 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:60px;
 .brand{justify-self:center;display:flex;align-items:center;gap:9px}
 .brand-text{display:flex;flex-direction:column;line-height:1}
 .brand-text b{font:800 12px/1 var(--sans);letter-spacing:.17em;color:#F7FAFC}
-.brand-text small{font:600 8px/1.5 var(--sans);letter-spacing:.31em;color:var(--bronze)}
+.brand-text small{font:600 9.5px/1.45 var(--sans);letter-spacing:.02em;
+  color:var(--bronze)}
 
 #tabs{margin-left:auto;display:flex;gap:2px;background:var(--bar-soft);
   border:1px solid var(--bar-hair);border-radius:9px;padding:3px;flex:none}
@@ -180,7 +181,7 @@ tbody tr:hover{background:var(--bronze-wash)}
         <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
       </g>
     </svg>
-    <span class=brand-text><b>CHIRON</b><small>SYSTEMS</small></span>
+    <span class=brand-text><b>AMMIT</b><small>Chiron.consulting</small></span>
   </span>
 
   <nav id=tabs>
