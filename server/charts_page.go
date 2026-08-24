@@ -32,60 +32,66 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
 
 /* One row that does not reflow when a control is hidden: the filters live in
    their own group and the group collapses whole. */
-/* The corporate bar, the same one dokimos.chiron.systems wears: navy, the mark,
-   the wordmark. The page under it is light; the bar is not, and that is the
-   house style rather than a decision taken here.
+/* Two rows, and they do different jobs.
+ *
+ * The bar is navy, the same one dokimos.chiron.systems wears, and it carries
+ * three things only: whose this is, what it is, and where in it you are. The
+ * name was wedged between a wordmark and a row of date pickers before, which is
+ * no place for the name of the thing you are looking at.
+ *
+ * Everything you operate lives on the light strip under it. Nothing there
+ * navigates and nothing on the bar filters. */
+header{position:sticky;top:0;z-index:30;padding:0 24px;height:60px;
+  background:var(--navy-bar);border-bottom:1px solid var(--bar-hair);
+  display:flex;align-items:center;gap:22px}
 
-   Reads left to right as: whose this is, what it is, where you are in it, what
-   you are looking for, how much of it there is. */
-header{position:sticky;top:0;z-index:20;padding:10px 22px;
-  background:var(--navy-bar);border-bottom:1px solid rgba(205,127,50,.28);
-  display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-
-.brand{display:flex;align-items:center;gap:9px}
+.brand{display:flex;align-items:center;gap:9px;flex:none}
 .brand-text{display:flex;flex-direction:column;line-height:1}
-.brand-text b{font:800 13px/1 var(--sans);letter-spacing:.16em;color:#F7FAFC}
-.brand-text small{font:600 8.5px/1.5 var(--sans);letter-spacing:.3em;
-  color:var(--bronze)}
-.where{display:flex;flex-direction:column;line-height:1.15;
-  padding-left:18px;border-left:1px solid rgba(205,127,50,.28)}
-.where b{font:800 16px/1.15 var(--sans);letter-spacing:-.015em;color:#F7FAFC}
-.where em{font:400 10.5px/1.3 var(--sans);font-style:normal;color:#A0AEC0}
-/* One control rather than six sitting next to each other: a single hairline
-   round the group, dividers inside it, and nothing of its own to align. */
+.brand-text b{font:800 12px/1 var(--sans);letter-spacing:.17em;color:#F7FAFC}
+.brand-text small{font:600 8px/1.5 var(--sans);letter-spacing:.31em;color:var(--bronze)}
+
+h1{margin:0;padding-left:22px;border-left:1px solid var(--bar-hair);
+  display:flex;flex-direction:column;gap:3px;
+  font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
+h1 em{font:400 11px/1 var(--sans);font-style:normal;letter-spacing:.02em;
+  color:var(--on-bar-dim)}
+
+#tabs{margin-left:auto;display:flex;gap:2px;background:var(--bar-soft);
+  border:1px solid var(--bar-hair);border-radius:9px;padding:3px;flex:none}
+.tab{border:0;background:none;border-radius:6px;padding:7px 15px;
+  color:var(--on-bar-dim);font:600 12.5px/1 var(--sans);cursor:pointer}
+.tab:hover{color:#F7FAFC}
+.tab.on{background:var(--bronze);color:#001F3F}
+
+/* The strip: light, sticky under the bar, and it holds everything with a
+   control on it. */
+#bar{position:sticky;top:60px;z-index:25;padding:9px 24px;
+  background:var(--raised);border-bottom:1px solid var(--hair);
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#bar select,#bar>button{font:inherit;font-size:12.5px;color:var(--ink);
+  background:var(--ground);border:1px solid var(--hair);border-radius:8px;
+  padding:7px 11px;cursor:pointer}
+#bar>button:hover,#bar select:hover{border-color:var(--bronze);color:var(--bronze)}
+
+/* One control rather than six sitting next to each other. */
 #filters{display:flex;align-items:center;gap:0;flex-wrap:wrap;
-  border:1px solid var(--bar-hair);border-radius:8px;background:var(--bar-soft);
+  border:1px solid var(--hair);border-radius:8px;background:var(--ground);
   padding:2px;overflow:hidden}
 #filters input,#filters button{border:0;background:none;border-radius:6px;
-  padding:5px 9px;color:var(--on-bar)}
-#filters input::placeholder{color:var(--on-bar-dim)}
-#filters input:focus{outline:0;background:rgba(247,250,252,.12)}
-#filters input[type=date]{font:11.5px/1 var(--mono);color:var(--on-bar-dim);
-  padding:5px 6px;min-width:118px;color-scheme:dark}
+  padding:6px 10px;font:inherit;font-size:12.5px;color:var(--ink)}
+#filters input::placeholder{color:var(--mute)}
+#filters input:focus{outline:0;background:var(--bronze-wash)}
+#filters input[type=date]{font:11.5px/1 var(--mono);color:var(--slate);
+  padding:6px;min-width:116px}
+.sep{width:1px;align-self:stretch;background:var(--hair);margin:3px 2px}
 .when{display:flex;align-items:center;gap:2px}
 .when i{font:600 9.5px/1 var(--sans);font-style:normal;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--on-bar-dim);padding:0 6px 0 8px}
-.sep{width:1px;align-self:stretch;background:var(--bar-hair);margin:3px 2px}
-#clear{color:var(--on-bar-dim);font-size:16px;line-height:1;padding:4px 10px}
-#clear:hover{color:var(--bronze);background:rgba(247,250,252,.10)}
-/* Three places to be, all three visible. A dropdown hid two of them behind the
-   third and made the current one a thing you had to open something to read. */
-#tabs{display:flex;gap:2px;background:var(--bar-soft);border-radius:9px;padding:3px;
-  border:1px solid var(--bar-hair)}
-.tab{border:0;background:none;border-radius:6px;padding:6px 13px;
-  color:var(--on-bar-dim);font:600 12.5px/1 var(--sans);cursor:pointer}
-.tab:hover{color:var(--on-bar)}
-.tab.on{background:var(--bronze);color:#001F3F}
-select,button,input{font:inherit;font-size:12.5px;color:var(--on-bar);
-  background:var(--bar-soft);border:1px solid var(--bar-hair);border-radius:8px;
-  padding:6px 10px}
-select{cursor:pointer;color-scheme:dark}
-button{cursor:pointer}
-button:hover{border-color:var(--bronze);color:var(--bronze)}
-#note{margin-left:auto;color:var(--bronze);font:600 11px/1 var(--sans);
-  letter-spacing:.06em;text-transform:uppercase;font-variant-numeric:tabular-nums;
-  background:var(--bar-soft);border:1px solid var(--bar-hair);
-  border-radius:20px;padding:6px 13px}
+  text-transform:uppercase;color:var(--mute);padding:0 6px 0 9px}
+#clear{color:var(--mute);cursor:pointer}
+#clear:hover{color:var(--bad)}
+
+#note{margin-left:auto;color:var(--slate);font:600 11px/1 var(--sans);
+  letter-spacing:.06em;text-transform:uppercase;font-variant-numeric:tabular-nums}
 
 main{padding:20px 22px 72px;display:flex;flex-direction:column;gap:26px}
 .row{font:700 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;
@@ -130,7 +136,7 @@ tbody tr:hover{background:var(--bronze-wash)}
 </style>
 <header>
   <span class=brand aria-hidden=true>
-    <svg width="34" height="30" viewBox="0 0 180 160">
+    <svg width="30" height="27" viewBox="0 0 180 160">
       <defs>
         <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
@@ -152,19 +158,24 @@ tbody tr:hover{background:var(--bronze-wash)}
     </svg>
     <span class=brand-text><b>CHIRON</b><small>SYSTEMS</small></span>
   </span>
-  <span class=where><b>ammit</b><em>the scales, the record, and the eating</em></span>
+
+  <h1>ammit<em>the scales, the record, and the eating</em></h1>
+
   <nav id=tabs>
     <button class="tab on" data-scope=runs>Runs</button>
     <button class=tab data-scope=window>A window</button>
     <button class=tab data-scope=lifetime>All time</button>
   </nav>
+</header>
+
+<div id=bar>
   <div id=filters>
-    <input id=q placeholder="ticket" size=9>
+    <input id=q placeholder="ticket" size=10>
     <span class=sep></span>
     <label class=when><i>started</i><input id=sf type=date><input id=st type=date></label>
     <span class=sep></span>
     <label class=when><i>finished</i><input id=ff type=date><input id=ft type=date></label>
-    <button id=clear title="clear every filter">×</button>
+    <button id=clear title="clear every filter">clear</button>
   </div>
   <select id=range>
     <option value=3>last 3 hours</option>
@@ -173,8 +184,9 @@ tbody tr:hover{background:var(--bronze-wash)}
     <option value=168>last week</option>
   </select>
   <button id=refresh title="run every query again">refresh</button>
-  <span id=note style="color:var(--dim);font-size:12px"></span>
-</header>
+  <span id=note></span>
+</div>
+
 <main id=main></main>
 <script>` + uplotJS + `</script>
 <script>
