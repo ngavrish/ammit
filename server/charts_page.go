@@ -11,7 +11,7 @@ var uplotJS string
 //go:embed uPlot.min.css
 var uplotCSS string
 
-func chartsPageHTML() string { return `<!doctype html><meta charset="utf-8">
+func chartsPageHTML(active string) string { return `<!doctype html><meta charset="utf-8">
 <title>ammit — charts</title>
 <style>` + uplotCSS + `
 /* Light, on the palette the rest of Chiron uses: bronze against navy text on
@@ -27,59 +27,12 @@ func chartsPageHTML() string { return `<!doctype html><meta charset="utf-8">
   --navy-bar:#001F3F; --on-bar:#F7FAFC; --on-bar-dim:#A0AEC0;
   --bar-hair:rgba(205,127,50,.28); --bar-soft:rgba(247,250,252,.07);
   --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
-  --sans:"Plus Jakarta Sans",system-ui,-apple-system,sans-serif;
+  --sans:"Plus Jakarta Sans","Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--sans)}
 
-/* One row that does not reflow when a control is hidden: the filters live in
-   their own group and the group collapses whole. */
-/* Three columns, so the mark is centred against the bar rather than against
-   whatever happens to be beside it. Back on the left, the company in the middle,
-   where you are on the right.
- *
- * No product name: the tab that is lit says which of them you are looking at,
- * and the name was taking the widest part of the bar to repeat it. */
-/* The menu from dokimos.chiron.systems, measured rather than guessed: the bar is
-   eighty-one pixels of navy at nine tenths, the items are JetBrains Mono at
-   fourteen over twenty in #A0AEC0 with no tracking, and the one you are on is the
-   same face at seven hundred, navy on bronze, thirty-six tall with twenty-four
-   either side and square corners.
- *
-   Everything here is that menu. What differs is the logo, the back button and
-   which buttons there are. */
-header{position:sticky;top:0;z-index:30;padding:0 24px;height:81px;
-  background:rgba(0,31,63,.9);backdrop-filter:saturate(140%) blur(10px);
-  border-bottom:1px solid rgba(255,255,255,.08);
-  display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px}
-
-.home{justify-self:start;display:inline-flex;align-items:center;gap:9px;height:36px;
-  padding:0 20px 0 16px;text-decoration:none;border:1px solid rgba(205,127,50,.35);
-  color:#A0AEC0;font:400 14px/20px var(--mono);letter-spacing:.12em;
-  text-transform:uppercase;transition:color .15s,border-color .15s}
-.home::before{content:"";width:13px;height:9px;flex:none;background:#CD7F32;
-  -webkit-mask:var(--arrow) center/contain no-repeat;
-  mask:var(--arrow) center/contain no-repeat;transition:transform .15s}
-.home:hover{color:#F7FAFC;border-color:#CD7F32}
-.home:hover::before{transform:translateX(-3px)}
-
-.brand{justify-self:center;display:flex;align-items:center;gap:10px}
-.brand-text{display:flex;flex-direction:column;line-height:1}
-/* Taken off the limits page, which is the one that looks right: the name at
-   twenty in the sans at eight hundred, the line under it at seven in mono with
-   tracking and in capitals, three pixels down. */
-.brand-text b{display:block;font:800 20px/1 var(--sans);letter-spacing:-.01em;color:#F7FAFC}
-.brand-text small{display:block;font:600 7px/1 var(--mono);letter-spacing:.32em;
-  color:#A0AEC0;text-transform:uppercase;margin-top:3px}
-
-#tabs{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
-.tab{border:0;background:none;border-radius:0;height:36px;padding:0 24px;
-  color:#A0AEC0;font:400 14px/20px var(--mono);cursor:pointer;
-  text-decoration:none;display:inline-flex;align-items:center;
-  transition:color .15s,background .15s}
-.tab:hover{color:#F7FAFC}
-.tab.on{background:#CD7F32;color:#001F3F;font-weight:700}
-
+` + headerCSS + `
 #bar{position:sticky;top:81px;z-index:25;padding:9px 24px;
   background:var(--raised);border-bottom:1px solid var(--hair);
   display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -129,7 +82,7 @@ main{padding:20px 22px 72px;display:flex;flex-direction:column;gap:26px}
   color:var(--bronze);border-bottom:1px solid var(--hair);padding-bottom:8px;margin-top:12px}
 .panel h2{font:700 14px/1.3 var(--sans);margin:0 0 3px;color:var(--navy)}
 .panel p{margin:0 0 10px;color:var(--slate);font-size:12px;max-width:92ch}
-.plot{min-height:60px}
+.plot{min-height:360px}
 
 table{border-collapse:collapse;width:100%;font:12px/1.5 var(--mono);display:block;
   overflow:auto;max-height:360px;border:1px solid var(--hair);border-radius:6px}
@@ -166,40 +119,7 @@ tbody tr:hover{background:var(--bronze-wash)}
 .back:hover{text-decoration:underline}
 ` + footerCSS + `
 </style>
-<header>
-  <a class=home href="https://dokimos.chiron.systems">back</a>
-
-  <span class=brand aria-hidden=true>
-    <svg width="30" height="27" viewBox="0 0 180 160">
-      <defs>
-        <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
-          <stop offset="40%" stop-color="#CD7F32" stop-opacity=".4"/>
-          <stop offset="85%" stop-color="#CD7F32" stop-opacity=".9"/>
-          <stop offset="100%" stop-color="#CD7F32"/>
-        </linearGradient>
-        <mask id="brandCut">
-          <rect width="180" height="160" fill="#fff"/>
-          <line x1="5" y1="80" x2="180" y2="80" stroke="#000" stroke-width="15" stroke-linecap="round"/>
-        </mask>
-      </defs>
-      <g transform="rotate(-30 90 80)">
-        <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
-                 C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
-              fill="#F7FAFC" mask="url(#brandCut)"/>
-        <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
-      </g>
-    </svg>
-    <span class=brand-text><b>AMMIT</b><small>Chiron.consulting</small></span>
-  </span>
-
-  <nav id=tabs>
-    <a class=tab href="/ammit/limits">Limits</a>
-    <a class=tab data-scope=runs href="/ammit/runs">Runs</a>
-    <a class=tab data-scope=window href="/ammit/window">A window</a>
-    <a class=tab data-scope=lifetime href="/ammit/lifetime">All time</a>
-  </nav>
-</header>
+` + headerHTML(active) + `
 
 <div id=bar>
   <div id=filters>
@@ -286,7 +206,11 @@ function drawSeries(box,payload){
   const p=pivot(s.columns||[],s.rows||[]);
   if(!p||!p.data[0].length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
   const opts={
-    width:box.clientWidth||900,height:(payload.panel.height||8)*26,
+    width:box.clientWidth||900,
+    // Two thirds of the window, whatever the panel asked for. A time series
+    // squeezed into two hundred pixels is a line that goes up: the shape is the
+    // whole point of drawing it, and the shape needs room.
+    height:Math.max(360, Math.round(innerHeight*0.66)),
     scales:{x:{time:true}},
     axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"}},
           {stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"}}],

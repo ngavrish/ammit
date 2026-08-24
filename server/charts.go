@@ -256,9 +256,19 @@ func serveCharts(mux *http.ServeMux) {
 	// /ammit/lifetime — the same page, told by its address which of them it is.
 	// A fragment was the first attempt and it is not an address a server can be
 	// asked about: it never leaves the browser.
+	// Which tab to light, taken from the path. The page re-lights it as you
+	// move, but the first paint should not wait for JavaScript to say where you
+	// already are.
 	page := func(w http.ResponseWriter, r *http.Request) {
+		active := "runs"
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/ammit/window"):
+			active = "window"
+		case strings.HasPrefix(r.URL.Path, "/ammit/lifetime"):
+			active = "lifetime"
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, chartsPageHTML())
+		fmt.Fprint(w, chartsPageHTML(active))
 	}
 	mux.HandleFunc("GET /ammit/runs", page)
 	mux.HandleFunc("GET /ammit/runs/{id}", page)
