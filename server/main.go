@@ -318,6 +318,22 @@ func store(e event) {
 
 	switch e.s("kind") {
 	case "run_start":
+		// Tie the queue row to the run it turned into.
+		//
+		// The queue starts an item and the run is minted afterwards, elsewhere,
+		// so the row never learned which run it had become — and run_end closes a
+		// queue row by run id, which matched nothing. Four rows sat at "running"
+		// with no run against them, and with queue.parallel at one that is a
+		// queue that will never start anything again. It had been refusing for
+		// three days, twenty-six times over.
+		//
+		// The oldest running row for this ticket that has not been tied to
+		// anything: a queue is a line, and the one at the front is the one that
+		// just started.
+		db.Exec(`UPDATE queue SET run = ? WHERE id = (
+		           SELECT id FROM queue WHERE name = ? AND state = 'running'
+		             AND ifnull(run,'') = '' ORDER BY id LIMIT 1)`,
+			e.s("run"), e.s("name"))
 		// REPLACE, not IGNORE: if an earlier event created the row, this is
 		// where it learns the ticket's name and its real start.
 		db.Exec(`INSERT OR REPLACE INTO runs (run, name, started) VALUES (?,?,?)`,
@@ -564,6 +580,30 @@ type openRun struct {
 // replaced, or whether this service was down when it ended. It is closed as
 // what it is: abandoned, not finished, and never confused with a verdict
 // somebody's work produced.
+// sweepQueue closes queue rows whose run is over, and rows that never became a
+// run at all.
+//
+// A row at "running" holds a slot for ever, and the slot is the whole of what
+// queue.parallel controls. Two ways it happens: the run it became has finished
+// and the row was never tied to it, or the start failed and nothing ever came
+// back. Both look the same from here and both end the same way.
+func sweepQueue(conf Config) {
+	mu.Lock()
+	defer mu.Unlock()
+	now := float64(time.Now().UnixNano()) / 1e9
+	// Tied to a run that is over.
+	db.Exec(`UPDATE queue SET state='done', finished=?
+	         WHERE state='running' AND ifnull(run,'') <> ''
+	           AND run IN (SELECT run FROM runs WHERE finished IS NOT NULL)`, now)
+	// Never tied to anything, and older than a run is allowed to take. Whatever
+	// it was, it is not running now.
+	if limit, ok := conf.num("timeouts", "run"); ok && limit > 0 {
+		db.Exec(`UPDATE queue SET state='done', finished=?
+		         WHERE state='running' AND ifnull(run,'') = ''
+		           AND coalesce(started, requested) < ?`, now, now-limit)
+	}
+}
+
 func sweepAbandoned(conf Config) {
 	limit, ok := conf.num("timeouts", "run")
 	if !ok || limit <= 0 {
@@ -1215,6 +1255,7 @@ func main() {
 			if len(conf) > 0 {
 				recordLimits(conf)
 				sweepAbandoned(conf)
+				sweepQueue(conf)
 				weigh(conf)
 				pumpQueue(conf)
 				// Every tick: deciding whether there is anything to archive is one
