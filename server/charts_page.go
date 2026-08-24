@@ -22,6 +22,8 @@ var chartsPage = `<!doctype html><meta charset="utf-8">
   --navy:#001F3F; --ink:#0F1520; --slate:#4A5568; --mute:#A0AEC0;
   --hair:#E5E7EB; --hair-soft:#F1F3F6; --ground:#FFFFFF; --raised:#FAFBFC;
   --sky:#0EA5E9; --good:#22C55E; --bad:#EF4444; --warm:#FB923C;
+  --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 13 9'%3E%3Cpath d='M4.8.7 1 4.5l3.8 3.8M1 4.5h11' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --lens:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round'%3E%3Ccircle cx='6.8' cy='6.8' r='4.7'/%3E%3Cpath d='M10.4 10.4 14 14'/%3E%3C/g%3E%3C/svg%3E");
   --navy-bar:#001F3F; --on-bar:#F7FAFC; --on-bar-dim:#A0AEC0;
   --bar-hair:rgba(205,127,50,.28); --bar-soft:rgba(247,250,252,.07);
   --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -45,16 +47,21 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:60px;
   background:var(--navy-bar);border-bottom:1px solid var(--bar-hair);
   display:flex;align-items:center;gap:22px}
 
-/* Back to the project this belongs to, and nothing else on that side. The
-   wordmark was there and said the company twice — once in the logo, once in
-   letters — while the thing you are actually looking at went unnamed until the
-   middle of the bar. */
-.home{flex:none;text-decoration:none;color:var(--on-bar-dim);
-  font:600 12.5px/1 var(--sans);letter-spacing:.02em;
-  padding:7px 12px 7px 0;border-right:1px solid var(--bar-hair);
-  padding-right:20px}
-.home::before{content:"← ";color:var(--bronze)}
-.home:hover{color:var(--bronze)}
+/* Back to the project this belongs to. A grey word with an arrow read as a
+   footnote; it is the only way out of here, and it is one of two products
+   rather than a link in prose — so it looks like something to press. */
+.home{flex:none;display:inline-flex;align-items:center;gap:8px;align-self:center;
+  text-decoration:none;padding:7px 14px 7px 11px;border-radius:20px;
+  border:1px solid var(--bar-hair);background:var(--bar-soft);
+  font:700 12px/1 var(--sans);letter-spacing:.03em;color:#F7FAFC;
+  transition:background .14s,border-color .14s}
+.home::before{content:"";width:13px;height:9px;flex:none;
+  background:var(--bronze);
+  -webkit-mask:var(--arrow) center/contain no-repeat;
+  mask:var(--arrow) center/contain no-repeat;
+  transition:transform .14s}
+.home:hover{background:rgba(205,127,50,.14);border-color:var(--bronze)}
+.home:hover::before{transform:translateX(-3px)}
 
 /* Whose page this is, said with the thing it is named after. */
 .me{display:flex;align-items:center;gap:11px;flex:none}
@@ -90,6 +97,22 @@ h1 em{font:400 11px/1 var(--sans);font-style:normal;letter-spacing:.02em;
   padding:6px 10px;font:inherit;font-size:12.5px;color:var(--ink)}
 #filters input::placeholder{color:var(--mute)}
 #filters input:focus{outline:0;background:var(--bronze-wash)}
+
+/* The ticket is what anybody types first and it was the smallest thing on the
+   strip. A lens in front of it, room for a whole ticket key, and the type that
+   ticket keys are written in. */
+.find{display:flex;align-items:center;padding-left:10px;border-radius:7px}
+.find::before{content:"";width:13px;height:13px;flex:none;opacity:.5;
+  background:var(--slate);
+  -webkit-mask:var(--lens) center/contain no-repeat;
+  mask:var(--lens) center/contain no-repeat}
+.find:focus-within{background:var(--bronze-wash);
+  box-shadow:0 0 0 1px rgba(205,127,50,.35)}
+.find:focus-within::before{background:var(--bronze);opacity:1}
+#q{font:600 13.5px/1 var(--mono);letter-spacing:.03em;padding:9px 12px 9px 8px;
+  text-transform:uppercase}
+#q::placeholder{font-weight:400;letter-spacing:.02em;text-transform:none}
+#q:focus{background:none}
 #filters input[type=date]{font:11.5px/1 var(--mono);color:var(--slate);
   padding:6px;min-width:116px}
 .sep{width:1px;align-self:stretch;background:var(--hair);margin:3px 2px}
@@ -179,7 +202,9 @@ tbody tr:hover{background:var(--bronze-wash)}
 
 <div id=bar>
   <div id=filters>
-    <input id=q placeholder="ticket" size=10>
+    <span class=find>
+      <input id=q placeholder="APF-1934" size=13 autocomplete=off spellcheck=false>
+    </span>
     <span class=sep></span>
     <label class=when><i>started</i><input id=sf type=date><input id=st type=date></label>
     <span class=sep></span>
