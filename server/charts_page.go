@@ -22,6 +22,8 @@ var chartsPage = `<!doctype html><meta charset="utf-8">
   --navy:#001F3F; --ink:#0F1520; --slate:#4A5568; --mute:#A0AEC0;
   --hair:#E5E7EB; --hair-soft:#F1F3F6; --ground:#FFFFFF; --raised:#FAFBFC;
   --sky:#0EA5E9; --good:#22C55E; --bad:#EF4444; --warm:#FB923C;
+  --navy-bar:#001F3F; --on-bar:#F7FAFC; --on-bar-dim:#A0AEC0;
+  --bar-hair:rgba(205,127,50,.28); --bar-soft:rgba(247,250,252,.07);
   --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
   --sans:"Plus Jakarta Sans",system-ui,-apple-system,sans-serif;
 }
@@ -30,28 +32,60 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
 
 /* One row that does not reflow when a control is hidden: the filters live in
    their own group and the group collapses whole. */
-header{position:sticky;top:0;z-index:20;background:var(--ground);
-  border-bottom:1px solid var(--hair);padding:11px 22px;
+/* The corporate bar, the same one dokimos.chiron.systems wears: navy, the mark,
+   the wordmark. The page under it is light; the bar is not, and that is the
+   house style rather than a decision taken here.
+
+   Reads left to right as: whose this is, what it is, where you are in it, what
+   you are looking for, how much of it there is. */
+header{position:sticky;top:0;z-index:20;padding:10px 22px;
+  background:var(--navy-bar);border-bottom:1px solid rgba(205,127,50,.28);
   display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-h1{margin:0;font:800 17px/1 var(--sans);letter-spacing:-.01em;color:var(--navy)}
-h1 span{color:var(--bronze)}
-#filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+.brand{display:flex;align-items:center;gap:9px}
+.brand-text{display:flex;flex-direction:column;line-height:1}
+.brand-text b{font:800 13px/1 var(--sans);letter-spacing:.16em;color:#F7FAFC}
+.brand-text small{font:600 8.5px/1.5 var(--sans);letter-spacing:.3em;
+  color:var(--bronze)}
+.where{display:flex;flex-direction:column;line-height:1.15;
+  padding-left:18px;border-left:1px solid rgba(205,127,50,.28)}
+.where b{font:800 16px/1.15 var(--sans);letter-spacing:-.015em;color:#F7FAFC}
+.where em{font:400 10.5px/1.3 var(--sans);font-style:normal;color:#A0AEC0}
+/* One control rather than six sitting next to each other: a single hairline
+   round the group, dividers inside it, and nothing of its own to align. */
+#filters{display:flex;align-items:center;gap:0;flex-wrap:wrap;
+  border:1px solid var(--bar-hair);border-radius:8px;background:var(--bar-soft);
+  padding:2px;overflow:hidden}
+#filters input,#filters button{border:0;background:none;border-radius:6px;
+  padding:5px 9px;color:var(--on-bar)}
+#filters input::placeholder{color:var(--on-bar-dim)}
+#filters input:focus{outline:0;background:rgba(247,250,252,.12)}
+#filters input[type=date]{font:11.5px/1 var(--mono);color:var(--on-bar-dim);
+  padding:5px 6px;min-width:118px;color-scheme:dark}
+.when{display:flex;align-items:center;gap:2px}
+.when i{font:600 9.5px/1 var(--sans);font-style:normal;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--on-bar-dim);padding:0 6px 0 8px}
+.sep{width:1px;align-self:stretch;background:var(--bar-hair);margin:3px 2px}
+#clear{color:var(--on-bar-dim);font-size:16px;line-height:1;padding:4px 10px}
+#clear:hover{color:var(--bronze);background:rgba(247,250,252,.10)}
 /* Three places to be, all three visible. A dropdown hid two of them behind the
    third and made the current one a thing you had to open something to read. */
-#tabs{display:flex;gap:2px;background:var(--hair-soft);border-radius:8px;padding:3px}
-.tab{border:0;background:none;border-radius:6px;padding:6px 13px;color:var(--slate);
-  font:600 12.5px/1 var(--sans);cursor:pointer}
-.tab:hover{color:var(--navy)}
-.tab.on{background:var(--ground);color:var(--navy);
-  box-shadow:0 1px 3px rgba(15,21,32,.10)}
-select,button,input{font:inherit;font-size:12.5px;color:var(--ink);
-  background:var(--ground);border:1px solid var(--hair);border-radius:6px;
+#tabs{display:flex;gap:2px;background:var(--bar-soft);border-radius:9px;padding:3px;
+  border:1px solid var(--bar-hair)}
+.tab{border:0;background:none;border-radius:6px;padding:6px 13px;
+  color:var(--on-bar-dim);font:600 12.5px/1 var(--sans);cursor:pointer}
+.tab:hover{color:var(--on-bar)}
+.tab.on{background:var(--bronze);color:#001F3F}
+select,button,input{font:inherit;font-size:12.5px;color:var(--on-bar);
+  background:var(--bar-soft);border:1px solid var(--bar-hair);border-radius:8px;
   padding:6px 10px}
-select{cursor:pointer}
-button{cursor:pointer;color:var(--slate)}
+select{cursor:pointer;color-scheme:dark}
+button{cursor:pointer}
 button:hover{border-color:var(--bronze);color:var(--bronze)}
-input:focus,select:focus{outline:2px solid var(--bronze-wash);border-color:var(--bronze)}
-#note{margin-left:auto;color:var(--mute);font-size:12px;font-variant-numeric:tabular-nums}
+#note{margin-left:auto;color:var(--bronze);font:600 11px/1 var(--sans);
+  letter-spacing:.06em;text-transform:uppercase;font-variant-numeric:tabular-nums;
+  background:var(--bar-soft);border:1px solid var(--bar-hair);
+  border-radius:20px;padding:6px 13px}
 
 main{padding:20px 22px 72px;display:flex;flex-direction:column;gap:26px}
 .row{font:700 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;
@@ -95,17 +129,42 @@ tbody tr:hover{background:var(--bronze-wash)}
 .back:hover{text-decoration:underline}
 </style>
 <header>
-  <h1>ammit<span>.</span></h1>
+  <span class=brand aria-hidden=true>
+    <svg width="34" height="30" viewBox="0 0 180 160">
+      <defs>
+        <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
+          <stop offset="40%" stop-color="#CD7F32" stop-opacity=".4"/>
+          <stop offset="85%" stop-color="#CD7F32" stop-opacity=".9"/>
+          <stop offset="100%" stop-color="#CD7F32"/>
+        </linearGradient>
+        <mask id="brandCut">
+          <rect width="180" height="160" fill="#fff"/>
+          <line x1="5" y1="80" x2="180" y2="80" stroke="#000" stroke-width="15" stroke-linecap="round"/>
+        </mask>
+      </defs>
+      <g transform="rotate(-30 90 80)">
+        <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
+                 C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
+              fill="#F7FAFC" mask="url(#brandCut)"/>
+        <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
+      </g>
+    </svg>
+    <span class=brand-text><b>CHIRON</b><small>SYSTEMS</small></span>
+  </span>
+  <span class=where><b>ammit</b><em>the scales, the record, and the eating</em></span>
   <nav id=tabs>
     <button class="tab on" data-scope=runs>Runs</button>
     <button class=tab data-scope=window>A window</button>
     <button class=tab data-scope=lifetime>All time</button>
   </nav>
   <div id=filters>
-    <input id=q placeholder="ticket" size=10>
-    <label class=when>started <input id=sf type=date> <input id=st type=date></label>
-    <label class=when>finished <input id=ff type=date> <input id=ft type=date></label>
-    <button id=clear>clear</button>
+    <input id=q placeholder="ticket" size=9>
+    <span class=sep></span>
+    <label class=when><i>started</i><input id=sf type=date><input id=st type=date></label>
+    <span class=sep></span>
+    <label class=when><i>finished</i><input id=ff type=date><input id=ft type=date></label>
+    <button id=clear title="clear every filter">×</button>
   </div>
   <select id=range>
     <option value=3>last 3 hours</option>
@@ -113,7 +172,7 @@ tbody tr:hover{background:var(--bronze-wash)}
     <option value=48>last 2 days</option>
     <option value=168>last week</option>
   </select>
-  <button id=refresh>refresh</button>
+  <button id=refresh title="run every query again">refresh</button>
   <span id=note style="color:var(--dim);font-size:12px"></span>
 </header>
 <main id=main></main>

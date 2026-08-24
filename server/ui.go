@@ -49,8 +49,11 @@ const page = `<!doctype html>
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)}
+/* The bar stays navy on a light page: it is the house style, the same one
+   dokimos.chiron.systems wears, and the mark is drawn for that ground. */
 header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5rem 2.5rem;
-       border-bottom:1px solid var(--bronze-dim);background:var(--deep)}
+       border-bottom:1px solid rgba(205,127,50,.28);background:#001F3F;
+       --ink:#F7FAFC; --mute:#A0AEC0; --dim:#A0AEC0; color:#F7FAFC}
 /* Centered independent of how wide the title or the tabs are, positioned
    rather than a flex child that would shove its neighbours. Full strength,
    not dimmed — the reference never fades this mark, and doing it here read
@@ -156,7 +159,7 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
     <g transform="rotate(-30 90 80)">
       <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
                C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
-            fill="#001F3F" mask="url(#brandCut)"/>
+            fill="#F7FAFC" mask="url(#brandCut)"/>
       <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
     </g>
   </svg>
