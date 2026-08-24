@@ -51,6 +51,14 @@ const page = `<!doctype html>
 body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)}
 /* The bar stays navy on a light page: it is the house style, the same one
    dokimos.chiron.systems wears, and the mark is drawn for that ground. */
+.home{flex:none;text-decoration:none;color:#A0AEC0;font:600 12.5px/1 var(--sans);
+      padding-right:20px;border-right:1px solid rgba(205,127,50,.28);align-self:center}
+.home::before{content:"\2190 ";color:var(--bronze)}
+.home:hover{color:var(--bronze)}
+.me{display:flex;align-items:center;gap:11px;align-self:center}
+.title{display:flex;flex-direction:column;gap:3px;line-height:1}
+.title b{font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
+.title em{font:400 11px/1 var(--sans);font-style:normal;color:#A0AEC0}
 header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5rem 2.5rem;
        border-bottom:1px solid rgba(205,127,50,.28);background:#001F3F;
        --ink:#F7FAFC; --mute:#A0AEC0; --dim:#A0AEC0; color:#F7FAFC}
@@ -58,7 +66,7 @@ header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5r
    rather than a flex child that would shove its neighbours. Full strength,
    not dimmed — the reference never fades this mark, and doing it here read
    as washed out next to the real thing. */
-.brand{text-decoration:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+.legacy-brand{text-decoration:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
        display:flex;align-items:center;gap:.5rem;pointer-events:none}
 .brand svg{display:block}
 /* Block children, not <b><br><small> — a bare <br> takes the browser's
@@ -138,36 +146,32 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
   border-color:var(--bronze-dim);color:var(--bronze)}
 #charts{max-width:none;padding:0;display:block;height:calc(100vh - 5.4rem)}
 </style></head><body>
-<header><h1>ammit</h1><span class="sub">the scales, the record, and the eating</span>
+<header>
 <!-- Same mark, same bow-and-arrow path, as dokimos.chiron.systems — the light
      variant, since this header is dark. Static: the animation there is for a
      page somebody arrives at once, not a bar redrawn every refresh. -->
-<a class="brand" href="https://dokimos.chiron.systems" title="dokimos">
-  <svg width="36" height="32" viewBox="0 0 180 160">
-    <defs>
-      <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
-        <stop offset="40%" stop-color="#CD7F32" stop-opacity=".4"/>
-        <stop offset="85%" stop-color="#CD7F32" stop-opacity=".9"/>
-        <stop offset="100%" stop-color="#CD7F32"/>
-      </linearGradient>
-      <mask id="brandCut">
-        <rect width="180" height="160" fill="#fff"/>
-        <line x1="5" y1="80" x2="180" y2="80" stroke="#000" stroke-width="15" stroke-linecap="round"/>
-      </mask>
-    </defs>
-    <g transform="rotate(-30 90 80)">
-      <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
-               C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
-            fill="#F7FAFC" mask="url(#brandCut)"/>
-      <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
+<a class="home" href="https://dokimos.chiron.systems">dokimos</a>
+<span class="me">
+  <!-- Ammit weighed the heart against the feather of Ma'at and ate the ones that
+       came up heavy: a beam, two pans, the feather on one and the heart on the
+       other. -->
+  <svg class="scales" width="30" height="30" viewBox="0 0 40 40" aria-hidden="true">
+    <g fill="none" stroke="#CD7F32" stroke-width="1.7"
+       stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 7v22"/>
+      <path d="M20 30h-5.5M20 30h5.5"/>
+      <path d="M7 12h26"/>
+      <path d="M7 12l-3.5 7a3.9 3.9 0 0 0 7 0z"/>
+      <path d="M33 12l-3.5 7a3.9 3.9 0 0 0 7 0z"/>
+      <circle cx="20" cy="8.2" r="1.7" fill="#CD7F32" stroke="none"/>
     </g>
+    <path d="M7 18.4c0-2.2 1-3.9 2.2-4.6" stroke="#F7FAFC" stroke-width="1.2"
+          stroke-linecap="round" fill="none" opacity=".85"/>
+    <path d="M33 18.6a2.3 2.3 0 0 1 1.6-2.1" stroke="#F7FAFC" stroke-width="1.2"
+          stroke-linecap="round" fill="none" opacity=".85"/>
   </svg>
-  <span class="brand-text"><b>CHIRON</b><small>SYSTEMS</small></span>
+  <span class="title"><b>ammit</b><em>the scales, the record, and the eating</em></span>
 </span>
-<!-- One navigation across both pages. The charts used to hang in an iframe here,
-     which meant two ways to reach them and one of them without a URL you could
-     send anybody. -->
 <nav class="tabs" role="tablist">
   <button id="tab-scales" role="tab" aria-selected="true">Limits</button>
   <a class="tab-link" href="/charts">Runs</a>
