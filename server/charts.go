@@ -24,6 +24,13 @@ import (
 //go:embed panels.json
 var panelSpec []byte
 
+// The same pipeline seen from far enough away that one run is a dot: how runs
+// end, what one costs, whether that is moving. One row per run rather than one
+// point per second, and no window — all of it, always.
+//
+//go:embed lifetime.json
+var lifetimeSpec []byte
+
 type panel struct {
 	Kind    string   `json:"kind"`
 	Title   string   `json:"title"`
@@ -41,6 +48,22 @@ func panelsOf() chartSpec {
 	var s chartSpec
 	_ = json.Unmarshal(panelSpec, &s)
 	return s
+}
+
+func lifetimeOf() chartSpec {
+	var s chartSpec
+	_ = json.Unmarshal(lifetimeSpec, &s)
+	return s
+}
+
+// which set a request is about. The lifetime panels carry no window — they are
+// about every run there has been — so the macros are filled with the widest
+// possible range rather than being left in the SQL to fail.
+func specFor(r *http.Request) (chartSpec, bool) {
+	if r.URL.Query().Get("scope") == "lifetime" {
+		return lifetimeOf(), true
+	}
+	return panelsOf(), false
 }
 
 // window turns Grafana's macros into the numbers they stood for. The queries
@@ -106,17 +129,24 @@ func rows(sql string) map[string]any {
 func serveCharts(mux *http.ServeMux) {
 	mux.HandleFunc("GET /charts/panels", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("scope") == "lifetime" {
+			w.Write(lifetimeSpec)
+			return
+		}
 		w.Write(panelSpec)
 	})
 
 	mux.HandleFunc("GET /charts/data", func(w http.ResponseWriter, r *http.Request) {
 		idx, err := strconv.Atoi(r.URL.Query().Get("panel"))
-		spec := panelsOf()
+		spec, lifetime := specFor(r)
 		if err != nil || idx < 0 || idx >= len(spec.Panels) {
 			http.Error(w, "no such panel", http.StatusNotFound)
 			return
 		}
 		from, to := window(r)
+		if lifetime {
+			from, to = 0, time.Now().UnixMilli()+86400000
+		}
 		var series []any
 		for _, q := range spec.Panels[idx].Queries {
 			series = append(series, rows(fill(q, from, to)))
@@ -125,6 +155,40 @@ func serveCharts(mux *http.ServeMux) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"panel": spec.Panels[idx], "from": from, "to": to, "series": series,
 		})
+	})
+
+	// The runs, newest first, for the picker. Selecting one narrows the window to
+	// its own span rather than rewriting forty-three queries: the queue runs one
+	// at a time, so a run's span holds that run and nothing else.
+	mux.HandleFunc("GET /charts/runs", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		rs, err := db.Query(`SELECT run, coalesce(name,''), started,
+		                     coalesce(finished,0), coalesce(verdict,''),
+		                     coalesce(usd,0), coalesce(turns,0)
+		                     FROM runs ORDER BY started DESC LIMIT 200`)
+		type row struct {
+			Run      string  `json:"run"`
+			Name     string  `json:"name"`
+			Started  float64 `json:"started"`
+			Finished float64 `json:"finished"`
+			Verdict  string  `json:"verdict"`
+			USD      float64 `json:"usd"`
+			Turns    int     `json:"turns"`
+		}
+		out := []row{}
+		if err == nil {
+			for rs.Next() {
+				var x row
+				if rs.Scan(&x.Run, &x.Name, &x.Started, &x.Finished, &x.Verdict,
+					&x.USD, &x.Turns) == nil {
+					out = append(out, x)
+				}
+			}
+			rs.Close()
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
 	})
 
 	mux.HandleFunc("GET /charts", func(w http.ResponseWriter, r *http.Request) {

@@ -41,6 +41,12 @@ th{color:var(--bronze);position:sticky;top:0;background:var(--navy)}
 </style>
 <header>
   <h1>ammit</h1>
+  <select id=scope>
+    <option value=window selected>a window</option>
+    <option value=run>one run</option>
+    <option value=lifetime>every run there has been</option>
+  </select>
+  <select id=run style=display:none></select>
   <select id=range>
     <option value=3>last 3 hours</option>
     <option value=12 selected>last 12 hours</option>
@@ -59,7 +65,18 @@ const main=document.getElementById("main");
 let panels=[];
 
 function hours(){return +document.getElementById("range").value}
-function windowMs(){const to=Date.now();return[to-hours()*3600e3,to]}
+let runs=[], scope="window";
+
+// Picking a run narrows the window to that run's own span rather than rewriting
+// forty-three queries to take a run id. The queue runs one at a time, so a run's
+// span holds that run and nothing else — which is the assumption, said out loud.
+function windowMs(){
+  if(scope==="run"){
+    const r=runs.find(x=>x.run===document.getElementById("run").value);
+    if(r) return [r.started*1000-2000, (r.finished||Date.now()/1000)*1000+2000];
+  }
+  const to=Date.now();return[to-hours()*3600e3,to];
+}
 
 // The series come back as rows of (time, metric, value) — one long table, many
 // lines. uPlot wants a column per line over one shared clock, so the rows are
@@ -110,6 +127,7 @@ function drawTable(box,payload){
 
 async function load(){
   const [from,to]=windowMs();
+  const q=scope==="lifetime"?"&scope=lifetime":"";
   const note=document.getElementById("note");
   let drawn=0;
   await Promise.all(panels.map(async (p,i)=>{
@@ -117,7 +135,7 @@ async function load(){
     const box=document.getElementById("plot-"+i);
     if(!box) return;
     try{
-      const r=await fetch("/charts/data?panel="+i+"&from="+from+"&to="+to);
+      const r=await fetch("/charts/data?panel="+i+"&from="+from+"&to="+to+q);
       const payload=await r.json();
       (p.kind==="table"?drawTable:drawSeries)(box,payload);
       drawn++;
@@ -126,8 +144,20 @@ async function load(){
   note.textContent=drawn+" panels";
 }
 
+async function fillRuns(){
+  runs=await (await fetch("/charts/runs")).json();
+  const sel=document.getElementById("run");
+  sel.innerHTML=runs.map(r=>{
+    const when=new Date(r.started*1000).toLocaleString();
+    const how=r.verdict||(r.finished?"":"running");
+    return '<option value="'+r.run+'">'+(r.name||r.run)+" — "+when+
+           (how?" — "+how:"")+(r.usd?" — $"+r.usd.toFixed(2):"")+'</option>';
+  }).join("");
+}
+
 async function boot(){
-  panels=(await (await fetch("/charts/panels")).json()).panels;
+  await fillRuns();
+  panels=(await (await fetch("/charts/panels"+(scope==="lifetime"?"?scope=lifetime":""))).json()).panels;
   main.innerHTML=panels.map((p,i)=>p.kind==="row"
     ? '<div class=row>'+p.title+'</div>'
     : '<section class=panel><h2>'+p.title+'</h2>'+
@@ -137,6 +167,13 @@ async function boot(){
 }
 document.getElementById("refresh").onclick=load;
 document.getElementById("range").onchange=load;
+document.getElementById("scope").onchange=async e=>{
+  scope=e.target.value;
+  document.getElementById("run").style.display=scope==="run"?"":"none";
+  document.getElementById("range").style.display=scope==="window"?"":"none";
+  await boot();
+};
+document.getElementById("run").onchange=load;
 addEventListener("resize",()=>{clearTimeout(window._t);window._t=setTimeout(load,250)});
 boot();
 </script>`
