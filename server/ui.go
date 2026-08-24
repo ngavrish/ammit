@@ -37,10 +37,13 @@ const page = `<!doctype html>
    should not itself depend on being online. */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 :root{
-  --navy:#001F3F; --deep:#001428; --deeper:#000d1a; --panel:#001a33;
-  --bronze:#CD7F32; --bronze-dim:rgba(205,127,50,.28); --bronze-wash:rgba(205,127,50,.08);
-  --ink:#F7FAFC; --mute:#A0AEC0; --dim:#4A5568;
-  --ok:#4FA97C; --bad:#E06C5A;
+  /* Light, on the same palette the rest of Chiron uses. The names keep their
+     jobs — navy is the ground the eye rests against, ink is what is written on
+     it — so every rule below goes on meaning what it meant. */
+  --navy:#FFFFFF; --deep:#FAFBFC; --deeper:#F1F3F6; --panel:#FFFFFF;
+  --bronze:#CD7F32; --bronze-dim:#E5E7EB; --bronze-wash:rgba(205,127,50,.09);
+  --ink:#0F1520; --mute:#4A5568; --dim:#A0AEC0;
+  --ok:#22C55E; --bad:#EF4444;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
   --sans:'Plus Jakarta Sans','Inter',ui-sans-serif,system-ui,-apple-system,sans-serif;
 }
@@ -68,13 +71,13 @@ h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:u
 header .sub{color:var(--dim);font-size:13px;letter-spacing:.04em}
 main{max-width:82rem;margin:0 auto;padding:2.5rem;display:grid;gap:1.5rem}
 section{background:var(--deep);border:1px solid var(--bronze-dim);border-radius:2px;
-        padding:1.5rem 1.75rem;box-shadow:0 0 15px rgba(205,127,50,.05)}
+        padding:1.5rem 1.75rem;box-shadow:0 1px 3px rgba(15,21,32,.06)}
 h2{margin:0 0 1.25rem;font:600 .8rem/1 var(--mono);letter-spacing:.16em;
    text-transform:uppercase;color:var(--bronze);display:flex;align-items:baseline;gap:.75rem}
 h2 small{color:var(--dim);font:400 12px/1.4 var(--sans);letter-spacing:.02em;
          text-transform:none}
 .hint{color:var(--dim);font-size:12px;line-height:1.4}
-fieldset{border:0;border-top:1px solid rgba(205,127,50,.14);margin:0 0 1.5rem;padding:1.1rem 0 0}
+fieldset{border:0;border-top:1px solid var(--bronze-dim);margin:0 0 1.5rem;padding:1.1rem 0 0}
 legend{color:var(--bronze);font:500 11px/1 var(--mono);letter-spacing:.22em;
        text-transform:uppercase;padding-right:.75rem}
 .fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(19rem,1fr));
@@ -83,7 +86,7 @@ label{display:grid;gap:.3rem}
 label .k{font:500 12px/1.4 var(--mono);color:var(--mute);letter-spacing:.04em}
 .field{display:flex;align-items:center;gap:.6rem}
 input,select,textarea{background:var(--deeper);color:var(--ink);
-      border:1px solid rgba(205,127,50,.18);border-radius:2px;padding:.5rem .7rem;
+      border:1px solid var(--bronze-dim);border-radius:2px;padding:.5rem .7rem;
       font:400 13px/1.5 var(--mono);width:100%}
 input:focus,select:focus,textarea:focus{outline:0;border-color:var(--bronze);
       box-shadow:0 0 0 1px var(--bronze-dim)}
@@ -100,14 +103,14 @@ button.ghost{color:var(--mute);border-color:rgba(160,174,192,.22)}
 button.ghost:hover{background:rgba(160,174,192,.12);color:var(--ink)}
 button:disabled{opacity:.4;cursor:default}
 .row{display:flex;gap:.9rem;align-items:center;flex-wrap:wrap}
-.bar{margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid rgba(205,127,50,.14)}
+.bar{margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--bronze-dim)}
 .msg{color:var(--mute);font-size:12px;font-family:var(--mono)}
 .msg.bad{color:var(--bad)} .msg.ok{color:var(--ok)}
 table{width:100%;border-collapse:collapse;font:400 13px/1.5 var(--mono)}
 th{text-align:left;color:var(--bronze);font-weight:500;font-size:11px;
    letter-spacing:.14em;text-transform:uppercase;padding:.5rem .75rem;
    border-bottom:1px solid var(--bronze-dim)}
-td{padding:.45rem .75rem;border-bottom:1px solid rgba(160,174,192,.08);
+td{padding:.45rem .75rem;border-bottom:1px solid #F1F3F6;
    vertical-align:top;color:var(--mute)}
 tr:hover td{background:rgba(205,127,50,.04);color:var(--ink)}
 td.n{text-align:right;font-variant-numeric:tabular-nums}
@@ -153,7 +156,7 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
     <g transform="rotate(-30 90 80)">
       <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
                C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
-            fill="#F7FAFC" mask="url(#brandCut)"/>
+            fill="#001F3F" mask="url(#brandCut)"/>
       <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
     </g>
   </svg>
