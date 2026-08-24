@@ -254,6 +254,6 @@ func serveCharts(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /charts", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, chartsPage)
+		fmt.Fprint(w, chartsPageHTML())
 	})
 }

@@ -25,7 +25,7 @@ import (
 // adding a command, renaming a section.
 //
 // One page, no framework, no build step.
-const page = `<!doctype html>
+func pageHTML() string { return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>ammit</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -67,20 +67,23 @@ body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)
   transition:transform .14s}
 .home:hover{background:rgba(205,127,50,.14);border-color:var(--bronze)}
 .home:hover::before{transform:translateX(-3px)}
-.me{display:flex;align-items:center;gap:11px;align-self:center;
-     padding-left:20px;border-left:1px solid rgba(205,127,50,.28)}
+
 .title{display:flex;flex-direction:column;gap:3px;line-height:1}
 .title b{font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
 .title em{font:400 11px/1 var(--sans);font-style:normal;color:#A0AEC0}
-header{position:relative;display:flex;align-items:baseline;gap:1rem;padding:1.5rem 2.5rem;
+/* Three columns, so the mark is centred against the bar rather than against
+   whatever sits beside it: back on the left, the company in the middle, where
+   you are on the right. */
+header{position:relative;display:grid;grid-template-columns:1fr auto 1fr;
+       align-items:center;gap:1rem;padding:1rem 2.5rem;
        border-bottom:1px solid rgba(205,127,50,.28);background:#001F3F;
        --ink:#F7FAFC; --mute:#A0AEC0; --dim:#A0AEC0; color:#F7FAFC}
 /* Centered independent of how wide the title or the tabs are, positioned
    rather than a flex child that would shove its neighbours. Full strength,
    not dimmed — the reference never fades this mark, and doing it here read
    as washed out next to the real thing. */
-.legacy-brand{text-decoration:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-       display:flex;align-items:center;gap:.5rem;pointer-events:none}
+.brand{justify-self:center;display:flex;align-items:center;gap:9px}
+` + footerCSS + `
 .brand svg{display:block}
 /* Block children, not <b><br><small> — a bare <br> takes the browser's
    default line-height, which the reference component never touches (it
@@ -149,7 +152,7 @@ a:hover{border-bottom-color:var(--bronze)}
 [hidden]{display:none!important}
 /* One page, two tabs. The charts are not a different product and should not
    look like one: same bar, same bronze, no second logo to explain. */
-nav.tabs{margin-left:auto;display:flex;gap:.25rem;align-self:center}
+nav.tabs{justify-self:end;margin-left:auto;display:flex;gap:.25rem;align-self:center}
 .tab-link{text-decoration:none;display:inline-flex;align-items:center}
 .tabs button,.tabs .tab-link{background:transparent;border:1px solid transparent;border-radius:2px;
   padding:.45rem .9rem;color:var(--mute);cursor:pointer;
@@ -163,27 +166,29 @@ nav.tabs button[aria-selected="true"]{background:var(--bronze-wash);
 <!-- Same mark, same bow-and-arrow path, as dokimos.chiron.systems — the light
      variant, since this header is dark. Static: the animation there is for a
      page somebody arrives at once, not a bar redrawn every refresh. -->
-<a class="home" href="https://dokimos.chiron.systems">dokimos</a>
-<span class="me">
-  <!-- Ammit weighed the heart against the feather of Ma'at and ate the ones that
-       came up heavy: a beam, two pans, the feather on one and the heart on the
-       other. -->
-  <svg class="scales" width="30" height="30" viewBox="0 0 40 40" aria-hidden="true">
-    <g fill="none" stroke="#CD7F32" stroke-width="1.7"
-       stroke-linecap="round" stroke-linejoin="round">
-      <path d="M20 7v22"/>
-      <path d="M20 30h-5.5M20 30h5.5"/>
-      <path d="M7 12h26"/>
-      <path d="M7 12l-3.5 7a3.9 3.9 0 0 0 7 0z"/>
-      <path d="M33 12l-3.5 7a3.9 3.9 0 0 0 7 0z"/>
-      <circle cx="20" cy="8.2" r="1.7" fill="#CD7F32" stroke="none"/>
+<a class="home" href="https://dokimos.chiron.systems">back</a>
+<span class="brand" aria-hidden="true">
+  <svg width="30" height="27" viewBox="0 0 180 160">
+    <defs>
+      <linearGradient id="brandArrow" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#CD7F32" stop-opacity="0"/>
+        <stop offset="40%" stop-color="#CD7F32" stop-opacity=".4"/>
+        <stop offset="85%" stop-color="#CD7F32" stop-opacity=".9"/>
+        <stop offset="100%" stop-color="#CD7F32"/>
+      </linearGradient>
+      <mask id="brandCut">
+        <rect width="180" height="160" fill="#fff"/>
+        <line x1="5" y1="80" x2="180" y2="80" stroke="#000" stroke-width="15" stroke-linecap="round"/>
+      </mask>
+    </defs>
+    <g transform="rotate(-30 90 80)">
+      <path d="M 58 18 C 115 20, 150 45, 150 80 C 150 115, 115 140, 58 142
+               C 105 135, 128 110, 128 80 C 128 50, 105 25, 58 18 Z"
+            fill="#F7FAFC" mask="url(#brandCut)"/>
+      <path d="M 10 80 L 165 77.5 L 175 80 L 165 82.5 Z" fill="url(#brandArrow)"/>
     </g>
-    <path d="M7 18.4c0-2.2 1-3.9 2.2-4.6" stroke="#F7FAFC" stroke-width="1.2"
-          stroke-linecap="round" fill="none" opacity=".85"/>
-    <path d="M33 18.6a2.3 2.3 0 0 1 1.6-2.1" stroke="#F7FAFC" stroke-width="1.2"
-          stroke-linecap="round" fill="none" opacity=".85"/>
   </svg>
-  <span class="title"><b>ammit</b><em>the scales, the record, and the eating</em></span>
+  <span class="brand-text"><b>CHIRON</b><small>SYSTEMS</small></span>
 </span>
 <nav class="tabs" role="tablist">
   <button id="tab-scales" role="tab" aria-selected="true">Limits</button>
@@ -377,7 +382,7 @@ async function refresh() {
 }
 
 load(); refresh(); setInterval(refresh, 10000);
-</script></body></html>`
+</script>` + footerHTML() + `</body></html>` }
 
 // serveUI wires the page and the routes it edits the config through.
 func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
@@ -387,7 +392,7 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		io.WriteString(w, strings.ReplaceAll(page, "{{charts}}", chartsURL))
+		io.WriteString(w, strings.ReplaceAll(pageHTML(), "{{charts}}", chartsURL))
 	})
 
 	mux.HandleFunc("GET /limits.yml", func(w http.ResponseWriter, r *http.Request) {
