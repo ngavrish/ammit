@@ -36,6 +36,9 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
 #bar{position:sticky;top:81px;z-index:25;padding:9px 24px;
   background:var(--raised);border-bottom:1px solid var(--hair);
   display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#tz{font:400 12px/1 var(--mono);color:var(--slate);background:var(--ground);
+  border:1px solid var(--hair);border-radius:8px;padding:7px 9px;cursor:pointer}
+#tz:hover{border-color:var(--bronze);color:var(--bronze)}
 #bar>button{font:inherit;font-size:12.5px;color:var(--ink);
   background:var(--ground);border:1px solid var(--hair);border-radius:8px;
   padding:7px 11px;cursor:pointer}
@@ -174,6 +177,7 @@ tbody tr:hover{background:var(--bronze-wash)}
     <button class=tick data-s=3600>1h</button>
   </nav>
   <button id=refresh title="run every query again now">refresh</button>
+  <select id=tz title="which clock the times are read in"></select>
   <span id=note></span>
 </div>
 
@@ -185,6 +189,33 @@ const COLORS=["#CD7F32","#0EA5E9","#22C55E","#FB923C","#EF4444","#8B5CF6",
   "#0891B2","#CA8A04","#2563EB","#DB2777"];
 const main=document.getElementById("main");
 let panels=[];
+
+// Which clock the axis is read in. uPlot draws in whatever the browser thinks
+// local is, and a browser in a container thinks UTC — so a run at seven in the
+// evening was labelled five, with nothing on the page saying which.
+const HERE=Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC";
+const ZONES=[...new Set([HERE,"UTC","Europe/Berlin","Europe/Paris","Europe/London",
+  "Europe/Moscow","America/New_York","America/Los_Angeles","Asia/Tokyo"])];
+let zone = localStorage.getItem("ammit.tz") || HERE;
+
+function fillZones(){
+  const sel=document.getElementById("tz");
+  sel.innerHTML=ZONES.map(z=>'<option value="'+z+'"'+(z===zone?" selected":"")+'>'+
+    z.replace(/_/g," ")+(z===HERE?" (this machine)":"")+'</option>').join("");
+  sel.onchange=()=>{ zone=sel.value; localStorage.setItem("ammit.tz",zone); load(); };
+}
+
+// uPlot hands the axis a moment and asks for a label; this reads it in the
+// chosen zone rather than the browser's.
+function tzFmt(){
+  const day=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short"});
+  const min=new Intl.DateTimeFormat("en-GB",{timeZone:zone,hour:"2-digit",minute:"2-digit",hour12:false});
+  return (u,splits)=>splits.map((t,i)=>{
+    const d=new Date(t*1000);
+    const hm=min.format(d);
+    return (i===0||hm==="00:00") ? hm+"\n"+day.format(d) : hm;
+  });
+}
 
 function hours(){
   const on=document.querySelector(".span.on");
@@ -277,7 +308,8 @@ function drawSeries(box,payload){
     // chart labelled three hours was drawing twenty-four and saying so along its
     // own axis.
     scales:{x:{time:true,range:()=>[payload.from/1000, payload.to/1000]}},
-    axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:34},
+    axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:44,
+           values:tzFmt()},
           // Wide enough for the number. Left at its default the axis cut its own
           // labels — a chart of turns per run read "0,000" down the side.
           {stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:74,
@@ -380,6 +412,7 @@ function sink(){
 }
 
 async function boot(){
+  if(!document.getElementById("tz").options.length) fillZones();
   // The filter group collapses whole, so the row cannot half-empty and reflow.
   const picking = scope==="runs" && !chosen;
   document.getElementById("filters").style.display=picking?"flex":"none";
