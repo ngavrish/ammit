@@ -277,15 +277,24 @@ function runParam(){ return chosen?"&run="+encodeURIComponent(chosen):"" }
 // The series come back as rows of (time, metric, value) — one long table, many
 // lines. uPlot wants a column per line over one shared clock, so the rows are
 // pivoted here and gaps are left as nulls rather than joined across.
+// Seconds or milliseconds, whichever the query happened to return.
+//
+// Most of them select e.at, which is unix seconds; the window travels in
+// milliseconds because that is what Grafana's macros were written in. Dividing
+// everything by a thousand sent the seconds to 1970, and while the scale
+// followed the data that was invisible — the axis was wrong and the line was
+// there. Pinned to the window, the line left the chart entirely.
+const secs = t => t > 1e12 ? t/1000 : t;
+
 function pivot(cols,rows){
   const ti=cols.indexOf("time"),mi=cols.indexOf("metric"),vi=cols.indexOf("value");
   if(ti<0||vi<0) return null;
-  const times=[...new Set(rows.map(r=>+r[ti]))].sort((a,b)=>a-b);
+  const times=[...new Set(rows.map(r=>secs(+r[ti])))].sort((a,b)=>a-b);
   const at=new Map(times.map((t,i)=>[t,i]));
   const names=mi<0?["value"]:[...new Set(rows.map(r=>String(r[mi])))];
   const data=[times,...names.map(()=>new Array(times.length).fill(null))];
   for(const r of rows){
-    const i=at.get(+r[ti]); const j=mi<0?0:names.indexOf(String(r[mi]));
+    const i=at.get(secs(+r[ti])); const j=mi<0?0:names.indexOf(String(r[mi]));
     if(i!=null&&j>=0) data[j+1][i]=r[vi]==null?null:+r[vi];
   }
   return {data,names};
@@ -323,7 +332,7 @@ function drawSeries(box,payload){
     }))],
   };
   box.innerHTML="";
-  new uPlot(opts,p.data.map((c,i)=>i===0?c.map(t=>t/1000):c),box);
+  new uPlot(opts,p.data,box);
 }
 
 function drawTable(box,payload){
