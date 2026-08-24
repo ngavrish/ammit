@@ -659,7 +659,7 @@ lifetime = {"panels": [
               "go and read, and the shape over weeks is the only thing that says "
               "whether any of this is improving.",
      "queries": [one("""
-        SELECT cast(strftime('%s', date(finished,'unixepoch')) AS INTEGER) AS time,
+        SELECT cast(strftime('%s', date(finished,'unixepoch')) AS INTEGER)*1000 AS time,
                coalesce(nullif(verdict,''),'(none)') AS metric, count(*) AS value
         FROM runs WHERE finished IS NOT NULL GROUP BY 1,2 ORDER BY 1""")]},
 
@@ -668,11 +668,11 @@ lifetime = {"panels": [
               "change made runs cheaper; the total is the one that answers "
               "whether it mattered.",
      "queries": [one("""
-        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER) AS time,
+        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time,
                'spent that day' AS metric, round(sum(usd),2) AS value
         FROM runs GROUP BY 1
         UNION ALL
-        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER),
+        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000,
                'average per run', round(avg(usd),2) FROM runs GROUP BY 1
         ORDER BY 1""")]},
 
@@ -681,11 +681,11 @@ lifetime = {"panels": [
               "calls: a tool call was reported as a turn for a while and the "
               "number ran two to three times over.",
      "queries": [one("""
-        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER) AS time,
+        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time,
                'average per run' AS metric, round(avg(turns),0) AS value
         FROM runs WHERE turns > 0 GROUP BY 1
         UNION ALL
-        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER),
+        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000,
                'the longest that day', max(turns) FROM runs WHERE turns > 0
         GROUP BY 1 ORDER BY 1""")]},
 
