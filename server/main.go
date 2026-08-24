@@ -1453,6 +1453,27 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]any{"quiet_allowed": quiet, "running": out})
 	})
 
+	// What the services themselves said. Their own logs lived in their
+	// containers, which are recreated by every deploy — so the record of a
+	// failure outlived the failure by minutes.
+	mux.HandleFunc("GET /logs", func(w http.ResponseWriter, r *http.Request) {
+		where, args := "kind='service_log'", []any{}
+		if run := r.URL.Query().Get("run"); run != "" {
+			where, args = where+" AND run=?", append(args, run)
+		}
+		if svc := r.URL.Query().Get("service"); svc != "" {
+			where += " AND json_extract(payload,'$.service') = ?"
+			args = append(args, svc)
+		}
+		rows2json(w, `SELECT at, run,
+		              json_extract(payload,'$.service')  AS service,
+		              json_extract(payload,'$.level')    AS level,
+		              json_extract(payload,'$.logger')   AS logger,
+		              json_extract(payload,'$.text')     AS text
+		              FROM events WHERE `+where+`
+		              ORDER BY id DESC LIMIT 500`, args...)
+	})
+
 	mux.HandleFunc("GET /judgements", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT * FROM judgements ORDER BY id DESC LIMIT 200`)
 	})
