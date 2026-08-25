@@ -5,3 +5,6 @@ dist/
 .venv/
 data/
 *.db
+
+# Build output. It got committed once because a build ran in the tree.
+server/ammit
