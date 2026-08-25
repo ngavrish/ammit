@@ -354,7 +354,14 @@ func store(e event) {
 		//
 		// Undershoot is the other half of the same job. A run is here to do
 		// work, and one that finished without taking a turn did not.
-		judgeEmptyRun(e.s("run"), e.s("verdict"), e.s("summary"))
+		// In a goroutine, because store() holds mu with a defer and both
+		// judgeEmptyRun and judge() take it themselves. Called inline, the first
+		// run_end after this shipped locked the watchdog and every event behind
+		// it: /runs stopped answering, the deploy refused rather than guess, and
+		// nothing was judged again until the container was restarted. A mutex in
+		// Go is not reentrant and this file locks in a dozen places — anything
+		// called from inside store() must take the lock for itself, later.
+		go judgeEmptyRun(e.s("run"), e.s("verdict"), e.s("summary"))
 	case "gate":
 		// The round is counted here rather than trusted from the caller: a
 		// pipeline knows what it found, and this service knows how many times it
