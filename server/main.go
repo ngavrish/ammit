@@ -484,6 +484,10 @@ func endsRun(conf Config, action string) bool {
 	return false
 }
 
+// {word} and nothing else: a substituted payload carries JSON braces of its
+// own — {"key":"APF-1934"} — and those are not holes.
+var placeholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
+
 func act(name string, conf Config, ctx map[string]string) string {
 	tmpl := conf.str("commands", name, "")
 	if tmpl == "" {
@@ -491,6 +495,22 @@ func act(name string, conf Config, ctx map[string]string) string {
 	}
 	for key, value := range ctx {
 		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", value)
+	}
+	// A hole nobody filled is not a command.
+	//
+	// The session-timeout branch set ctx["session"] and never ctx["agent"], so
+	// retry_session went out asking the worker to retry a session literally
+	// named "{agent}". It matched nothing — "retry session {agent} -> 0 wait(s)"
+	// — ten times on APF-1934, and the record said the action had been applied.
+	// A limit that fires and does nothing is worse than one that does not fire:
+	// the row says it was handled.
+	//
+	// This was found and fixed once already, for requests; the comment saying so
+	// sits forty lines above the branch where it survived. So the check belongs
+	// here, once, rather than in each branch that has to remember.
+	if hole := placeholder.FindString(tmpl); hole != "" {
+		return "refused: " + hole + " was never filled — " + name +
+			" would have been a no-op"
 	}
 	if dryRun {
 		return "[dry run] " + tmpl
@@ -1136,7 +1156,15 @@ func weigh(conf Config) {
 			for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
 				if age > limit && !recently("timeouts.session", session, limit) {
 					action := conf.str("actions", "on_session_timeout", "warn")
+					// A session is keyed agent@branch by the client, which is
+					// the only place the agent's name appears here. Split it
+					// rather than send the whole key: the worker's control
+					// handle is addressed by agent.
 					ctx["session"] = session
+					ctx["agent"], ctx["branch"] = session, ""
+					if at := strings.Index(session, "@"); at >= 0 {
+						ctx["agent"], ctx["branch"] = session[:at], session[at+1:]
+					}
 					judge("session", r.run, session, "timeouts.session", limit, age,
 						action, act(action, conf, ctx))
 				}
