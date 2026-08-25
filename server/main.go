@@ -342,6 +342,19 @@ func store(e event) {
 		db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
 			at, e.s("verdict"), e.s("summary"), e.s("run"))
 		db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, at, e.s("run"))
+		// A run that ended having done nothing.
+		//
+		// Every rule here is about overshoot — too many turns, too long, too
+		// much money — and a run that dies a minute in breaks none of them. It
+		// spends nothing. It is, on every number this service watches, an
+		// exemplary run. One ended on a NameError ninety seconds after it
+		// started, wrote its verdict, and nothing anywhere said a word; it was
+		// noticed eleven minutes later by somebody watching a turn counter that
+		// was never going to move.
+		//
+		// Undershoot is the other half of the same job. A run is here to do
+		// work, and one that finished without taking a turn did not.
+		judgeEmptyRun(e.s("run"), e.s("verdict"), e.s("summary"))
 	case "gate":
 		// The round is counted here rather than trusted from the caller: a
 		// pipeline knows what it found, and this service knows how many times it
@@ -487,6 +500,48 @@ func endsRun(conf Config, action string) bool {
 // {word} and nothing else: a substituted payload carries JSON braces of its
 // own — {"key":"APF-1934"} — and those are not holes.
 var placeholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
+
+// judgeEmptyRun records a run that finished having taken no turns.
+//
+// Read from the table rather than from the event: the client's run_end carries
+// its own count of steps, and the count that matters is what actually arrived
+// here. A run whose events never reached this service is exactly the case worth
+// catching, and asking the client about it asks the wrong witness.
+func judgeEmptyRun(run, verdict, summary string) {
+	if run == "" {
+		return
+	}
+	conf := loadConfig(env("AMMIT_CONFIG", "/config/limits.yml"))
+	floor, ok := conf.num("limits", "turns_per_run_min")
+	if !ok {
+		floor = 1
+	}
+	if floor <= 0 {
+		return
+	}
+	var turns float64
+	var started, finished sql.NullFloat64
+	mu.Lock()
+	db.QueryRow(`SELECT coalesce(turns,0), started, finished FROM runs WHERE run=?`,
+		run).Scan(&turns, &started, &finished)
+	mu.Unlock()
+	if turns >= floor {
+		return
+	}
+	action := conf.str("actions", "on_turns_min", "warn")
+	ctx := map[string]string{"run": run, "verdict": verdict, "summary": summary}
+	for k, v := range conf["context"] {
+		ctx[k] = v
+	}
+	lived := 0.0
+	if started.Valid && finished.Valid {
+		lived = finished.Float64 - started.Float64
+	}
+	judge("run", run, strings.TrimSpace(verdict+" "+summary), "limits.turns_per_run_min",
+		floor, turns, action, act(action, conf, ctx))
+	log.Printf("ammit: run %s finished after %.0fs having taken %.0f turns: %s",
+		run, lived, turns, summary)
+}
 
 func act(name string, conf Config, ctx map[string]string) string {
 	tmpl := conf.str("commands", name, "")
