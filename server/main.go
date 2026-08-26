@@ -121,6 +121,21 @@ CREATE TABLE IF NOT EXISTS calls (
     seconds   REAL DEFAULT 0,
     ok        INTEGER DEFAULT 1
 );
+
+-- The phase sequence a run actually executed.
+--
+-- Two runs of one ticket were compared on turns and money and the conclusion
+-- was wrong, because their flows differed and nothing recorded it: one had the
+-- designer merged into the implementer, the other did not, and finding that out
+-- meant reading commit diffs of a file the orchestrator rewrites itself. A
+-- flow is a property of a run. It belongs here, beside the turns and the
+-- dollars, written when the run opens.
+CREATE TABLE IF NOT EXISTS flows (
+    run    TEXT PRIMARY KEY,
+    at     REAL,
+    mode   TEXT,
+    phases TEXT
+);
 CREATE INDEX IF NOT EXISTS calls_run ON calls (run, signature);
 CREATE INDEX IF NOT EXISTS calls_target ON calls (run, target);
 
@@ -338,6 +353,11 @@ func store(e event) {
 		// where it learns the ticket's name and its real start.
 		db.Exec(`INSERT OR REPLACE INTO runs (run, name, started) VALUES (?,?,?)`,
 			e.s("run"), e.s("name"), at)
+	case "flow":
+		phases, _ := json.Marshal(e["phases"])
+		db.Exec(`INSERT OR REPLACE INTO flows (run, at, mode, phases)
+		         VALUES (?,?,?,?)`,
+			e.s("run"), at, e.s("mode"), string(phases))
 	case "run_end":
 		db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
 			at, e.s("verdict"), e.s("summary"), e.s("run"))
@@ -1447,6 +1467,18 @@ func main() {
 
 	// Every call, newest first. ?run= narrows it; ?repeats=1 keeps only the ones
 	// that had already run — which is the question this table was added for.
+	// What a run executed, asked for by run or listed newest first. The point of
+	// keeping it is comparing two runs and knowing whether they ran the same
+	// thing; that question is a query now rather than a git archaeology.
+	mux.HandleFunc("GET /flows", func(w http.ResponseWriter, r *http.Request) {
+		where, args := "1=1", []any{}
+		if run := r.URL.Query().Get("run"); run != "" {
+			where, args = "run=?", []any{run}
+		}
+		rows2json(w, `SELECT * FROM flows WHERE `+where+` ORDER BY at DESC LIMIT 50`,
+			args...)
+	})
+
 	mux.HandleFunc("GET /calls", func(w http.ResponseWriter, r *http.Request) {
 		where, args := "1=1", []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
