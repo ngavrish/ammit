@@ -636,6 +636,15 @@ func finish(run, verdict, summary string) {
 // what it is — closed because the run ended, not because the work finished —
 // and never mistaken for a clean one: ok is false and the reason says who did
 // it.
+// notClosed drops the spans ammit closed on a run's behalf, unless asked for.
+// They carry an age where a duration belongs and it is measured in hours.
+func notClosed(r *http.Request) string {
+	if r.URL.Query().Get("closed") != "" {
+		return ""
+	}
+	return " AND ifnull(json_extract(payload,'$.error'),'') NOT LIKE 'closed by ammit%'"
+}
+
 func closeSpansOf(run string, at float64, why string) {
 	pairs := []struct{ start, end, column string }{
 		{"request_start", "request_end", "session"},
@@ -1537,8 +1546,16 @@ func main() {
 	//
 	// ?slow= puts the longest first instead of the newest, which is the order
 	// you want the moment you are asking this question at all.
+	//
+	// Spans ammit closed itself are not requests and are left out. A run whose
+	// worker was killed leaves its spans open, ammit shuts them at the run's
+	// end and records the age as the duration, and those ages are hours: the
+	// first answer this endpoint ever gave was five "requests" averaging
+	// twenty-five hours, which is a killed run's bookkeeping sorted to the top
+	// of a list about slowness. ?closed= brings them back for anyone asking
+	// about the closing rather than about the waiting.
 	mux.HandleFunc("GET /requests", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "kind='request_end'", []any{}
+		where, args := "kind='request_end'"+notClosed(r), []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
 			where, args = where+" AND run=?", append(args, run)
 		}
@@ -1563,7 +1580,7 @@ func main() {
 	// phase whose bytes-per-second is an order off its neighbours' is not slow
 	// because the answers are long.
 	mux.HandleFunc("GET /requests/by-agent", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "kind='request_end'", []any{}
+		where, args := "kind='request_end'"+notClosed(r), []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
 			where, args = where+" AND run=?", append(args, run)
 		}
