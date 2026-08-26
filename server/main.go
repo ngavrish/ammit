@@ -1525,6 +1525,60 @@ func main() {
 		              HAVING times > 1 ORDER BY times DESC LIMIT 500`, args...)
 	})
 
+	// What waiting on the model actually bought. A request_end carries how long
+	// it took and how much came back, and until now both went into the events
+	// table and stayed there: the client had been sending the size for a week
+	// and nothing could read it.
+	//
+	// The pair is the point. Sixty-seven requests of one run's ten thousand took
+	// a quarter of all the time spent waiting, every one of them ok and without
+	// an error, and there was no way to tell nine minutes of long answer from
+	// nine minutes of stall. Now there is — the row says both.
+	//
+	// ?slow= puts the longest first instead of the newest, which is the order
+	// you want the moment you are asking this question at all.
+	mux.HandleFunc("GET /requests", func(w http.ResponseWriter, r *http.Request) {
+		where, args := "kind='request_end'", []any{}
+		if run := r.URL.Query().Get("run"); run != "" {
+			where, args = where+" AND run=?", append(args, run)
+		}
+		if ph := r.URL.Query().Get("phase"); ph != "" {
+			where, args = where+" AND phase=?", append(args, ph)
+		}
+		order := "at DESC"
+		if r.URL.Query().Get("slow") != "" {
+			order = "seconds DESC"
+		}
+		rows2json(w, `SELECT at, run, agent, branch, phase, session,
+		              json_extract(payload,'$.seconds') AS seconds,
+		              json_extract(payload,'$.out')     AS out,
+		              json_extract(payload,'$.ok')      AS ok,
+		              json_extract(payload,'$.error')   AS error
+		              FROM events WHERE `+where+`
+		              ORDER BY `+order+` LIMIT 2000`, args...)
+	})
+
+	// The same requests added up per agent, which is where the question starts:
+	// who waits, for how long in total, and what they get per second of it. A
+	// phase whose bytes-per-second is an order off its neighbours' is not slow
+	// because the answers are long.
+	mux.HandleFunc("GET /requests/by-agent", func(w http.ResponseWriter, r *http.Request) {
+		where, args := "kind='request_end'", []any{}
+		if run := r.URL.Query().Get("run"); run != "" {
+			where, args = where+" AND run=?", append(args, run)
+		}
+		rows2json(w, `SELECT agent, phase, count(*) AS times,
+		              round(sum(json_extract(payload,'$.seconds')),1) AS seconds,
+		              round(avg(json_extract(payload,'$.seconds')),1) AS mean,
+		              sum(json_extract(payload,'$.out')) AS out,
+		              round(sum(json_extract(payload,'$.out')) /
+		                    max(sum(json_extract(payload,'$.seconds')),1), 1)
+		                AS out_per_second
+		              FROM events WHERE `+where+`
+		              GROUP BY agent, phase
+		              ORDER BY seconds DESC LIMIT 500`, args...)
+	})
+
 	// Is anything running right now — asked by whoever is about to disturb it.
 	//
 	// Not "is there a row without a finish": a run whose worker was killed leaves
