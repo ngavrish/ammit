@@ -119,7 +119,13 @@ CREATE TABLE IF NOT EXISTS calls (
     repeat    INTEGER DEFAULT 1,   -- how many times this signature has run in this run
     on_target INTEGER DEFAULT 1,   -- and how many times anything has touched this target
     seconds   REAL DEFAULT 0,
-    ok        INTEGER DEFAULT 1
+    ok        INTEGER DEFAULT 1,
+    -- What the caller said it was for. Arbitrary python has to name a reason
+    -- from a fixed list, and a reason nobody records is a reason nobody can
+    -- check afterwards: the guardrail refuses at the moment of the call, and
+    -- this is what lets a gate ask, later, whether the reasons a phase gave
+    -- were the reasons it had.
+    why       TEXT DEFAULT ''
 );
 
 -- The phase sequence a run actually executed.
@@ -412,11 +418,11 @@ func store(e event) {
 			ok = 0
 		}
 		db.Exec(`INSERT INTO calls (at, run, phase, branch, agent, session, tool,
-		         kind, target, signature, repeat, on_target, seconds, ok)
-		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		         kind, target, signature, repeat, on_target, seconds, ok, why)
+		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("agent"),
 			e.s("session"), e.s("tool"), kind, target, signature,
-			repeat+1, onTarget+1, e.f("seconds"), ok)
+			repeat+1, onTarget+1, e.f("seconds"), ok, e.s("why"))
 	case "spend":
 		db.Exec(`UPDATE runs SET usd = coalesce(usd,0) + ? WHERE run=?`,
 			e.f("usd"), e.s("run"))
@@ -1352,6 +1358,20 @@ func main() {
 	}
 	if _, err := db.Exec(schema); err != nil {
 		log.Fatalf("ammit: could not make the tables: %v", err)
+	}
+	// Columns added to a table that already exists. CREATE TABLE IF NOT EXISTS
+	// does nothing to a database that has the table, so a new column arrives
+	// only this way. Each is tried and its error ignored: "duplicate column
+	// name" is the expected outcome on every start but the first, and a
+	// migration that refuses to be run twice has to be tracked, which is a
+	// second thing to get wrong.
+	for _, add := range []string{
+		`ALTER TABLE calls ADD COLUMN why TEXT DEFAULT ''`,
+	} {
+		if _, err := db.Exec(add); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") {
+			log.Printf("ammit: %s (%v)", add, err)
+		}
 	}
 
 	// Readings on their own thread. Judging must never wait for a machine
