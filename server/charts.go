@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -38,10 +40,75 @@ type panel struct {
 	Unit    string   `json:"unit"`
 	Height  int      `json:"height"`
 	Queries []string `json:"queries"`
+	Hidden  bool     `json:"hidden,omitempty"`
+	Custom  bool     `json:"custom,omitempty"`
 }
 
 type chartSpec struct {
 	Panels []panel `json:"panels"`
+}
+
+// What the person watching added or took away, kept beside limits.yml for the
+// same reason the limits are: a chart worth adding during one run is worth
+// having on the next machine, and a file in deploy/ is a diff somebody reads
+// rather than a browser's local storage nobody can.
+type localSpec struct {
+	Hidden []string `json:"hidden"`
+	Panels []panel  `json:"panels"`
+}
+
+var chartsLocalPath = filepath.Join(
+	filepath.Dir(env("AMMIT_CONFIG", "/config/limits.yml")), "charts-local.json")
+
+func localOf() localSpec {
+	var l localSpec
+	if body, err := os.ReadFile(chartsLocalPath); err == nil {
+		_ = json.Unmarshal(body, &l)
+	}
+	if l.Hidden == nil {
+		l.Hidden = []string{}
+	}
+	if l.Panels == nil {
+		l.Panels = []panel{}
+	}
+	return l
+}
+
+// A chart is a reader. The page that saves these runs on the same socket that
+// edits the limits, so this is not a trust boundary — it is a seatbelt against
+// a typo: a query that starts any other way than a SELECT gets refused before
+// it is a file, not discovered as a schema change later.
+func readsOnly(q string) bool {
+	head := strings.ToUpper(strings.TrimSpace(q))
+	return strings.HasPrefix(head, "SELECT") || strings.HasPrefix(head, "WITH")
+}
+
+// merged is the one spec both /charts/panels and /charts/data read, so an
+// index into it means the same panel to both. Built-ins first, additions after
+// — hiding marks rather than removes, precisely so the numbering never moves.
+// Additions belong to the run pages; the lifetime page is a different question
+// (one row per run, no window) and gets only the hiding.
+func merged(lifetime bool) chartSpec {
+	base := panelsOf()
+	if lifetime {
+		base = lifetimeOf()
+	}
+	loc := localOf()
+	away := map[string]bool{}
+	for _, t := range loc.Hidden {
+		away[t] = true
+	}
+	for i := range base.Panels {
+		base.Panels[i].Hidden = away[base.Panels[i].Title]
+	}
+	if !lifetime {
+		for _, p := range loc.Panels {
+			p.Custom = true
+			p.Hidden = away[p.Title]
+			base.Panels = append(base.Panels, p)
+		}
+	}
+	return base
 }
 
 func panelsOf() chartSpec {
@@ -60,10 +127,8 @@ func lifetimeOf() chartSpec {
 // about every run there has been — so the macros are filled with the widest
 // possible range rather than being left in the SQL to fail.
 func specFor(r *http.Request) (chartSpec, bool) {
-	if r.URL.Query().Get("scope") == "lifetime" {
-		return lifetimeOf(), true
-	}
-	return panelsOf(), false
+	lifetime := r.URL.Query().Get("scope") == "lifetime"
+	return merged(lifetime), lifetime
 }
 
 // window turns Grafana's macros into the numbers they stood for. The queries
@@ -156,11 +221,44 @@ func rows(sql string) map[string]any {
 func serveCharts(mux *http.ServeMux) {
 	mux.HandleFunc("GET /charts/panels", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Query().Get("scope") == "lifetime" {
-			w.Write(lifetimeSpec)
+		spec, _ := specFor(r)
+		json.NewEncoder(w).Encode(spec)
+	})
+
+	mux.HandleFunc("GET /charts/local", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(localOf())
+	})
+
+	mux.HandleFunc("POST /charts/local", func(w http.ResponseWriter, r *http.Request) {
+		var l localSpec
+		if err := json.NewDecoder(r.Body).Decode(&l); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		w.Write(panelSpec)
+		for _, p := range l.Panels {
+			if strings.TrimSpace(p.Title) == "" {
+				http.Error(w, "a panel needs a title", http.StatusBadRequest)
+				return
+			}
+			if len(p.Queries) == 0 {
+				http.Error(w, "a panel needs a query", http.StatusBadRequest)
+				return
+			}
+			for _, q := range p.Queries {
+				if !readsOnly(q) {
+					http.Error(w, "a chart only reads: the query must start with SELECT or WITH",
+						http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		body, _ := json.MarshalIndent(l, "", " ")
+		if err := os.WriteFile(chartsLocalPath, append(body, '\n'), 0o644); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("GET /charts/data", func(w http.ResponseWriter, r *http.Request) {

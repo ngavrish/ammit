@@ -148,6 +148,34 @@ tbody tr:hover{background:var(--bronze-wash)}
 .back{color:var(--bronze);cursor:pointer;font-size:12.5px;font-weight:600;
   display:inline-block;margin-bottom:4px}
 .back:hover{text-decoration:underline}
+
+/* The panel's own controls: quiet words, not buttons. They sit in the title
+   line because that is what they act on. */
+.pact{font:600 10px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--mute);cursor:pointer;margin-left:12px;vertical-align:middle}
+.pact:hover{color:var(--bronze)}
+.pact.danger:hover{color:var(--bad)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1px dashed var(--hair);border-radius:8px;padding:6px 11px;
+  font:12px/1 var(--sans);color:var(--slate);cursor:pointer}
+.chip:hover{border-color:var(--bronze);color:var(--bronze)}
+
+dialog#dlg{border:1px solid var(--hair);border-radius:10px;padding:18px 20px;
+  width:min(760px,92vw);box-shadow:0 8px 40px rgba(15,21,32,.18)}
+#dlg::backdrop{background:rgba(15,21,32,.35)}
+#dlg h3{margin:0 0 4px;font:700 14px var(--sans);color:var(--navy)}
+#dlg .hint{color:var(--slate);font-size:12px;margin:0 0 8px}
+#dlg label{display:block;font:600 10.5px/1.8 var(--sans);color:var(--slate);
+  text-transform:uppercase;letter-spacing:.06em;margin-top:10px}
+#dlg input,#dlg select,#dlg textarea{width:100%;font:12.5px/1.5 var(--mono);
+  border:1px solid var(--hair);border-radius:6px;padding:7px 9px;color:var(--ink);
+  background:var(--ground)}
+#dlg textarea{min-height:150px;resize:vertical}
+#dlg .actions{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:14px}
+#dlg .actions button{font:600 12px var(--sans);border:1px solid var(--hair);
+  border-radius:8px;background:var(--ground);padding:8px 14px;cursor:pointer}
+#dlg .actions button.go{background:var(--bronze);border-color:var(--bronze);color:#fff}
+#dlgerr{margin-right:auto}
 ` + footerCSS + `
 </style>
 ` + headerHTML(active) + `
@@ -177,11 +205,33 @@ tbody tr:hover{background:var(--bronze-wash)}
     <button class=tick data-s=3600>1h</button>
   </nav>
   <button id=refresh title="run every query again now">refresh</button>
+  <button id=addchart title="a chart of your own, kept in charts-local.json">add chart</button>
   <select id=tz title="which clock the times are read in"></select>
   <span id=note></span>
 </div>
 
 <main id=main></main>
+
+<dialog id=dlg>
+  <h3>A chart of your own</h3>
+  <p class=hint>The query returns <b>time, metric, value</b> — unix seconds, a line
+  name, a number. On a run page it is narrowed to that run by itself. A second
+  query (a limit line, say) goes after a line holding only <b>;;</b></p>
+  <label>title</label><input id=ctitle autocomplete=off>
+  <label>about</label><input id=cabout autocomplete=off>
+  <div style="display:flex;gap:12px">
+    <span style="flex:1"><label>kind</label>
+      <select id=ckind><option>series</option><option>table</option></select></span>
+    <span style="flex:1"><label>unit</label><input id=cunit placeholder="ms"></span>
+  </div>
+  <label>sql</label><textarea id=csql spellcheck=false
+    placeholder="SELECT at AS time, 'probe' AS metric, json_extract(payload,'$.latency_ms') AS value FROM events WHERE kind='netprobe' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1"></textarea>
+  <div class=actions>
+    <span class=err id=dlgerr></span>
+    <button id=dlgcancel>cancel</button>
+    <button class=go id=dlgsave>save</button>
+  </div>
+</dialog>
 ` + footerHTML() + `
 <script>` + uplotJS + `</script>
 <script>
@@ -189,6 +239,23 @@ const COLORS=["#CD7F32","#0EA5E9","#22C55E","#FB923C","#EF4444","#8B5CF6",
   "#0891B2","#CA8A04","#2563EB","#DB2777"];
 const main=document.getElementById("main");
 let panels=[];
+let local=null;
+
+// What was added and what was put away, as the server keeps it. Saved whole:
+// the file is small and a whole write cannot half-apply.
+async function fetchLocal(){
+  local=await (await fetch("/charts/local")).json();
+}
+async function saveLocal(){
+  const r=await fetch("/charts/local",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(local)});
+  if(!r.ok){
+    document.getElementById("note").textContent=await r.text();
+    await fetchLocal();
+    return;
+  }
+  boot();
+}
 
 // Which clock the axis is read in. uPlot draws in whatever the browser thinks
 // local is, and a browser in a container thinks UTC — so a run at seven in the
@@ -434,16 +501,60 @@ async function boot(){
   const head=r?'<div class=back id=back>← every run</div><div class=row>'+
     (r.name||r.run)+" — "+when(r.started)+" — "+(r.verdict||"running")+
     " — "+(r.turns||0)+" turns — $"+(r.usd||0).toFixed(2)+'</div>':"";
+  await fetchLocal();
   main.innerHTML=head+panels.map((p,i)=>p.kind==="row"
     ? '<div class=row>'+p.title+'</div>'
-    : '<section class=panel><h2>'+p.title+'</h2>'+
+    : p.hidden ? '' :
+      '<section class=panel><h2>'+p.title+
+      '<span class=pact data-i='+i+' data-act=hide>hide</span>'+
+      (p.custom?'<span class="pact danger" data-i='+i+' data-act=del>delete</span>':'')+
+      '</h2>'+
       (p.about?'<p>'+p.about.replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;")+'</p>':'')+
       '<div class=plot id=plot-'+i+'></div></section>').join("");
+  const away=panels.filter(p=>p.kind!=="row"&&p.hidden);
+  if(away.length)
+    main.innerHTML+='<div class=row>Hidden ('+away.length+')</div><div class=chips>'+
+      away.map(p=>'<span class=chip data-t="'+p.title.replace(/"/g,"&quot;")+'">'+
+        p.title+'</span>').join("")+'</div>';
+  main.querySelectorAll(".pact").forEach(b=>b.onclick=()=>{
+    const p=panels[+b.dataset.i];
+    if(b.dataset.act==="del"){
+      local.panels=local.panels.filter(x=>x.title!==p.title);
+      local.hidden=local.hidden.filter(t=>t!==p.title);
+    }else if(!local.hidden.includes(p.title)) local.hidden.push(p.title);
+    saveLocal();
+  });
+  main.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
+    local.hidden=local.hidden.filter(t=>t!==c.dataset.t);
+    saveLocal();
+  });
   const back=document.getElementById("back");
   if(back) back.onclick=()=>go("/ammit/runs");
   await load();
 }
 document.getElementById("refresh").onclick=load;
+
+const dlg=document.getElementById("dlg");
+document.getElementById("addchart").onclick=async()=>{
+  if(!local) await fetchLocal();
+  dlg.showModal();
+};
+document.getElementById("dlgcancel").onclick=e=>{e.preventDefault();dlg.close()};
+document.getElementById("dlgsave").onclick=async e=>{
+  e.preventDefault();
+  const v=id=>document.getElementById(id).value.trim();
+  const err=document.getElementById("dlgerr");
+  const queries=v("csql").split(/\n\s*;;\s*\n/).map(x=>x.trim()).filter(Boolean);
+  const p={kind:v("ckind"),title:v("ctitle"),about:v("cabout"),unit:v("cunit"),
+           height:8,queries:queries};
+  if(!p.title){err.textContent="it needs a title";return}
+  if(!queries.length){err.textContent="it needs a query";return}
+  local.panels=local.panels.filter(x=>x.title!==p.title).concat([p]);
+  const r=await fetch("/charts/local",{method:"POST",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify(local)});
+  if(!r.ok){err.textContent=await r.text();await fetchLocal();return}
+  err.textContent="";dlg.close();boot();
+};
 
 // Asking again on a timer. One timer, replaced rather than stacked: setting an
 // interval without clearing the last one is how a page ends up making four
