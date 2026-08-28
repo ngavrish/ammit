@@ -1106,6 +1106,21 @@ func recordLimits(conf Config) {
 func weigh(conf Config) {
 	for _, r := range openRuns() {
 		age := float64(time.Now().UnixNano())/1e9 - r.started
+		// A run whose worker has stopped reporting entirely is not a run to
+		// act on - it is a corpse to close. The worker heartbeats every minute
+		// while it is alive, so a run this quiet has no process behind it: a
+		// stack restart, a kill -9, a hard stop. Judging its orphaned spans
+		// bought two hours of no-op retries on one ghost, and the blind
+		// stop_run it finally earned touched .cancel into the directory the
+		// ticket's NEXT run was using. No commands for the dead: close the
+		// row, say why, move on. Zero disables, like every limit here.
+		if gone, ok := conf.num("timeouts", "worker_gone"); ok && gone > 0 && age > gone {
+			if quiet, _, _ := quietFor(r.run); quiet > gone {
+				finish(r.run, "BLOCKED", fmt.Sprintf(
+					"ammit: worker gone - nothing heard for %.0fs", quiet))
+				continue
+			}
+		}
 		ctx := map[string]string{"run": r.run, "name": r.name,
 			// Which fan-out branch the run was last heard from, so a command can
 			// name one branch instead of taking the whole run down with it.
