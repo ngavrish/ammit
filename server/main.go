@@ -355,6 +355,18 @@ func store(e event) {
 		           SELECT id FROM queue WHERE name = ? AND state = 'running'
 		             AND ifnull(run,'') = '' ORDER BY id LIMIT 1)`,
 			e.s("run"), e.s("name"))
+		// A new run of a ticket supersedes any older run still open under the
+		// same name. The two share one directory (/runs/<name>), and stop_run
+		// is addressed by name: on 28 August a worker restart orphaned a run
+		// mid-flight, its open spans aged in this watchdog for two hours, and
+		// the blind stop_run they finally earned touched .cancel into the
+		// directory the ticket's NEXT run was nine minutes into using — a dead
+		// run's verdict killed the live one. A run that was still open when
+		// its ticket started over was not going to finish; say so and close it.
+		db.Exec(`UPDATE runs SET finished=?, verdict='BLOCKED',
+		         summary='superseded: a newer run of this ticket started'
+		         WHERE name=? AND run<>? AND finished IS NULL`,
+			at, e.s("name"), e.s("run"))
 		// REPLACE, not IGNORE: if an earlier event created the row, this is
 		// where it learns the ticket's name and its real start.
 		db.Exec(`INSERT OR REPLACE INTO runs (run, name, started) VALUES (?,?,?)`,
