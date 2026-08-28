@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
+	"net"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -106,6 +108,31 @@ func percent(text string) float64 {
 	return value
 }
 
+// netProbe is one TLS handshake to the API host, timed. The evening of 28
+// August cost a run three hours: streams died mid-response, hung turns went
+// to 925s at p99 - and the only way to know afterwards was to reverse it out
+// of request spans. A probe on the sampling tick, in the same table as the
+// turns, makes "was it the network" one query, and joins latency against the
+// run's own pace: samples carry the open run, so a chart can put "the probe
+// went to four seconds" and "the turns stopped" on one axis.
+//
+// A handshake, not a ping: it walks DNS, TCP and TLS - the same road every
+// model request takes - and needs no credentials. It cannot see a stream cut
+// mid-response, so a healthy probe beside a sick run still means "look past
+// the network"; a sick probe means stop blaming the code.
+func netProbe(host string) (float64, bool) {
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	started := time.Now()
+	conn, err := tls.DialWithDialer(&dialer, "tcp", host,
+		&tls.Config{ServerName: strings.Split(host, ":")[0]})
+	ms := float64(time.Since(started).Microseconds()) / 1000
+	if err != nil {
+		return ms, false
+	}
+	conn.Close()
+	return ms, true
+}
+
 var lastSample float64
 
 // keepSamples records one reading, no more often than the config asks for, and
@@ -137,6 +164,25 @@ func keepSamples(conf Config) {
 	inRun := ""
 	if open := openRuns(); len(open) == 1 {
 		inRun = open[0].run
+	}
+	if host := conf.str("sample", "net_probe", "api.anthropic.com:443"); host != "" && host != "off" {
+		ms, up := netProbe(host)
+		store(event{
+			"kind": "netprobe", "at": now, "host": host,
+			"latency_ms": ms, "ok": up, "run": inRun,
+		})
+		if limit, has := conf.num("limits", "net_probe_ms"); has && limit > 0 &&
+			(!up || ms > limit) && !recently("limits.net_probe_ms", host, 300) {
+			action := conf.str("actions", "on_net_probe", "warn")
+			ctx := map[string]string{"host": host}
+			for key, value := range conf["context"] {
+				if _, taken := ctx[key]; !taken {
+					ctx[key] = value
+				}
+			}
+			judge("net", inRun, host, "limits.net_probe_ms", limit, ms,
+				action, act(action, conf, ctx))
+		}
 	}
 	for _, s := range sampleMachine(conf.str("sample", "containers", "")) {
 		store(event{

@@ -210,6 +210,7 @@ const HINT = {
   "limits.turns_per_run": "turns one run may take",
   "limits.spin_window": "seconds a session may keep asking the model without touching a tool",
   "limits.spin_requests": "model requests inside that window before it counts as spinning",
+  "limits.net_probe_ms": "a TLS handshake to the API host slower than this is a network worth noting",
   "retention.days": "finished runs older than this move to the archive",
   "retention.dir": "where archives are written",
 };
