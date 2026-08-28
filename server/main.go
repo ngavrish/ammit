@@ -1607,6 +1607,73 @@ func main() {
 		rows2json(w, `SELECT id, at, run, kind, coalesce(phase,'') phase, bytes, path
 		              FROM documents ORDER BY id DESC LIMIT 200`)
 	})
+	// One free-form question against the whole record, for the chat, the CLI
+	// and anybody with curl. SELECT only - the same seatbelt the saved charts
+	// wear - because this service's tables are the pipeline's memory, and a
+	// memory that a query can edit is not a record.
+	mux.HandleFunc("GET /query", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("sql")
+		if q == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sql parameter required"})
+			return
+		}
+		if !readsOnly(q) {
+			writeJSON(w, http.StatusBadRequest,
+				map[string]string{"error": "reads only: the query must start with SELECT or WITH"})
+			return
+		}
+		writeJSON(w, http.StatusOK, rows(q))
+	})
+
+	// The same levers ammit pulls, offered to a hand. The command must be one
+	// limits.yml already names - stop_run, retry_phase, start_run - so a chat
+	// or a CLI can never do anything the config did not spell out, and every
+	// pull is a judgement row with scope "hand": a stop ordered in
+	// conversation reads in the record exactly like one a limit ordered.
+	mux.HandleFunc("POST /act", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Command string `json:"command"`
+			Run     string `json:"run"`
+			Name    string `json:"name"`
+			Phase   string `json:"phase"`
+			Agent   string `json:"agent"`
+			Branch  string `json:"branch"`
+			Session string `json:"session"`
+			Payload string `json:"payload"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Command == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "command is required"})
+			return
+		}
+		conf := loadConfig(confPath)
+		if conf.str("commands", in.Command, "") == "" {
+			writeJSON(w, http.StatusBadRequest,
+				map[string]string{"error": "no command named " + in.Command + " in limits.yml"})
+			return
+		}
+		// Only what the caller actually said: an absent field must stay a hole
+		// so act()'s never-filled guard refuses the command, rather than a
+		// silent "" that turns stop_run into touching /runs//.cancel.
+		ctx := map[string]string{}
+		for key, value := range map[string]string{
+			"run": in.Run, "name": in.Name, "phase": in.Phase,
+			"agent": in.Agent, "branch": in.Branch, "session": in.Session,
+			"payload": in.Payload,
+		} {
+			if value != "" {
+				ctx[key] = value
+			}
+		}
+		for key, value := range conf["context"] {
+			if ctx[key] == "" {
+				ctx[key] = value
+			}
+		}
+		outcome := act(in.Command, conf, ctx)
+		judge("hand", in.Run, in.Name, "hand."+in.Command, 0, 0, in.Command, outcome)
+		writeJSON(w, http.StatusOK, map[string]string{"outcome": outcome})
+	})
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "db": dbPath})
 	})
