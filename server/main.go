@@ -897,6 +897,55 @@ func turnsPerSession(run string) map[string]float64 {
 	return out
 }
 
+// spinningSessions is every open session that keeps asking the model and has
+// not touched a tool for a whole window: at least minRequests request_starts
+// in the trailing window seconds and zero tool calls in the same window.
+//
+// This is the shape a turn count cannot see. The session that motivated it
+// made ninety-seven requests in ten minutes, seventy-two returning nothing,
+// with no tool call and no error anywhere — formally nothing was wrong, so no
+// watchdog reacted, and the phase waited on it while thirteen sibling branches
+// had finished. The two signals together are what tells it from honest work:
+// a session composing one long answer makes a handful of requests, and a
+// session grinding through a suite makes calls — measured across a whole
+// four-hour run, no healthy session ever crossed both lines at once.
+//
+// Returns session key -> requests in the window.
+func spinningSessions(run string, window, minRequests float64) map[string]float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	since := float64(time.Now().UnixNano())/1e9 - window
+	rows, err := db.Query(`
+		SELECT s.session,
+		  (SELECT count(*) FROM events r WHERE r.run=s.run AND r.kind='request_start'
+		     AND coalesce(r.agent,'')=s.agent AND coalesce(r.branch,'')=s.branch
+		     AND r.at>=?) reqs,
+		  (SELECT count(*) FROM events c WHERE c.run=s.run AND c.kind='call'
+		     AND coalesce(c.session,'')=s.session AND c.at>=?) calls
+		FROM (SELECT run, coalesce(session,'') session, coalesce(agent,'') agent,
+		             coalesce(branch,'') branch
+		      FROM events WHERE run=? AND kind='session_start'
+		        AND coalesce(session,'')<>''
+		        AND coalesce(session,'') NOT IN (
+		            SELECT coalesce(session,'') FROM events
+		            WHERE run=? AND kind='session_end')
+		      GROUP BY 2) s`, since, since, run, run)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var session string
+		var reqs, calls float64
+		if err := rows.Scan(&session, &reqs, &calls); err == nil &&
+			calls == 0 && reqs >= minRequests {
+			out[session] = reqs
+		}
+	}
+	return out
+}
+
 // heaviestTurn is the largest single prompt this run has sent recently, and who
 // sent it. Recently rather than ever, because a run is judged on what it is
 // doing now: one heavy turn an hour ago is history, and a limit that keeps
@@ -1111,6 +1160,39 @@ func weigh(conf Config) {
 				if endsRun(conf, action) {
 					finish(r.run, "BLOCKED", fmt.Sprintf(
 						"ammit: %s took %.0f turns in one session", who, turns))
+					break
+				}
+			}
+		}
+		// The spinner the turn count cannot see: requests piling up, no tool
+		// touched. on_session_turns went back to warn because restarting on
+		// the count restarted the sessions that needed the turns; this reads
+		// the signal that change was actually aimed at. Absent or zero window
+		// switches it off, like every limit whose zero is a decision.
+		if window, ok := conf.num("limits", "spin_window"); ok && window > 0 {
+			minreq, ok := conf.num("limits", "spin_requests")
+			if !ok || minreq <= 0 {
+				minreq = 30
+			}
+			for session, reqs := range spinningSessions(r.run, window, minreq) {
+				if recently("limits.session_spin", r.run+session, window) {
+					continue
+				}
+				action := conf.str("actions", "on_session_spin", "retry_session")
+				// The full session key as {agent}, same addressing as the
+				// session timeout above: the worker's control handle accepts
+				// agent@branch and ends exactly this branch's session.
+				ctx["session"] = session
+				ctx["agent"], ctx["branch"] = session, ""
+				if at := strings.Index(session, "@"); at >= 0 {
+					ctx["branch"] = session[at+1:]
+				}
+				judge("session", r.run, session, "limits.session_spin", minreq,
+					reqs, action, act(action, conf, ctx))
+				if endsRun(conf, action) {
+					finish(r.run, "BLOCKED", fmt.Sprintf(
+						"ammit: %s made %.0f requests in %.0fs without touching "+
+							"a tool", session, reqs, window))
 					break
 				}
 			}

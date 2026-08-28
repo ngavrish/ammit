@@ -208,6 +208,8 @@ const HINT = {
   "timeouts.turn": "silence inside one turn — the hang nothing inside the run catches",
   "limits.usd_per_run": "spend on one run",
   "limits.turns_per_run": "turns one run may take",
+  "limits.spin_window": "seconds a session may keep asking the model without touching a tool",
+  "limits.spin_requests": "model requests inside that window before it counts as spinning",
   "retention.days": "finished runs older than this move to the archive",
   "retention.dir": "where archives are written",
 };

@@ -49,6 +49,13 @@ limits:
   # anywhere had an opinion about the middle. Measured over 213 finished
   # sessions: median 1, 99th percentile 64, longest 68. Twice the worst seen.
   turns_per_session: 150
+  # The spinner the turn count cannot see: a session that keeps asking the
+  # model and has not touched a tool for a whole window. Both lines must be
+  # crossed at once — a session composing one long answer makes a handful of
+  # requests, a session grinding a suite makes calls. Zero window switches it
+  # off.
+  spin_window: 600
+  spin_requests: 30
   # What one turn was sent: the system prompt, whatever was inlined into it, and
   # the conversation so far. Cached or not — an allowance is spent on tokens
   # read. A run that spends too much says so in dollars; a run whose prompt is
@@ -86,6 +93,8 @@ actions:
   on_memory: warn
   on_turns: warn
   on_session_turns: warn
+  # The spin detector's answer: restart exactly the session that is spinning.
+  on_session_spin: retry_session
   on_turns_per_run_over: stop_run   # 1600 is a note; 3200 is a run to go and read
   on_turn_tokens: warn
   on_module_timeout: retry_session
