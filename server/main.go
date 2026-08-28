@@ -946,9 +946,15 @@ func quietFor(run string) (float64, string, string) {
 func openPhases(run string) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
+	// Only a phase somebody OPENED counts as open. Any event carries a phase
+	// column — an orchestrator's deploy step logs under phase "envdeploy"
+	// without ever starting a phase of that name — and counting those held a
+	// phantom phase open for a whole run: the deploy finished in fourteen
+	// seconds, the "phase" aged past its limit twice, and stop_phase went out
+	// against a phase no worker had, twice, as a no-op.
 	rows, err := db.Query(`
 		SELECT coalesce(phase,''), min(at) FROM events
-		WHERE run=? AND ifnull(phase,'') <> ''
+		WHERE run=? AND kind='phase_start' AND ifnull(phase,'') <> ''
 		  AND coalesce(phase,'') NOT IN (
 		      SELECT coalesce(phase,'') FROM events WHERE run=? AND kind='phase_end')
 		GROUP BY 1`, run, run)
@@ -1199,7 +1205,13 @@ func weigh(conf Config) {
 				// went out with "{agent}" in it, unsubstituted, and asked the
 				// worker to retry a session by that literal name — which matched
 				// nothing, so a real hang would have been answered with a no-op.
-				who, _, _ := spanFacts(r.run, request)
+				who, wbr, _ := spanFacts(r.run, request)
+				// The full session key, not the bare agent: fourteen branches
+				// each run an agent called "implement", and a bare name asks
+				// the worker to end every one of them for one branch's hang.
+				if wbr != "" {
+					who = who + "@" + wbr
+				}
 				ctx["request"], ctx["agent"] = request, who
 				judge("request", r.run, request, rule, against, age,
 					action, act(action, conf, ctx))
@@ -1253,14 +1265,16 @@ func weigh(conf Config) {
 			for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
 				if age > limit && !recently("timeouts.session", session, limit) {
 					action := conf.str("actions", "on_session_timeout", "warn")
-					// A session is keyed agent@branch by the client, which is
-					// the only place the agent's name appears here. Split it
-					// rather than send the whole key: the worker's control
-					// handle is addressed by agent.
+					// A session is keyed agent@branch by the client. The whole
+					// key goes out as {agent}: the worker's control handle
+					// accepts it and ends exactly this branch's session, where
+					// the bare agent name would end every branch running an
+					// agent by that name. {branch} still carries the tail for
+					// commands that address a branch.
 					ctx["session"] = session
 					ctx["agent"], ctx["branch"] = session, ""
 					if at := strings.Index(session, "@"); at >= 0 {
-						ctx["agent"], ctx["branch"] = session[:at], session[at+1:]
+						ctx["branch"] = session[at+1:]
 					}
 					judge("session", r.run, session, "timeouts.session", limit, age,
 						action, act(action, conf, ctx))
