@@ -1035,6 +1035,29 @@ func openPhases(run string) map[string]float64 {
 	return live
 }
 
+// sessionQuiet is how long a session has said nothing: seconds since its last
+// event of any kind - the session key on a call, or the agent and branch
+// columns a request or a log line carries. Returns -1 when nothing matches,
+// so the caller can fall back to the span's age rather than judging silence
+// nobody measured.
+func sessionQuiet(run, session string) float64 {
+	agent, branch := session, ""
+	if at := strings.Index(session, "@"); at >= 0 {
+		agent, branch = session[:at], session[at+1:]
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var last float64
+	err := db.QueryRow(`SELECT max(at) FROM events
+	                    WHERE run=? AND (session=?
+	                       OR (coalesce(agent,'')=? AND coalesce(branch,'')=?))`,
+		run, session, agent, branch).Scan(&last)
+	if err != nil || last == 0 {
+		return -1
+	}
+	return float64(time.Now().UnixNano())/1e9 - last
+}
+
 func openSpans(run, startKind, endKind, column string) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
@@ -1372,7 +1395,18 @@ func weigh(conf Config) {
 		}
 		if limit, ok := conf.num("timeouts", "session"); ok {
 			for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
-				if age > limit && !recently("timeouts.session", session, limit) {
+				// Judged by silence, not by age. An implement session did two
+				// and a half hours of honest engineering - a thousand model
+				// round-trips, tool calls every couple of minutes - and this
+				// judgement, then keyed to age, shot at it three times; killing
+				// a working session restarts a thousand requests from zero. A
+				// session that is TALKING is alive however old it is; a session
+				// that has gone silent for the limit is gone, however young.
+				quiet := sessionQuiet(r.run, session)
+				if quiet < 0 {
+					quiet = age
+				}
+				if quiet > limit && !recently("timeouts.session", session, limit) {
 					action := conf.str("actions", "on_session_timeout", "warn")
 					// A session is keyed agent@branch by the client. The whole
 					// key goes out as {agent}: the worker's control handle
@@ -1385,7 +1419,7 @@ func weigh(conf Config) {
 					if at := strings.Index(session, "@"); at >= 0 {
 						ctx["branch"] = session[at+1:]
 					}
-					judge("session", r.run, session, "timeouts.session", limit, age,
+					judge("session", r.run, session, "timeouts.session", limit, quiet,
 						action, act(action, conf, ctx))
 				}
 			}
