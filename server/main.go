@@ -1026,15 +1026,17 @@ func quietFor(run string) (float64, string, string) {
 	defer mu.Unlock()
 	var at float64
 	var agent, phase string
-	// The watchdog's own instruments do not feed the vital sign. Samples and
-	// net probes are attributed to the run so the charts can join them, and
-	// they are agentless - so run 0337ed5e's hung session sat silent for 798
-	// seconds while probes kept the pulse looking alive, and when the timeout
-	// finally tripped, the last row was a sample: agent empty, the BLIND
-	// branch, stop_run - a whole run shot for one wedged stream that the
-	// aimed action would have retried. Silence means the RUN said nothing.
+	// The pulse reads only what an AGENT said. Excluding the watchdog's own
+	// instruments (samples, probes) was round one; round two was a service_log
+	// line - the control's own "retry -> 0 waits" bookkeeping - becoming the
+	// run's newest row, so ten minutes later the silence was judged with an
+	// empty agent and the BLIND branch shot the run (8c7c591f, minute 161).
+	// Any agentless row can only ever blind the aim or fake the pulse, so
+	// none of them count: silence is measured from the last thing a session
+	// actually said, and the aim lands on that session. A run with no agented
+	// events yet has no pulse to judge - better no judgement than a blind one.
 	err := db.QueryRow(`SELECT at, coalesce(agent,''), coalesce(phase,'') FROM events
-	                    WHERE run=? AND kind NOT IN ('sample','netprobe')
+	                    WHERE run=? AND coalesce(agent,'') != ''
 	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at, &agent, &phase)
 	if err != nil {
 		return 0, "", ""
