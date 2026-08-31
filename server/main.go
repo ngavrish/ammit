@@ -1021,6 +1021,21 @@ func workerBusy(conf Config) bool {
 	return cpu >= floor
 }
 
+// heardFrom is seconds since the WORKER said anything at all - any event it
+// sent, agented or not; only the watchdog's own instruments are excluded.
+func heardFrom(run string) float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	var at float64
+	err := db.QueryRow(`SELECT at FROM events
+	                    WHERE run=? AND kind NOT IN ('sample','netprobe')
+	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
+	if err != nil {
+		return 0
+	}
+	return float64(time.Now().UnixNano())/1e9 - at
+}
+
 func quietFor(run string) (float64, string, string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -1193,7 +1208,18 @@ func weigh(conf Config) {
 		// ticket's NEXT run was using. No commands for the dead: close the
 		// row, say why, move on. Zero disables, like every limit here.
 		if gone, ok := conf.num("timeouts", "worker_gone"); ok && gone > 0 && age > gone {
-			if quiet, _, _ := quietFor(r.run); quiet > gone {
+			// A different ear from the turn-silence one, on purpose. The
+			// turn judgement listens for AGENTS (an agentless row must not
+			// blind its aim); this one asks whether the worker PROCESS is
+			// alive at all, and for that any event the worker itself sent
+			// counts - a service_log line, an item boundary, a heartbeat.
+			// Feeding it the agented-only pulse turned a behave module's
+			// forty legal silent minutes into a corpse: run c306ccfe was
+			// closed as "worker gone" four minutes after its own control
+			// chatter, mid-suite, mid-frame. Only ammit's own instruments
+			// (samples, probes) stay excluded - they prove ammit is alive,
+			// not the worker.
+			if quiet := heardFrom(r.run); quiet > gone {
 				finish(r.run, "BLOCKED", fmt.Sprintf(
 					"ammit: worker gone - nothing heard for %.0fs", quiet))
 				continue
