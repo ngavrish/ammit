@@ -988,6 +988,39 @@ func heaviestTurn(run string) (float64, string, string) {
 	return size, who, phase
 }
 
+// workerBusy asks the machine, not the run: is the worker container visibly
+// burning CPU right now? A branch suite is legally silent for ten minutes -
+// one behave process, browsers rendering, nothing to report - and the
+// run-silence judgement read that honest quiet as a hang. The watched must
+// not testify about its own pulse (a self-reported heartbeat is the same
+// lie in the other direction); the watchdog's own sampler already measures
+// the container every minute, so silence plus a busy machine is work, and
+// silence plus an idle machine is the hang this timeout exists for.
+func workerBusy(conf Config) bool {
+	floor, ok := conf.num("limits", "quiet_cpu")
+	if !ok || floor <= 0 {
+		return false
+	}
+	worker := conf.str("context", "worker", "")
+	if worker == "" {
+		return false
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var at, cpu float64
+	err := db.QueryRow(`SELECT at, coalesce(json_extract(payload,'$.cpu_pct'),0)
+	                    FROM events WHERE kind='sample'
+	                      AND json_extract(payload,'$.container')=?
+	                    ORDER BY id DESC LIMIT 1`, worker).Scan(&at, &cpu)
+	if err != nil {
+		return false
+	}
+	if float64(time.Now().UnixNano())/1e9-at > 180 {
+		return false
+	}
+	return cpu >= floor
+}
+
 func quietFor(run string) (float64, string, string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -1290,6 +1323,7 @@ func weigh(conf Config) {
 			// action was going to work it worked, and if it was not, repeating it
 			// is only more damage.
 			if quiet, agent, phase := quietFor(r.run); quiet > limit &&
+				!workerBusy(conf) &&
 				timesJudged("timeouts.turn", r.run) < 2 &&
 				!recently("timeouts.turn", r.run, limit) {
 				// When a whole run goes quiet, the last thing that spoke is the
