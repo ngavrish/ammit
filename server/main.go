@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -1021,6 +1022,25 @@ func workerBusy(conf Config) bool {
 	return cpu >= floor
 }
 
+// workerUp asks the docker daemon whether the worker container is running.
+// Best effort with a short leash: a daemon that cannot answer in five seconds
+// is treated as "unknown", and unknown keeps the certificate unsigned - the
+// caller then leaves the row open, which is the recoverable mistake.
+func workerUp(conf Config) bool {
+	worker := conf.str("context", "worker", "")
+	if worker == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
+		"{{.State.Running}}", worker).Output()
+	if err != nil {
+		return true // unknown: do not certify a death the daemon cannot confirm
+	}
+	return strings.TrimSpace(string(out)) == "true"
+}
+
 // heardFrom is seconds since the WORKER said anything at all - any event it
 // sent, agented or not; only the watchdog's own instruments are excluded.
 func heardFrom(run string) float64 {
@@ -1220,6 +1240,17 @@ func weigh(conf Config) {
 			// (samples, probes) stay excluded - they prove ammit is alive,
 			// not the worker.
 			if quiet := heardFrom(r.run); quiet > gone {
+				// Ask the docker daemon before signing the certificate. Run
+				// 46a57530 sat in a real fifteen-minute wedge - a session
+				// resume hung with no event of any kind - and came back to
+				// life four seconds after this closed its row. A container
+				// the daemon calls running is a wedge, not a corpse: leave
+				// the row open so the wedge stays judged (the turn timeout
+				// aims and retries it); close only what is genuinely not
+				// there any more.
+				if workerUp(conf) {
+					continue
+				}
 				finish(r.run, "BLOCKED", fmt.Sprintf(
 					"ammit: worker gone - nothing heard for %.0fs", quiet))
 				continue
