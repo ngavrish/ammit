@@ -814,12 +814,24 @@ func afterTool(run, request string) bool {
 	mu.Lock()
 	defer mu.Unlock()
 	var started float64
-	var agent string
-	if err := db.QueryRow(`SELECT at, coalesce(agent,'') FROM events
+	var agent, wait string
+	if err := db.QueryRow(`SELECT at, coalesce(agent,''),
+	                       coalesce(json_extract(payload,'$.wait'),'')
+	                       FROM events
 	                       WHERE run=? AND kind='request_start' AND session=?
 	                       ORDER BY id DESC LIMIT 1`, run, request).
-		Scan(&started, &agent); err != nil {
+		Scan(&started, &agent, &wait); err != nil {
 		return false
+	}
+	// The runner says what the wait covers, when it says anything: "tool"
+	// spans a tool's execution and gets the browser-suite hour, "model" means
+	// the tools are settled and only the answer is outstanding - which has no
+	// business taking ten minutes. The log-level guess below misread exactly
+	// that case: the runner logs a tool's RESULT at level tool too, so a hung
+	// model stream right after a delivered result sat under the hour ceiling
+	// for thirteen minutes on run 0337ed5e.
+	if wait == "tool" || wait == "model" {
+		return wait == "tool"
 	}
 	var level string
 	if err := db.QueryRow(`SELECT coalesce(json_extract(payload,'$.level'),'')
