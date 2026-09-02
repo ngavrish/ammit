@@ -589,10 +589,35 @@ func judgeEmptyRun(run, verdict, summary string) {
 		run, lived, turns, summary)
 }
 
+var reanimations = map[string]int{}
+
 func act(name string, conf Config, ctx map[string]string) string {
 	tmpl := conf.str("commands", name, "")
 	if tmpl == "" {
 		return "no command named " + name
+	}
+	// One cap on reviving, across every kind of retry. A retry that never
+	// gives up is the same outage with more billing - 41 restarts in one
+	// night on run 96dc986c. The (retry_max+1)th revival of a run is not a
+	// revival, it is a run that will not come back: close it instead.
+	if name == "retry_session" || name == "retry_branch" ||
+		name == "retry_phase" || name == "restart_worker" {
+		run := ctx["run"]
+		if run == "" {
+			run = ctx["name"]
+		}
+		if run != "" {
+			if max, ok := conf.num("limits", "retry_max"); ok && max > 0 {
+				reanimations[run]++
+				if float64(reanimations[run]) > max {
+					finish(run, "BLOCKED", fmt.Sprintf(
+						"revived %d times and still not reporting - past "+
+							"limits.retry_max (%.0f); closed rather than "+
+							"revived again", reanimations[run]-1, max))
+					return fmt.Sprintf("closed: retry_max %.0f reached", max)
+				}
+			}
+		}
 	}
 	for key, value := range ctx {
 		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", value)
@@ -1071,11 +1096,33 @@ func heardFrom(run string) float64 {
 	mu.Lock()
 	defer mu.Unlock()
 	var at float64
+	// heartbeat excluded alongside the watchdog's own instruments: it is the
+	// process pulse, and a 60-second pulse would otherwise reset this
+	// work-silence measure forever, hiding a wedged session behind a living
+	// loop. Work-silence and process-pulse are two questions with two checks.
 	err := db.QueryRow(`SELECT at FROM events
-	                    WHERE run=? AND kind NOT IN ('sample','netprobe')
+	                    WHERE run=? AND kind NOT IN ('sample','netprobe','heartbeat')
 	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
 	if err != nil {
 		return 0
+	}
+	return float64(time.Now().UnixNano())/1e9 - at
+}
+
+// heartbeatAge is seconds since the runner PROCESS last said it is looping,
+// or -1 when it has never sent a heartbeat (an old run, or one that died
+// before the first pulse - do not judge a pulse that never started). This is
+// the fast reaper run 14 lacked: the worker was recreated and no work event
+// came, but nothing watched the pulse because the pulse was not an event.
+func heartbeatAge(run string) float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	var at float64
+	err := db.QueryRow(`SELECT at FROM events
+	                    WHERE run=? AND kind='heartbeat'
+	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
+	if err != nil {
+		return -1
 	}
 	return float64(time.Now().UnixNano())/1e9 - at
 }
@@ -1243,6 +1290,27 @@ func recordLimits(conf Config) {
 func weigh(conf Config) {
 	for _, r := range openRuns() {
 		age := float64(time.Now().UnixNano())/1e9 - r.started
+		// The fast pulse check, ahead of the slow work-silence one. The runner
+		// posts a heartbeat every minute; timeouts.heartbeat (120s) is two
+		// missed in a row, which is the process wedged or gone - reanimate it
+		// with restart_worker, and act()'s retry_max cap turns the third dead
+		// pulse into a close instead of a fourth restart. Skipped when there
+		// is no heartbeat yet (-1): a pulse that never started is not a pulse
+		// that stopped, and the worker_gone/orphan path below still catches
+		// the run that died before its first beat.
+		if hb, ok := conf.num("timeouts", "heartbeat"); ok && hb > 0 {
+			if pulse := heartbeatAge(r.run); pulse >= 0 && pulse > hb {
+				action := conf.str("actions", "on_heartbeat_gone", "restart_worker")
+				ctx := map[string]string{"run": r.run, "name": r.name,
+					"branch": lastBranch(r.run)}
+				for k, v := range conf["context"] {
+					ctx[k] = v
+				}
+				judge("run", r.run, r.name, "timeouts.heartbeat", hb, pulse,
+					action, act(action, conf, ctx))
+				continue
+			}
+		}
 		// A run whose worker has stopped reporting entirely is not a run to
 		// act on - it is a corpse to close. The worker heartbeats every minute
 		// while it is alive, so a run this quiet has no process behind it: a
