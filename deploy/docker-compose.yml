@@ -3,7 +3,7 @@
 services:
   ammit:
     build: ..
-    ports: ["8099:8099"]
+    ports: ["127.0.0.1:8099:8099"]  # act pulls docker levers; the LAN answered 302
     environment:
       AMMIT_TICK: "20"
       AMMIT_DRY_RUN: "${AMMIT_DRY_RUN:-0}"
