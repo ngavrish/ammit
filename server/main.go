@@ -1066,30 +1066,6 @@ func workerUp(conf Config) bool {
 	return strings.TrimSpace(string(out)) == "true"
 }
 
-// workerAge is how many seconds ago the worker container started, or -1 when
-// the daemon cannot say. It is the one fact that separates a wedge from an
-// orphan: a container older than a run's silence is that run wedged inside it
-// and worth retrying; a container YOUNGER than the silence was recreated
-// under the run, which is dead inside a fresh empty worker no retry can reach.
-func workerAge(conf Config) float64 {
-	worker := conf.str("context", "worker", "")
-	if worker == "" {
-		return -1
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
-		"{{.State.StartedAt}}", worker).Output()
-	if err != nil {
-		return -1
-	}
-	started, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(out)))
-	if perr != nil {
-		return -1
-	}
-	return time.Since(started).Seconds()
-}
-
 // heardFrom is seconds since the WORKER said anything at all - any event it
 // sent, agented or not; only the watchdog's own instruments are excluded.
 func heardFrom(run string) float64 {
@@ -1340,22 +1316,16 @@ func weigh(conf Config) {
 				// the row open so the wedge stays judged (the turn timeout
 				// aims and retries it); close only what is genuinely not
 				// there any more.
+				// A recreated worker under a live run - the orphan case -
+				// is caught earlier and faster by the heartbeat check at the
+				// top of this loop: the fresh empty container sends no
+				// heartbeat for the run, so on_heartbeat_gone fires at 120s
+				// and closes it within a few restarts, long before this. What
+				// is left here is the genuine wedge: a running container that
+				// IS still heartbeating but whose work has gone quiet past
+				// worker_gone. Leave it - the turn timeout aims and retries,
+				// and retry_max ends that if it never wakes.
 				if workerUp(conf) {
-					// A running container is usually a wedge - leave it, the
-					// turn timeout aims and retries it. But a container that
-					// started MORE RECENTLY than this run's own silence was
-					// recreated UNDER the run: the run is orphaned inside a
-					// fresh empty worker, and every retry_session lands in a
-					// process that never held its sessions. That is exactly
-					// how run 14 died and nothing closed it - workerUp said
-					// "alive", retry said "again", forever. Age against the
-					// silence tells the two apart without a wall clock.
-					if wa := workerAge(conf); wa >= 0 && wa < quiet {
-						finish(r.run, "BLOCKED", fmt.Sprintf(
-							"ammit: worker recreated under a live run - "+
-								"orphaned; nothing heard for %.0fs, worker "+
-								"only %.0fs old", quiet, wa))
-					}
 					continue
 				}
 				finish(r.run, "BLOCKED", fmt.Sprintf(
