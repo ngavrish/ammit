@@ -1,0 +1,65 @@
+<!doctype html><meta charset="utf-8">
+<title>ammit — charts</title>
+<style>/*@STYLES@*/</style>
+/*@HEADER_HTML@*/
+
+<div id=bar>
+  <div id=filters>
+    <span class=find>
+      <input id=q placeholder="APF-1934" size=22 autocomplete=off spellcheck=false>
+    </span>
+    <span class=sep></span>
+    <label class=when><i>started</i><input id=sf type=date><input id=st type=date></label>
+    <span class=sep></span>
+    <label class=when><i>finished</i><input id=ff type=date><input id=ft type=date></label>
+    <button id=clear title="clear every filter">clear</button>
+  </div>
+  <nav id=range>
+    <button class=span data-h=3>3 hours</button>
+    <button class="span on" data-h=12>12 hours</button>
+    <button class=span data-h=48>2 days</button>
+    <button class=span data-h=168>a week</button>
+  </nav>
+  <nav id=every title="how often to run every query again">
+    <button class="tick on" data-s=0>manual</button>
+    <button class=tick data-s=5>5s</button>
+    <button class=tick data-s=300>5m</button>
+    <button class=tick data-s=1800>30m</button>
+    <button class=tick data-s=3600>1h</button>
+  </nav>
+  <button id=refresh title="run every query again now">refresh</button>
+  <span class=find id=seek title="which charts to show: a word from the title, what it is about, its unit, or a line's name">
+    <input id=find placeholder="find a chart: cost, memory, audit…" autocomplete=off spellcheck=false>
+  </span>
+  <button id=addchart title="a chart of your own, kept in charts-local.json">add chart</button>
+  <select id=tz title="which clock the times are read in"></select>
+  <span id=note></span>
+</div>
+
+<main id=main></main>
+
+<dialog id=dlg>
+  <h3>A chart of your own</h3>
+  <p class=hint>The query returns <b>time, metric, value</b> — unix seconds, a line
+  name, a number. On a run page it is narrowed to that run by itself. A second
+  query (a limit line, say) goes after a line holding only <b>;;</b></p>
+  <label>title</label><input id=ctitle autocomplete=off>
+  <label>about</label><input id=cabout autocomplete=off>
+  <div style="display:flex;gap:12px">
+    <span style="flex:1"><label>kind</label>
+      <select id=ckind><option>series</option><option>scatter</option><option>columns</option><option>stacked</option><option>bars</option><option>pie</option><option>stats</option><option>candles</option><option>timeline</option><option>table</option></select></span>
+    <span style="flex:1"><label>unit</label><input id=cunit placeholder="ms"></span>
+  </div>
+  <label>sql</label><textarea id=csql spellcheck=false
+    placeholder="SELECT at AS time, 'probe' AS metric, json_extract(payload,'$.latency_ms') AS value FROM events WHERE kind='netprobe' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1"></textarea>
+  <div class=actions>
+    <span class=err id=dlgerr></span>
+    <button id=dlgcancel>cancel</button>
+    <button class=go id=dlgsave>save</button>
+  </div>
+</dialog>
+/*@FOOTER_HTML@*/
+<script>/*@UPLOT@*/</script>
+<script>
+/*@SCRIPT@*/
+</script>
