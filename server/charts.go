@@ -33,8 +33,11 @@ var panelSpec []byte
 //go:embed lifetime.json
 var lifetimeSpec []byte
 
-//go:embed learning.json
-var learningSpec []byte
+//go:embed heal.json
+var healSpec []byte
+
+//go:embed model.json
+var modelSpec []byte
 
 type panel struct {
 	Kind  string `json:"kind"`
@@ -114,15 +117,17 @@ func readsOnly(q string) bool {
 // index into it means the same panel to both. Built-ins first, additions after
 // — hiding marks rather than removes, precisely so the numbering never moves.
 // Additions belong to the run pages unless they say scope: lifetime or
-// scope: learning; those pages are different questions (one row per run, no
-// window; and the learning loop, which is about every run at once).
+// scope: heal or scope: model; those pages are different questions (one row
+// per run, no window; the heal loop and the model, about every run at once).
 func merged(page string) chartSpec {
 	base := panelsOf()
 	switch page {
 	case "lifetime":
 		base = lifetimeOf()
-	case "learning":
-		base = learningOf()
+	case "heal":
+		base = healOf()
+	case "model":
+		base = modelOf()
 	}
 	loc := localOf()
 	away := map[string]bool{}
@@ -155,14 +160,20 @@ func lifetimeOf() chartSpec {
 	return s
 }
 
-func learningOf() chartSpec {
+func healOf() chartSpec {
 	var s chartSpec
-	_ = json.Unmarshal(learningSpec, &s)
+	_ = json.Unmarshal(healSpec, &s)
+	return s
+}
+
+func modelOf() chartSpec {
+	var s chartSpec
+	_ = json.Unmarshal(modelSpec, &s)
 	return s
 }
 
 // The pages that are about every run at once rather than a window of one.
-var allTime = map[string]bool{"lifetime": true, "learning": true}
+var allTime = map[string]bool{"lifetime": true, "heal": true, "model": true}
 
 // which set a request is about. The lifetime panels carry no window — they are
 // about every run there has been — so the macros are filled with the widest
@@ -412,8 +423,10 @@ func serveCharts(mux *http.ServeMux) {
 			active = "window"
 		case strings.HasPrefix(r.URL.Path, "/ammit/lifetime"):
 			active = "lifetime"
-		case strings.HasPrefix(r.URL.Path, "/ammit/learning"):
-			active = "learning"
+		case strings.HasPrefix(r.URL.Path, "/ammit/heal"):
+			active = "heal"
+		case strings.HasPrefix(r.URL.Path, "/ammit/model"):
+			active = "model"
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, chartsPageHTML(active))
@@ -422,7 +435,9 @@ func serveCharts(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ammit/runs/{id}", page)
 	mux.HandleFunc("GET /ammit/window", page)
 	mux.HandleFunc("GET /ammit/lifetime", page)
-	mux.HandleFunc("GET /ammit/learning", page)
+	mux.HandleFunc("GET /ammit/heal", page)
+	mux.HandleFunc("GET /ammit/model", page)
+	mux.HandleFunc("GET /ammit/learning", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ammit/heal", http.StatusFound) })
 
 	// Where the old addresses went, so anything already sent still arrives.
 	for from, to := range map[string]string{

@@ -40,6 +40,16 @@
   },
   {
    "kind": "bars",
+   "title": "Billed against modelled, per run",
+   "about": "Per run, what the SDK's session bills added up to against what the turns cost by the price sheet. Modelled above billed is money the bills never reported: sessions that were stopped, or died with the run. Runs before the runner reported token splits have no modelled bar.",
+   "unit": "currencyUSD",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'modelled', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t GROUP BY run) m ON m.run=r.run ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "bars",
    "title": "Turns per run against limits.turns_per_run",
    "about": "Every run: how many turns it took, against the limit. One per tool call, which is what the pipeline reports as a turn.",
    "unit": "turns",

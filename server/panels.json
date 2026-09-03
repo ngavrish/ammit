@@ -82,6 +82,31 @@
    "acc": "cumsum"
   },
   {
+   "kind": "stacked",
+   "title": "Cost per turn, modelled",
+   "about": "Every turn priced as it was reported, from its tokens and the price sheet, stacked by agent or by phase. The bill the SDK sends at session end never comes for a session ammit stopped; this line does not wait for it. Turns from before the runner reported token splits are not here.",
+   "unit": "currencyUSD",
+   "height": 8,
+   "by": [
+    "agent",
+    "phase"
+   ],
+   "acc": "cumsum",
+   "queries": [
+    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
+   ]
+  },
+  {
+   "kind": "table",
+   "title": "Unpriced turns",
+   "about": "Turns whose model matches no family on the price sheet. A row here is a model the sheet has to learn, not a free turn.",
+   "unit": "",
+   "height": 6,
+   "queries": [
+    "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND family IS NULL GROUP BY model ORDER BY turns DESC"
+   ]
+  },
+  {
    "kind": "bars",
    "title": "Turns",
    "about": "Tool calls in the window, by the phase that made them or by the agent.",
@@ -172,6 +197,27 @@
     "SELECT time, metric, value FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.agent ORDER BY e.at), r.finished, strftime('%s','now')) AS value, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run WHERE e.kind IN ('session_start','session_end') AND ifnull(e.agent,'') <> '') WHERE kind = 'session_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
    ],
    "label": "Session timeline"
+  },
+  {
+   "kind": "timeline",
+   "title": "Model waits, by session",
+   "about": "One row per session, one span per wait, from the moment the request went out to the moment its answer arrived: 'model' when only the model's answer was outstanding, 'tool' when the span covers a tool it asked for. The trace, laid on a clock: a wait that stands alone across the width is the one to chase.",
+   "unit": "s",
+   "height": 8,
+   "queries": [
+    "SELECT time, metric, value, label FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') || CASE WHEN coalesce(e.branch,'')<>'' THEN '@' || e.branch ELSE '' END AS metric, lead(e.at) OVER (PARTITION BY e.run, e.session ORDER BY e.at) AS value, coalesce(nullif(json_extract(e.payload,'$.wait'),''),'wait') AS label, e.kind AS kind FROM events e WHERE e.kind IN ('request_start','request_end')) WHERE kind='request_start' AND value IS NOT NULL AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
+   ]
+  },
+  {
+   "kind": "bars",
+   "title": "Sessions by how they ended",
+   "about": "What stopped each session: the model finishing (end_turn), a tool it asked for, a length cap, or nothing reported. Counted per agent. Only sessions from runners that report it.",
+   "unit": "sessions",
+   "height": 8,
+   "agg": "sum",
+   "queries": [
+    "SELECT at AS time, coalesce(nullif(json_extract(payload,'$.stopped'),''),'(not reported)') AS metric, 1 AS value FROM events WHERE kind='session_end' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
+   ]
   },
   {
    "kind": "row",

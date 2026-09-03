@@ -415,7 +415,7 @@ async function windowForNewest(){
 }
 let runs=[], scope="runs", chosen="";
 // The pages about every run at once: no window, no run, the widest range.
-const ALLTIME=["lifetime","learning"];
+const ALLTIME=["lifetime","heal","model"];
 
 // A verdict is a word this pipeline chose, and there are several for each of the
 // two outcomes. Colour is about which of the two it was. ABANDONED is neither:
@@ -1495,7 +1495,7 @@ async function render(){
   const parts=location.pathname.split("/").filter(Boolean);   // ammit, view, id?
   const view=parts[1]||"runs";
   chosen = view==="runs" && parts[2] ? parts[2] : "";
-  scope  = ["window","lifetime","learning"].includes(view) ? view : "runs";
+  scope  = ["window","lifetime","heal","model"].includes(view) ? view : "runs";
   document.querySelectorAll(".tab").forEach(x=>
     x.classList.toggle("on", !chosen && x.dataset.scope===scope));
   await boot();

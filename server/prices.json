@@ -1,0 +1,20 @@
+{
+ "about": "USD per million tokens, by model family. Fitted by least squares to the Claude SDK's own per-session bills in this database (usd against fresh input, output, cache read and cache write), with the list ratios in:out:write held at 1:5:1.25 and cache read free. Sonnet: 984 sessions, median error $0.06 a session, billed $1821 against modelled $1824. Haiku: 157 sessions, median error $0.01, $71 against $70. A model with no family here has no price and its turns show as unpriced.",
+ "fitted": "2026-09-03",
+ "families": [
+  {
+   "family": "sonnet",
+   "input": 2.88,
+   "output": 14.4,
+   "cache_read": 0.1936,
+   "cache_write": 3.6
+  },
+  {
+   "family": "haiku",
+   "input": 1.292,
+   "output": 6.46,
+   "cache_read": 0.1029,
+   "cache_write": 1.615
+  }
+ ]
+}

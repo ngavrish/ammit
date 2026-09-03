@@ -51,6 +51,18 @@ CREATE INDEX IF NOT EXISTS events_kind ON events (kind, at);
 CREATE INDEX IF NOT EXISTS events_span ON events (run, kind, session);
 CREATE INDEX IF NOT EXISTS events_phase ON events (run, kind, phase);
 
+-- What a token costs, by model family, USD per million. Seeded from the
+-- embedded prices.json on every start, so a chart can price a turn the moment
+-- it is reported: a session that dies before its bill arrives still paid for
+-- every turn it took, and the ledger's spend row never comes for it.
+CREATE TABLE IF NOT EXISTS prices (
+    family      TEXT PRIMARY KEY,
+    input       REAL NOT NULL,
+    output      REAL NOT NULL,
+    cache_read  REAL NOT NULL,
+    cache_write REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     run      TEXT PRIMARY KEY,
     name     TEXT,
@@ -1738,6 +1750,8 @@ func main() {
 		}
 	}
 
+	seedPrices()
+
 	// Readings on their own thread. Judging must never wait for a machine
 	// reading: one is a call out to a daemon that answers when it feels like it,
 	// the other is the entire point of this service. They shared a loop for one
@@ -2124,6 +2138,7 @@ func main() {
 	mux.HandleFunc("GET /queue", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT * FROM queue ORDER BY id DESC LIMIT 100`)
 	})
+	mux.HandleFunc("GET /prices", servePrices)
 	mux.HandleFunc("GET /limits", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, loadConfig(confPath))
 	})

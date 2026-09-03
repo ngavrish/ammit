@@ -1,0 +1,95 @@
+{
+ "sections": "rows",
+ "panels": [
+  {
+   "kind": "row",
+   "title": "Is it healing",
+   "about": "Every run in the order it started. The heal loop is where a red suite either dies or is given up on; these are the numbers it is judged by, and they have to move as the memory fills."
+  },
+  {
+   "kind": "bars",
+   "title": "Heal laps per run",
+   "about": "Every run in the order it started: how many times a suite came back red and a healer was sent in. The number the memory is judged by: it has to fall as lessons accumulate, or nothing is being learned.",
+   "unit": "laps",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'heal laps' AS metric, coalesce(h.laps,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, count(*) AS laps FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run) h ON h.run=r.run ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "bars",
+   "title": "Heal laps after a suite with nothing failed",
+   "about": "Per run: heal laps that followed a suite reporting zero failed scenarios. The suite was red for another reason - the runner exiting non-zero, no scenario mapped - and the healer was sent to fix tests that passed. Run c306ccfe did this four times on one branch.",
+   "unit": "laps",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'laps on green' AS metric, coalesce(g.n,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, count(*) AS n FROM (SELECT e.run, e.at, (SELECT CAST(substr(json_extract(s.payload,'$.text'), instr(json_extract(s.payload,'$.text'),'passed, ')+8) AS INTEGER) FROM events s WHERE s.run=e.run AND s.kind='phase_end' AND json_extract(s.payload,'$.phase')='branchrun' AND coalesce(json_extract(s.payload,'$.branch'),'')=coalesce(json_extract(e.payload,'$.branch'),'') AND s.at < e.at ORDER BY s.at DESC LIMIT 1) AS failed_before FROM events e WHERE e.kind='phase_start' AND json_extract(e.payload,'$.phase') LIKE '%heal%') WHERE failed_before = 0 GROUP BY run) g ON g.run=r.run ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "bars",
+   "title": "Suite failures, first against last",
+   "about": "Per run, the failing scenarios summed over its branches at the first suite run and at the last. The distance between the two bars is what the heal loop bought; a last bar as tall as the first is a loop that ran and repaired nothing.",
+   "unit": "scenarios",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'first suite' AS metric, coalesce(sum(CASE WHEN s.n=1 THEN s.failed END),0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER) AS failed, row_number() OVER (PARTITION BY run, json_extract(payload,'$.branch') ORDER BY at) AS n, row_number() OVER (PARTITION BY run, json_extract(payload,'$.branch') ORDER BY at DESC) AS rn FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun') s ON s.run=r.run GROUP BY r.run UNION ALL SELECT r.started, 'last suite', coalesce(sum(CASE WHEN s.rn=1 THEN s.failed END),0), r.name FROM runs r LEFT JOIN (SELECT run, CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER) AS failed, row_number() OVER (PARTITION BY run, json_extract(payload,'$.branch') ORDER BY at) AS n, row_number() OVER (PARTITION BY run, json_extract(payload,'$.branch') ORDER BY at DESC) AS rn FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun') s ON s.run=r.run GROUP BY r.run ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "bars",
+   "title": "Gate refusals per run",
+   "about": "How often a gate refused, per run. Falling with the lessons is learning; flat is a pipeline that reads its memory and does the same thing again.",
+   "unit": "refusals",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'red gates' AS metric, coalesce(g.reds,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(verdict='red') AS reds FROM gates GROUP BY run) g ON g.run=r.run ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "bars",
+   "title": "Heal spend per run",
+   "about": "What the heal laps cost per run, in the sessions that reported a bill. A session ammit stopped part-way reports none, so this is a floor.",
+   "unit": "currencyUSD",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'heal' AS metric, coalesce(m.usd,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, round(sum(json_extract(payload,'$.usd')),2) AS usd FROM events WHERE kind='spend' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run) m ON m.run=r.run ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "row",
+   "title": "What it learns from",
+   "about": "The memory the healer is handed: lessons stored after heal and revise phases, and injected into the next batch."
+  },
+  {
+   "kind": "series",
+   "title": "Lessons in memory",
+   "about": "How many lessons the global memory held after each store or ingest. A line that does not climb while heal laps stay high is a memory nothing is being written to.",
+   "unit": "lessons",
+   "height": 8,
+   "queries": [
+    "SELECT at AS time, 'total' AS metric, json_extract(payload,'$.total') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "columns",
+   "title": "Lessons per store",
+   "about": "Each time the memory was written to: how many lessons were new and how many confirmed one already there.",
+   "unit": "lessons",
+   "height": 8,
+   "queries": [
+    "SELECT at AS time, 'fresh' AS metric, json_extract(payload,'$.fresh') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' UNION ALL SELECT at, 'confirmed', json_extract(payload,'$.confirmed') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "bars",
+   "title": "Memory stored and injected per run",
+   "about": "Per run: how many times the runner stored the run's case into the ticket's memory after a heal or revise phase, and how many times it injected past cases into a batch. Sessions do not ask the memory themselves; the runner asks for them.",
+   "unit": "times",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'stored' AS metric, coalesce(m.stored,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run UNION ALL SELECT r.started, 'injected', coalesce(m.injected,0), r.name FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run ORDER BY 1"
+   ]
+  }
+ ]
+}

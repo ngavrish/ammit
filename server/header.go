@@ -57,7 +57,8 @@ func headerHTML(active string) string {
 		tab("/ammit/runs", "Runs", "runs") +
 		tab("/ammit/window", "A window", "window") +
 		tab("/ammit/lifetime", "All time", "lifetime") +
-		tab("/ammit/learning", "Learning", "learning") + `
+		tab("/ammit/heal", "Heal", "heal") +
+		tab("/ammit/model", "Model", "model") + `
   </nav>
 </header>`
 }

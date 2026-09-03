@@ -472,6 +472,10 @@ KIND = {
 
 # A sentence rewritten for the way the chart is drawn now.
 ABOUT = {
+    "Suite runs, passed against failed":
+        "Every suite run of the branch loop as a pair of bars, passed beside failed, titled by branch. Failed bars that do not shrink lap after lap are a loop healing nothing. A red suite with nothing failed is the runner exiting non-zero, not the tests.",
+    "Heal loop by branch":
+        "One row per branch: how many times its suite ran, how many heal laps that took, what the laps cost in minutes and dollars, and the failures at the first suite against the last. The last column is what the branch left with.",
     "Memory against limits.memory_mb":
         "Read from outside every sample.every seconds: by container, or the same readings added up and labelled with the phase or the agent session that was open when they were taken.",
     "Tokens out":
@@ -591,6 +595,64 @@ for p in spec["panels"]:
         p["label"] = LABEL[p["title"]]
     if p["title"] in EXTRA:
         p.update(EXTRA[p["title"]])
+
+# Panels the page draws from the price sheet and the request spans; they have
+# no Grafana ancestor, so they are said here as they are.
+def _after(title, new):
+    ts_ = [x["title"] for x in spec["panels"]]
+    i = ts_.index(title) + 1
+    spec["panels"][i:i] = new
+
+_after("Cost", [
+    {
+        "kind": "stacked",
+        "title": "Cost per turn, modelled",
+        "about": "Every turn priced as it was reported, from its tokens and the price sheet, stacked by agent or by phase. The bill the SDK sends at session end never comes for a session ammit stopped; this line does not wait for it. Turns from before the runner reported token splits are not here.",
+        "unit": "currencyUSD",
+        "height": 8,
+        "by": [
+            "agent",
+            "phase"
+        ],
+        "acc": "cumsum",
+        "queries": [
+            "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
+        ]
+    },
+    {
+        "kind": "table",
+        "title": "Unpriced turns",
+        "about": "Turns whose model matches no family on the price sheet. A row here is a model the sheet has to learn, not a free turn.",
+        "unit": "",
+        "height": 6,
+        "queries": [
+            "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND family IS NULL GROUP BY model ORDER BY turns DESC"
+        ]
+    }
+])
+_after("Time in a session, minute by minute", [
+    {
+        "kind": "timeline",
+        "title": "Model waits, by session",
+        "about": "One row per session, one span per wait, from the moment the request went out to the moment its answer arrived: 'model' when only the model's answer was outstanding, 'tool' when the span covers a tool it asked for. The trace, laid on a clock: a wait that stands alone across the width is the one to chase.",
+        "unit": "s",
+        "height": 8,
+        "queries": [
+            "SELECT time, metric, value, label FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') || CASE WHEN coalesce(e.branch,'')<>'' THEN '@' || e.branch ELSE '' END AS metric, lead(e.at) OVER (PARTITION BY e.run, e.session ORDER BY e.at) AS value, coalesce(nullif(json_extract(e.payload,'$.wait'),''),'wait') AS label, e.kind AS kind FROM events e WHERE e.kind IN ('request_start','request_end')) WHERE kind='request_start' AND value IS NOT NULL AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
+        ]
+    },
+    {
+        "kind": "bars",
+        "title": "Sessions by how they ended",
+        "about": "What stopped each session: the model finishing (end_turn), a tool it asked for, a length cap, or nothing reported. Counted per agent. Only sessions from runners that report it.",
+        "unit": "sessions",
+        "height": 8,
+        "agg": "sum",
+        "queries": [
+            "SELECT at AS time, coalesce(nullif(json_extract(payload,'$.stopped'),''),'(not reported)') AS metric, 1 AS value FROM events WHERE kind='session_end' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
+        ]
+    }
+])
 
 out = pathlib.Path(__file__).with_name("panels.json")
 out.write_text(json.dumps(spec, indent=1, ensure_ascii=False) + "\n")
@@ -720,96 +782,33 @@ for p in lifetime["panels"]:
     if p["title"] in LABEL:
         p["label"] = LABEL[p["title"]]
 
+_i = [x["title"] for x in lifetime["panels"]].index("Cost per run against limits.usd_per_run") + 1
+lifetime["panels"][_i:_i] = [
+    {
+        "kind": "bars",
+        "title": "Billed against modelled, per run",
+        "about": "Per run, what the SDK's session bills added up to against what the turns cost by the price sheet. Modelled above billed is money the bills never reported: sessions that were stopped, or died with the run. Runs before the runner reported token splits have no modelled bar.",
+        "unit": "currencyUSD",
+        "height": 8,
+        "queries": [
+            "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'modelled', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t GROUP BY run) m ON m.run=r.run ORDER BY 1"
+        ]
+    }
+]
+
 out3 = pathlib.Path(__file__).with_name("lifetime.json")
 out3.write_text(json.dumps(lifetime, indent=1, ensure_ascii=False) + "\n")
 print(f"{out3}: {len([x for x in lifetime['panels'] if x['kind'] != 'row'])} panels")
 
-# The learning loop, on its own page. The model in the shadow, what every
-# run leaves for it, and whether the runs are getting any better for it.
-learning = {
+# The heal loop and the model, each on its own page. Sections by their own
+# rows: these pages tell a story, and a story keeps its chapters.
+heal = {
     "sections": "rows",
     "panels": [
         {
             "kind": "row",
-            "title": "The model in the shadow"
-        },
-        {
-            "kind": "series",
-            "title": "Shadow model against sonnet",
-            "about": "Gate-pass rate of the local model's requirement rows against the sonnet rows that shipped, judged by the same mechanical gate, once per run. The gap between the lines is the distance to handing the pipeline's biggest bill to a model that costs nothing.",
-            "unit": "percent",
-            "height": 8,
-            "queries": [
-                "SELECT at AS time, 'local: ' || json_extract(payload,'$.model') AS metric, json_extract(payload,'$.local_rate') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' UNION ALL SELECT at, 'sonnet', json_extract(payload,'$.sonnet_rate') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' ORDER BY 1"
-            ]
-        },
-        {
-            "kind": "table",
-            "title": "Shadow evals",
-            "about": "Every shadow eval there has been, newest first: which model, on how many requirement pairs, and how the two scored.",
-            "unit": "",
-            "height": 7,
-            "queries": [
-                "SELECT at, json_extract(payload,'$.model') AS model, json_extract(payload,'$.pairs') AS pairs, round(json_extract(payload,'$.sonnet_rate')) AS sonnet_pct, round(json_extract(payload,'$.local_rate')) AS local_pct, round(json_extract(payload,'$.sonnet_rate')-json_extract(payload,'$.local_rate')) AS gap FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' ORDER BY at DESC"
-            ]
-        },
-        {
-            "kind": "row",
-            "title": "What every run leaves behind"
-        },
-        {
-            "kind": "bars",
-            "title": "Hoard shipped per run",
-            "about": "What each run's transcripts, requirement pairs and suite verdicts weighed once tarred and shipped to the learning store. A run that shipped nothing left nothing to tune on.",
-            "unit": "mbytes",
-            "height": 8,
-            "queries": [
-                "SELECT at AS time, 'shipped' AS metric, json_extract(payload,'$.kb')/1024.0 AS value, json_extract(payload,'$.ticket') AS label FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' ORDER BY 1"
-            ]
-        },
-        {
-            "kind": "bars",
-            "title": "Hoard contents per run",
-            "about": "Inside each shipment: how many session transcripts and how many requirement-author files. The files are the pairs a tune is made of.",
-            "unit": "files",
-            "height": 8,
-            "queries": [
-                "SELECT at AS time, 'transcripts' AS metric, json_extract(payload,'$.transcripts') AS value, json_extract(payload,'$.ticket') AS label FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' UNION ALL SELECT at, 'funcreq files', json_extract(payload,'$.funcreq'), json_extract(payload,'$.ticket') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' ORDER BY 1"
-            ]
-        },
-        {
-            "kind": "series",
-            "title": "Lessons in memory",
-            "about": "How many lessons the global memory held after each store or ingest. A line that does not climb while heal laps stay high is a memory nothing is being written to.",
-            "unit": "lessons",
-            "height": 8,
-            "queries": [
-                "SELECT at AS time, 'total' AS metric, json_extract(payload,'$.total') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
-            ]
-        },
-        {
-            "kind": "columns",
-            "title": "Lessons per store",
-            "about": "Each time the memory was written to: how many lessons were new and how many confirmed one already there.",
-            "unit": "lessons",
-            "height": 8,
-            "queries": [
-                "SELECT at AS time, 'fresh' AS metric, json_extract(payload,'$.fresh') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' UNION ALL SELECT at, 'confirmed', json_extract(payload,'$.confirmed') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
-            ]
-        },
-        {
-            "kind": "bars",
-            "title": "Memory stored and injected per run",
-            "about": "Per run: how many times the runner stored the run's case into the ticket's memory after a heal or revise phase, and how many times it injected past cases into a batch. Sessions do not ask the memory themselves; the runner asks for them.",
-            "unit": "times",
-            "height": 8,
-            "queries": [
-                "SELECT r.started AS time, 'stored' AS metric, coalesce(m.stored,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run UNION ALL SELECT r.started, 'injected', coalesce(m.injected,0), r.name FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run ORDER BY 1"
-            ]
-        },
-        {
-            "kind": "row",
-            "title": "Is it learning"
+            "title": "Is it healing",
+            "about": "Every run in the order it started. The heal loop is where a red suite either dies or is given up on; these are the numbers it is judged by, and they have to move as the memory fills."
         },
         {
             "kind": "bars",
@@ -819,6 +818,16 @@ learning = {
             "height": 8,
             "queries": [
                 "SELECT r.started AS time, 'heal laps' AS metric, coalesce(h.laps,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, count(*) AS laps FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run) h ON h.run=r.run ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "bars",
+            "title": "Heal laps after a suite with nothing failed",
+            "about": "Per run: heal laps that followed a suite reporting zero failed scenarios. The suite was red for another reason - the runner exiting non-zero, no scenario mapped - and the healer was sent to fix tests that passed. Run c306ccfe did this four times on one branch.",
+            "unit": "laps",
+            "height": 8,
+            "queries": [
+                "SELECT r.started AS time, 'laps on green' AS metric, coalesce(g.n,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, count(*) AS n FROM (SELECT e.run, e.at, (SELECT CAST(substr(json_extract(s.payload,'$.text'), instr(json_extract(s.payload,'$.text'),'passed, ')+8) AS INTEGER) FROM events s WHERE s.run=e.run AND s.kind='phase_end' AND json_extract(s.payload,'$.phase')='branchrun' AND coalesce(json_extract(s.payload,'$.branch'),'')=coalesce(json_extract(e.payload,'$.branch'),'') AND s.at < e.at ORDER BY s.at DESC LIMIT 1) AS failed_before FROM events e WHERE e.kind='phase_start' AND json_extract(e.payload,'$.phase') LIKE '%heal%') WHERE failed_before = 0 GROUP BY run) g ON g.run=r.run ORDER BY 1"
             ]
         },
         {
@@ -850,10 +859,127 @@ learning = {
             "queries": [
                 "SELECT r.started AS time, 'heal' AS metric, coalesce(m.usd,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, round(sum(json_extract(payload,'$.usd')),2) AS usd FROM events WHERE kind='spend' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run) m ON m.run=r.run ORDER BY 1"
             ]
+        },
+        {
+            "kind": "row",
+            "title": "What it learns from",
+            "about": "The memory the healer is handed: lessons stored after heal and revise phases, and injected into the next batch."
+        },
+        {
+            "kind": "series",
+            "title": "Lessons in memory",
+            "about": "How many lessons the global memory held after each store or ingest. A line that does not climb while heal laps stay high is a memory nothing is being written to.",
+            "unit": "lessons",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'total' AS metric, json_extract(payload,'$.total') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "columns",
+            "title": "Lessons per store",
+            "about": "Each time the memory was written to: how many lessons were new and how many confirmed one already there.",
+            "unit": "lessons",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'fresh' AS metric, json_extract(payload,'$.fresh') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' UNION ALL SELECT at, 'confirmed', json_extract(payload,'$.confirmed') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "bars",
+            "title": "Memory stored and injected per run",
+            "about": "Per run: how many times the runner stored the run's case into the ticket's memory after a heal or revise phase, and how many times it injected past cases into a batch. Sessions do not ask the memory themselves; the runner asks for them.",
+            "unit": "times",
+            "height": 8,
+            "queries": [
+                "SELECT r.started AS time, 'stored' AS metric, coalesce(m.stored,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run UNION ALL SELECT r.started, 'injected', coalesce(m.injected,0), r.name FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run ORDER BY 1"
+            ]
         }
     ]
 }
 
-out4 = pathlib.Path(__file__).with_name("learning.json")
-out4.write_text(json.dumps(learning, indent=1, ensure_ascii=False) + "\n")
-print(f"{out4}: {len([x for x in learning['panels'] if x['kind'] != 'row'])} panels")
+model = {
+    "sections": "rows",
+    "panels": [
+        {
+            "kind": "row",
+            "title": "The model in the shadow",
+            "about": "A local model replayed against the requirement author's real inputs, judged by the same mechanical gate as the sonnet rows that shipped. Nothing here touches a run."
+        },
+        {
+            "kind": "series",
+            "title": "Shadow model against sonnet",
+            "about": "Gate-pass rate of the local model's requirement rows against the sonnet rows that shipped, judged by the same mechanical gate, once per run. The gap between the lines is the distance to handing the pipeline's biggest bill to a model that costs nothing.",
+            "unit": "percent",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'local: ' || json_extract(payload,'$.model') AS metric, json_extract(payload,'$.local_rate') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' UNION ALL SELECT at, 'sonnet', json_extract(payload,'$.sonnet_rate') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "table",
+            "title": "Shadow evals",
+            "about": "Every shadow eval there has been, newest first: which model, on how many requirement pairs, and how the two scored.",
+            "unit": "",
+            "height": 7,
+            "queries": [
+                "SELECT at, json_extract(payload,'$.model') AS model, json_extract(payload,'$.pairs') AS pairs, round(json_extract(payload,'$.sonnet_rate')) AS sonnet_pct, round(json_extract(payload,'$.local_rate')) AS local_pct, round(json_extract(payload,'$.sonnet_rate')-json_extract(payload,'$.local_rate')) AS gap FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' ORDER BY at DESC"
+            ]
+        },
+        {
+            "kind": "row",
+            "title": "What every run leaves for it",
+            "about": "The raw material a tune is made of, hoarded at publish into the learning store."
+        },
+        {
+            "kind": "bars",
+            "title": "Hoard shipped per run",
+            "about": "What each run's transcripts, requirement pairs and suite verdicts weighed once tarred and shipped to the learning store. A run that shipped nothing left nothing to tune on.",
+            "unit": "mbytes",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'shipped' AS metric, json_extract(payload,'$.kb')/1024.0 AS value, json_extract(payload,'$.ticket') AS label FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "bars",
+            "title": "Hoard contents per run",
+            "about": "Inside each shipment: how many session transcripts and how many requirement-author files. The files are the pairs a tune is made of.",
+            "unit": "files",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'transcripts' AS metric, json_extract(payload,'$.transcripts') AS value, json_extract(payload,'$.ticket') AS label FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' UNION ALL SELECT at, 'funcreq files', json_extract(payload,'$.funcreq'), json_extract(payload,'$.ticket') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "row",
+            "title": "Tuning",
+            "about": "Every fine-tune there has been. Reported by the tuning step as one learning event with item 'tune': base, model, samples, epochs, loss, minutes. No tuning step exists yet; the chart is the contract it will be held to."
+        },
+        {
+            "kind": "table",
+            "title": "Tunes",
+            "about": "One row per tune: what it was made from and what it came to.",
+            "unit": "",
+            "height": 7,
+            "queries": [
+                "SELECT at, json_extract(payload,'$.base') AS base, json_extract(payload,'$.model') AS model, json_extract(payload,'$.samples') AS samples, json_extract(payload,'$.epochs') AS epochs, json_extract(payload,'$.loss') AS loss, json_extract(payload,'$.minutes') AS minutes FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='tune' ORDER BY at DESC"
+            ]
+        },
+        {
+            "kind": "series",
+            "title": "Loss per tune",
+            "about": "Final training loss of each tune, over time. Read beside the shadow eval that follows it: a loss that falls while the gate-pass rate does not is a tune that learned the wrong thing.",
+            "unit": "loss",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, json_extract(payload,'$.model') AS metric, json_extract(payload,'$.loss') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='tune' ORDER BY 1"
+            ]
+        }
+    ]
+}
+
+for name, spec_ in (("heal", heal), ("model", model)):
+    out_ = pathlib.Path(__file__).with_name(name + ".json")
+    out_.write_text(json.dumps(spec_, indent=1, ensure_ascii=False) + "\n")
+    print(f"{out_}: {len([x for x in spec_['panels'] if x['kind'] != 'row'])} panels")
