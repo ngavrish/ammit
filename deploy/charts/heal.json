@@ -9,11 +9,21 @@
   {
    "kind": "bars",
    "title": "Heal laps per run",
-   "about": "Every run in the order it started: heal laps over all its branches, and the most any one branch took, against the cap the runner gives up at. The number the memory is judged by: it has to fall as lessons accumulate, or nothing is being learned. From the runner's own heal_lap events; runs from before the event are counted from heal phases.",
+   "about": "Every run in the order it started: heal laps over all its branches. The number the memory is judged by: it has to fall as lessons accumulate, or nothing is being learned. From the runner's own heal_lap events; runs from before the event are counted from heal phases.",
    "unit": "laps",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'laps in all' AS metric, coalesce(l.total, h.total, 0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, coalesce(json_extract(payload,'$.branch'),'') AS b, max(json_extract(payload,'$.lap')) AS laps FROM events WHERE kind='heal_lap' GROUP BY 1,2) GROUP BY run) l ON l.run=r.run LEFT JOIN (SELECT run, sum(n) AS total, max(n) AS most FROM (SELECT run, count(*) AS n FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run, coalesce(json_extract(payload,'$.branch'),'')) GROUP BY run) h ON h.run=r.run UNION ALL SELECT r.started, 'most on one branch', coalesce(l.most, h.most, 0), r.name FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, coalesce(json_extract(payload,'$.branch'),'') AS b, max(json_extract(payload,'$.lap')) AS laps FROM events WHERE kind='heal_lap' GROUP BY 1,2) GROUP BY run) l ON l.run=r.run LEFT JOIN (SELECT run, sum(n) AS total, max(n) AS most FROM (SELECT run, count(*) AS n FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run, coalesce(json_extract(payload,'$.branch'),'')) GROUP BY run) h ON h.run=r.run ORDER BY 1",
+    "SELECT r.started AS time, 'heal laps' AS metric, coalesce(l.total, h.total, 0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, coalesce(json_extract(payload,'$.branch'),'') AS b, max(json_extract(payload,'$.lap')) AS laps FROM events WHERE kind='heal_lap' GROUP BY 1,2) GROUP BY run) l ON l.run=r.run LEFT JOIN (SELECT run, sum(n) AS total, max(n) AS most FROM (SELECT run, count(*) AS n FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run, coalesce(json_extract(payload,'$.branch'),'')) GROUP BY run) h ON h.run=r.run ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "bars",
+   "title": "Heal laps on one branch, against the cap",
+   "about": "Per run, the most heal laps any one branch took, against the cap the runner gives up at - limits.heal_laps_per_branch, read from ammit at every decision. A bar at the line is a branch that spent its whole budget; over it is a run from before the cap was a limit.",
+   "unit": "laps",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'most on one branch' AS metric, coalesce(l.most, h.most, 0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, coalesce(json_extract(payload,'$.branch'),'') AS b, max(json_extract(payload,'$.lap')) AS laps FROM events WHERE kind='heal_lap' GROUP BY 1,2) GROUP BY run) l ON l.run=r.run LEFT JOIN (SELECT run, sum(n) AS total, max(n) AS most FROM (SELECT run, count(*) AS n FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run, coalesce(json_extract(payload,'$.branch'),'')) GROUP BY run) h ON h.run=r.run ORDER BY 1",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.heal_laps_per_branch' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.heal_laps_per_branch' AND at*1000 < $__from)) ORDER BY at"
    ]
   },
