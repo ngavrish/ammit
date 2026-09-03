@@ -606,8 +606,8 @@ def _after(title, new):
 _after("Cost", [
     {
         "kind": "stacked",
-        "title": "Cost per turn, modelled",
-        "about": "Every turn priced as it was reported, from its tokens and the price sheet, stacked by agent or by phase. The bill the SDK sends at session end never comes for a session ammit stopped; this line does not wait for it. Turns from before the runner reported token splits are not here.",
+        "title": "Cost per turn",
+        "about": "Every turn in money as it was reported: its tokens at the SDK's own catalog prices and by the SDK's own formula - the one-hour share of cache writes at the one-hour rate, times 1.1 when inferred in the US - stacked by agent or by phase. The bill the SDK sends at session end never comes for a session ammit stopped; this does not wait for it. Turns from before the runner reported token splits are not here.",
         "unit": "currencyUSD",
         "height": 8,
         "by": [
@@ -616,17 +616,17 @@ _after("Cost", [
         ],
         "acc": "cumsum",
         "queries": [
-            "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
+            "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
         ]
     },
     {
         "kind": "table",
         "title": "Unpriced turns",
-        "about": "Turns whose model matches no family on the price sheet. A row here is a model the sheet has to learn, not a free turn.",
+        "about": "Turns whose model is not in the catalog. A row here is a model the catalog has to learn, not a free turn.",
         "unit": "",
         "height": 6,
         "queries": [
-            "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND family IS NULL GROUP BY model ORDER BY turns DESC"
+            "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND family IS NULL GROUP BY model ORDER BY turns DESC"
         ]
     }
 ])
@@ -786,12 +786,12 @@ _i = [x["title"] for x in lifetime["panels"]].index("Cost per run against limits
 lifetime["panels"][_i:_i] = [
     {
         "kind": "bars",
-        "title": "Billed against modelled, per run",
-        "about": "Per run, what the SDK's session bills added up to against what the turns cost by the price sheet. Modelled above billed is money the bills never reported: sessions that were stopped, or died with the run. Runs before the runner reported token splits have no modelled bar.",
+        "title": "Billed against counted, per run",
+        "about": "Per run, what the SDK's session bills added up to against the same turns counted one by one at the SDK's catalog prices. Counted above billed is money the bills never reported: sessions that were stopped, or died with the run. The two agree for a run whose every session ended on its own. Runs before the runner reported token splits have no counted bar.",
         "unit": "currencyUSD",
         "height": 8,
         "queries": [
-            "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'modelled', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + coalesce(json_extract(e.payload,'$.cache_write'),0)*p.cache_write)/1e6 AS usd, p.family AS family FROM events e LEFT JOIN prices p ON instr(lower(json_extract(e.payload,'$.model')), p.family) > 0 WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t GROUP BY run) m ON m.run=r.run ORDER BY 1"
+            "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'counted', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t GROUP BY run) m ON m.run=r.run ORDER BY 1"
         ]
     }
 ]

@@ -7,37 +7,58 @@ import (
 	"net/http"
 )
 
-// What a token costs. The SDK reports a bill per session and only when the
-// session ends; a session ammit stops, or one that dies with its run, never
-// reports one, and its money was invisible - eighteen sessions of run f4a30b19
-// ran twenty-five minutes on ten cores and cost nothing on the chart. A price
-// per token turns every turn event into money as it arrives.
+// What a token costs, per model: the catalog inside the Claude Code CLI the
+// runner's SDK bundles, which is the code that writes the bill. The SDK
+// reports that bill per session and only when the session ends; a session
+// ammit stops, or one that dies with its run, never reports one, and its
+// money was invisible - eighteen sessions of run f4a30b19 ran twenty-five
+// minutes on ten cores and cost nothing on the chart. With the catalog and the
+// SDK's own formula, every turn is money the moment it is reported, and the
+// sum over a session that did get a bill comes to the bill.
 //
-// The prices are fitted to the SDK's own bills rather than copied from a list:
-// the fit reproduces what was actually billed, and a list price for a model the
-// list does not name yet would be a guess dressed as a fact.
+// The formula (Claude Code, CRe): input*in + output*out + cache_read*read +
+// (cache writes at 5 minutes)*write + (cache writes at 1 hour)*write_1h, all
+// times 1.1 when usage.inference_geo is "us". Copied, not fitted: a fitted
+// price reproduces the totals and lies about every turn.
 //
 //go:embed prices.json
 var pricesJSON []byte
 
 type priceRow struct {
-	Family     string  `json:"family"`
-	Input      float64 `json:"input"`
-	Output     float64 `json:"output"`
-	CacheRead  float64 `json:"cache_read"`
-	CacheWrite float64 `json:"cache_write"`
+	Model        string  `json:"model"`
+	Name         string  `json:"name"`
+	Tier         string  `json:"tier"`
+	Input        float64 `json:"input"`
+	Output       float64 `json:"output"`
+	CacheRead    float64 `json:"cache_read"`
+	CacheWrite   float64 `json:"cache_write"`
+	CacheWrite1h float64 `json:"cache_write_1h"`
 }
 
 type priceSheet struct {
-	About    string     `json:"about"`
-	Fitted   string     `json:"fitted"`
-	Families []priceRow `json:"families"`
+	About       string     `json:"about"`
+	Source      string     `json:"source"`
+	USSurcharge float64    `json:"us_surcharge"`
+	Models      []priceRow `json:"models"`
 }
 
 func prices() priceSheet {
 	var s priceSheet
 	_ = json.Unmarshal(pricesJSON, &s)
 	return s
+}
+
+// dropOldPrices removes the first shape of the table (keyed by family), so the
+// schema can make the one keyed by model. The sheet is re-seeded on every
+// start; nothing in it is worth migrating.
+func dropOldPrices() {
+	var n int
+	_ = db.QueryRow(`SELECT count(*) FROM pragma_table_info('prices') WHERE name = 'family'`).Scan(&n)
+	if n > 0 {
+		if _, err := db.Exec(`DROP TABLE prices`); err != nil {
+			log.Printf("ammit: prices: %v", err)
+		}
+	}
 }
 
 // seedPrices writes the sheet into the prices table, replacing what was there:
@@ -49,9 +70,10 @@ func seedPrices() {
 		log.Printf("ammit: prices: %v", err)
 		return
 	}
-	for _, p := range prices().Families {
-		if _, err := db.Exec(`INSERT INTO prices (family, input, output, cache_read, cache_write) VALUES (?,?,?,?,?)`,
-			p.Family, p.Input, p.Output, p.CacheRead, p.CacheWrite); err != nil {
+	s := prices()
+	for _, p := range s.Models {
+		if _, err := db.Exec(`INSERT INTO prices (model, name, tier, input, output, cache_read, cache_write, cache_write_1h, us_surcharge) VALUES (?,?,?,?,?,?,?,?,?)`,
+			p.Model, p.Name, p.Tier, p.Input, p.Output, p.CacheRead, p.CacheWrite, p.CacheWrite1h, s.USSurcharge); err != nil {
 			log.Printf("ammit: prices: %v", err)
 		}
 	}

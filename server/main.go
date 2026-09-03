@@ -51,16 +51,21 @@ CREATE INDEX IF NOT EXISTS events_kind ON events (kind, at);
 CREATE INDEX IF NOT EXISTS events_span ON events (run, kind, session);
 CREATE INDEX IF NOT EXISTS events_phase ON events (run, kind, phase);
 
--- What a token costs, by model family, USD per million. Seeded from the
--- embedded prices.json on every start, so a chart can price a turn the moment
--- it is reported: a session that dies before its bill arrives still paid for
--- every turn it took, and the ledger's spend row never comes for it.
+-- What a token costs, per model, USD per million - the SDK's own catalog,
+-- with both cache-write rates and the US surcharge, so a turn is priced as
+-- the bill prices it. Seeded from the embedded prices.json on every start.
+-- A session that dies before its bill arrives still paid for every turn it
+-- took, and the ledger's spend row never comes for it.
 CREATE TABLE IF NOT EXISTS prices (
-    family      TEXT PRIMARY KEY,
-    input       REAL NOT NULL,
-    output      REAL NOT NULL,
-    cache_read  REAL NOT NULL,
-    cache_write REAL NOT NULL
+    model          TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    tier           TEXT NOT NULL,
+    input          REAL NOT NULL,
+    output         REAL NOT NULL,
+    cache_read     REAL NOT NULL,
+    cache_write    REAL NOT NULL,
+    cache_write_1h REAL NOT NULL,
+    us_surcharge   REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -746,7 +751,6 @@ type openRun struct {
 	started, usd float64
 	turns        int
 }
-
 
 // sweepAbandoned closes runs nothing has reported on for longer than a run is
 // allowed to take.
@@ -1732,6 +1736,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("ammit: no database: %v", err)
 	}
+	dropOldPrices()
 	if _, err := db.Exec(schema); err != nil {
 		log.Fatalf("ammit: could not make the tables: %v", err)
 	}
