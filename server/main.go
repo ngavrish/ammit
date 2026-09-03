@@ -2124,8 +2124,14 @@ func main() {
 
 	// The same requests added up per agent, which is where the question starts:
 	// who waits, for how long in total, and what they get per second of it. A
-	// phase whose bytes-per-second is an order off its neighbours' is not slow
+	// phase whose tokens-per-second is an order off its neighbours' is not slow
 	// because the answers are long.
+	//
+	// Tokens, not bytes: the client sent `out` as characters of visible text
+	// for some messages and the SDK's token count for others, so a sum over
+	// this column added two units together. It is tokens throughout now, and
+	// a ResultMessage — which carries the session's cumulative output, not one
+	// request's — no longer lands here at all.
 	mux.HandleFunc("GET /requests/by-agent", func(w http.ResponseWriter, r *http.Request) {
 		where, args := "kind='request_end'"+notClosed(r), []any{}
 		if run := r.URL.Query().Get("run"); run != "" {

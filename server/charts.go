@@ -69,6 +69,10 @@ type panel struct {
 	// "lifetime" puts an added chart on the all-time page instead of the run
 	// pages: a chart of every run has no business on the page of one.
 	Scope string `json:"scope,omitempty"`
+	// Why the query is written the way it is, for whoever changes it next.
+	// Not drawn. JSON has nowhere else to keep a reason, and a reason that is
+	// only in a commit message is not where the next reader is looking.
+	Why string `json:"why,omitempty"`
 }
 
 type chartSpec struct {

@@ -84,7 +84,7 @@
   {
    "kind": "stacked",
    "title": "Cost per turn",
-   "about": "Every turn in money as it was reported: its tokens at the SDK's own catalog prices and by the SDK's own formula - the one-hour share of cache writes at the one-hour rate, times 1.1 when inferred in the US - stacked by agent or by phase. The output share is the larger of the SDK's per-turn figure and the runner's estimate of the message, because the SDK's per-turn figure is usually the stream's placeholder; the exact output count exists only per session. The bill the SDK sends at session end never comes for a session ammit stopped; this does not wait for it. Turns from before the runner reported token splits are not here.",
+   "about": "Every turn in money as it was reported: its tokens at the SDK's own catalog prices and by the SDK's own formula - the one-hour share of cache writes at the one-hour rate, times 1.1 when inferred in the US - stacked by agent or by phase. The bill the SDK sends at session end never comes for a session ammit stopped; this does not wait for it. Turns from before the runner reported token splits are not here. The output share is priced from the estimate whenever the SDK's own figure was the stream's placeholder, which is nearly every turn: there is no exact per-turn output count, only the session's on session_end.",
    "unit": "currencyUSD",
    "height": 8,
    "by": [
@@ -94,7 +94,8 @@
    "acc": "cumsum",
    "queries": [
     "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
-   ]
+   ],
+   "why": "A turn reports its output twice: tokens_out is what the SDK said, and while a session is streaming that is the message_start placeholder - a handful of tokens, never the turn - and out_est is what the message was worth at four characters a token. The runner writes both rather than choose, because one of these is priced and an estimate written into a priced field is money nobody spent. The turns table keeps both columns as they came. Choosing is done in the query, and it is max: whichever number is real, it is the larger one. Every query that reads a turn's output takes the pair; simplifying it back to tokens_out alone brings the placeholder back into the bill. The spend events are the session's own bill and need none of this."
   },
   {
    "kind": "table",
@@ -104,7 +105,8 @@
    "height": 6,
    "queries": [
     "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) WHERE at*1000 BETWEEN $__from AND $__to AND tier IS NULL GROUP BY model ORDER BY turns DESC"
-   ]
+   ],
+   "why": "A turn reports its output twice: tokens_out is what the SDK said, and while a session is streaming that is the message_start placeholder - a handful of tokens, never the turn - and out_est is what the message was worth at four characters a token. The runner writes both rather than choose, because one of these is priced and an estimate written into a priced field is money nobody spent. The turns table keeps both columns as they came. Choosing is done in the query, and it is max: whichever number is real, it is the larger one. Every query that reads a turn's output takes the pair; simplifying it back to tokens_out alone brings the placeholder back into the bill. The spend events are the session's own bill and need none of this."
   },
   {
    "kind": "bars",
@@ -168,7 +170,8 @@
     "time",
     "agent",
     "phase"
-   ]
+   ],
+   "why": "A turn reports its output twice: tokens_out is what the SDK said, and while a session is streaming that is the message_start placeholder - a handful of tokens, never the turn - and out_est is what the message was worth at four characters a token. The runner writes both rather than choose, because one of these is priced and an estimate written into a priced field is money nobody spent. The turns table keeps both columns as they came. Choosing is done in the query, and it is max: whichever number is real, it is the larger one. Every query that reads a turn's output takes the pair; simplifying it back to tokens_out alone brings the placeholder back into the bill. The spend events are the session's own bill and need none of this."
   },
   {
    "kind": "candles",

@@ -46,7 +46,8 @@
    "height": 8,
    "queries": [
     "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'counted', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) GROUP BY run) m ON m.run=r.run ORDER BY 1"
-   ]
+   ],
+   "why": "A turn reports its output twice: tokens_out is what the SDK said, and while a session is streaming that is the message_start placeholder - a handful of tokens, never the turn - and out_est is what the message was worth at four characters a token. The runner writes both rather than choose, because one of these is priced and an estimate written into a priced field is money nobody spent. The turns table keeps both columns as they came. Choosing is done in the query, and it is max: whichever number is real, it is the larger one. Every query that reads a turn's output takes the pair; simplifying it back to tokens_out alone brings the placeholder back into the bill. The spend events are the session's own bill and need none of this."
   },
   {
    "kind": "bars",
