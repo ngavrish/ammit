@@ -63,24 +63,37 @@
   },
   {
    "kind": "pie",
-   "title": "Cost by phase",
-   "about": "What each phase is costing, as it accrues",
+   "title": "Cost",
+   "about": "What the run is costing, as a share: by the phase that spent it or by the agent that did. The same spend, two questions.",
    "unit": "currencyUSD",
    "height": 8,
    "queries": [
-    "SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
+    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, json_extract(payload,'$.usd') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 < $__from)) ORDER BY at"
-   ]
+   ],
+   "label": "Cost",
+   "by": [
+    "phase",
+    "agent"
+   ],
+   "agg": "sum",
+   "acc": "cumsum"
   },
   {
    "kind": "bars",
-   "title": "Turns by phase",
-   "about": "Tool calls in the window, by the phase that made them.",
+   "title": "Turns",
+   "about": "Tool calls in the window, by the phase that made them or by the agent.",
    "unit": "turns",
    "height": 8,
    "queries": [
-    "SELECT max(at) AS time, coalesce(nullif(phase,''),'no phase') AS metric, count(*) AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to GROUP BY 2 ORDER BY 3 DESC"
-   ]
+    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, 1 AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
+   ],
+   "label": "Turns",
+   "by": [
+    "phase",
+    "agent"
+   ],
+   "agg": "sum"
   },
   {
    "kind": "scatter",
@@ -107,18 +120,6 @@
    "label": "Idle within phase"
   },
   {
-   "kind": "series",
-   "title": "Memory while each phase ran, against limits.memory_mb",
-   "about": "Every sampled container added up, labelled with the phase that was open when the reading…",
-   "unit": "mbytes",
-   "height": 8,
-   "queries": [
-    "SELECT t AS time, phase AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' GROUP BY s.at) ORDER BY 1",
-    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.memory_mb' AND at*1000 < $__from)) ORDER BY at"
-   ],
-   "label": "Memory by phase"
-  },
-  {
    "kind": "timeline",
    "title": "Time in a phase, minute by minute",
    "about": "When each phase began and ended. A bar that reaches the right edge is still open.",
@@ -132,17 +133,6 @@
   {
    "kind": "row",
    "title": "By agent session"
-  },
-  {
-   "kind": "pie",
-   "title": "Cost by agent",
-   "about": "Which agent is spending the money",
-   "unit": "currencyUSD",
-   "height": 8,
-   "queries": [
-    "SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, sum(json_extract(payload,'$.usd')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
-    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 < $__from)) ORDER BY at"
-   ]
   },
   {
    "kind": "scatter",
@@ -168,16 +158,6 @@
    "label": "Output per turn"
   },
   {
-   "kind": "bars",
-   "title": "Turns by agent",
-   "about": "Tool calls in the window, by the agent that made them.",
-   "unit": "turns",
-   "height": 8,
-   "queries": [
-    "SELECT max(at) AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to GROUP BY 2 ORDER BY 3 DESC"
-   ]
-  },
-  {
    "kind": "scatter",
    "title": "Session length against timeouts.session",
    "about": "One point per finished session, by agent",
@@ -200,18 +180,6 @@
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.turn' AND at*1000 < $__from)) ORDER BY at"
    ],
    "label": "Silence between turns"
-  },
-  {
-   "kind": "series",
-   "title": "Memory while each agent ran, against limits.memory_mb",
-   "about": "The same readings, labelled with the session that was open when they were taken",
-   "unit": "mbytes",
-   "height": 8,
-   "queries": [
-    "SELECT t AS time, agent AS metric, mb AS value FROM ( SELECT s.at AS t, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, sum(json_extract(s.payload,'$.memory_mb')) AS mb FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' GROUP BY s.at) ORDER BY 1",
-    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.memory_mb' AND at*1000 < $__from)) ORDER BY at"
-   ],
-   "label": "Memory by agent"
   },
   {
    "kind": "timeline",
@@ -241,25 +209,20 @@
   },
   {
    "kind": "stacked",
-   "title": "Tokens out, by phase",
-   "about": "Which phase is generating the volume",
+   "title": "Tokens out",
+   "about": "Generated tokens as they accrued, stacked by the phase that generated them or by the agent.",
    "unit": "tokens",
    "height": 8,
    "queries": [
-    "SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, json_extract(payload,'$.tokens_out') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
    ],
-   "label": "Tokens out by phase"
-  },
-  {
-   "kind": "stacked",
-   "title": "Tokens out, by agent",
-   "about": "And which agent inside it",
-   "unit": "tokens",
-   "height": 8,
-   "queries": [
-    "SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+   "label": "Tokens out",
+   "by": [
+    "phase",
+    "agent"
    ],
-   "label": "Tokens out by agent"
+   "agg": "sum",
+   "acc": "cumsum"
   },
   {
    "kind": "series",
@@ -300,15 +263,21 @@
   },
   {
    "kind": "stacked",
-   "title": "Memory by container against limits.memory_mb",
-   "about": "Read from outside every sample.every seconds",
+   "title": "Memory against limits.memory_mb",
+   "about": "Read from outside every sample.every seconds: by container, or the same readings added up and labelled with the phase or the agent session that was open when they were taken.",
    "unit": "mbytes",
    "height": 8,
    "queries": [
-    "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.memory_mb') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at",
+    "SELECT s.at AS time, json_extract(s.payload,'$.container') AS container, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, json_extract(s.payload,'$.memory_mb') AS value FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' ORDER BY s.at",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.memory_mb' AND at*1000 < $__from)) ORDER BY at"
    ],
-   "label": "Memory by container"
+   "label": "Memory",
+   "by": [
+    "container",
+    "phase",
+    "agent"
+   ],
+   "agg": "sum"
   },
   {
    "kind": "series",

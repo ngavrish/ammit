@@ -458,7 +458,14 @@ function runParam(){ return chosen?"&run="+encodeURIComponent(chosen):"" }
 // there. Pinned to the window, the line left the chart entirely.
 const secs = t => t > 1e12 ? t/1000 : t;
 
-function pivot(cols,rows){
+// opts.agg "sum": rows sharing a moment and a name are added rather than the
+// last one winning - the same memory reading under one phase from three
+// containers is their sum. opts.acc "cumsum": each line becomes its own
+// running total, which is what a chart of spend or tokens "as they accrued"
+// is. Both let one row-per-event query serve every colouring the heading
+// offers, where there used to be a window-function query per colouring.
+function pivot(cols,rows,opts){
+  opts=opts||{};
   const ti=cols.indexOf("time"),mi=cols.indexOf("metric"),vi=cols.indexOf("value");
   if(ti<0||vi<0) return null;
   const times=[...new Set(rows.map(r=>secs(+r[ti])))].sort((a,b)=>a-b);
@@ -467,8 +474,15 @@ function pivot(cols,rows){
   const data=[times,...names.map(()=>new Array(times.length).fill(null))];
   for(const r of rows){
     const i=at.get(secs(+r[ti])); const j=mi<0?0:names.indexOf(String(r[mi]));
-    if(i!=null&&j>=0) data[j+1][i]=r[vi]==null?null:+r[vi];
+    if(i==null||j<0) continue;
+    const v=r[vi]==null?null:+r[vi];
+    if(opts.agg==="sum"&&v!=null&&data[j+1][i]!=null) data[j+1][i]+=v; else data[j+1][i]=v;
   }
+  if(opts.acc==="cumsum") names.forEach((n,j)=>{
+    if(LIMIT.test(n)) return;
+    let run=null; const col=data[j+1];
+    for(let k=0;k<col.length;k++){ if(col[k]!=null){ run=(run||0)+col[k]; } if(run!=null) col[k]=run; }
+  });
   return {data,names};
 }
 
@@ -609,8 +623,9 @@ function drawSeries(box,payload,kind){
   const bad=(payload.series||[]).find(s=>s&&s.error);
   if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
   box._payload=payload; box._kind=kind;
-  const all=rowsOf(payload,box.dataset.by||((payload.panel||{}).by||[])[0]);
-  const p=pivot(all.cols,all.rows);
+  const P=payload.panel||{};
+  const all=rowsOf(payload,box.dataset.by||(P.by||[])[0]);
+  const p=pivot(all.cols,all.rows,P);
   box.classList.toggle("drawn", !!(p&&p.data[0].length));
   if(!p||!p.data[0].length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
   box.dataset.metrics=p.names.join(" ");
@@ -737,8 +752,9 @@ function drawSeries(box,payload,kind){
 // The end of every line, as a bar: how many turns each phase took, how long
 // each run went. The limit, if the panel has one, is a dashed mark on the
 // same scale rather than a number in a corner.
-function finals(payload){
-  const all=rowsOf(payload), p=pivot(all.cols,all.rows);
+function finals(payload,by){
+  const P=payload.panel||{};
+  const all=rowsOf(payload,by||(P.by||[])[0]), p=pivot(all.cols,all.rows,P);
   if(!p) return {parts:[],limit:null};
   let limit=null; const parts=[];
   p.names.forEach((n,i)=>{
@@ -762,12 +778,21 @@ function drawBars(box,payload){
   // The limit is a dashed line across, and every column knows its share of
   // it. Drag across the columns to keep only those runs; double-click for
   // all of them. The name and date filters at the top narrow it too.
-  const all=rowsOf(payload); let limit=null; const rows=[];
+  box._payload=payload;
+  const P=payload.panel||{};
+  const all=rowsOf(payload,box.dataset.by||(P.by||[])[0]); let limit=null; let rows=[];
   for(const r of all.rows){
     const v=r[2]==null?null:+r[2]; if(v==null||isNaN(v)) continue;
     const name=String(r[1]);
     if(LIMIT.test(name)){ limit={name,value:v}; continue; }
     rows.push({t:secs(+r[0]),name,value:v,label:r[3]==null?null:String(r[3])});
+  }
+  // agg "sum" on a bar chart: one bar per name, the rows added up - a count
+  // per phase from one row per turn.
+  if(P.agg==="sum"){
+    const by=new Map();
+    for(const x of rows){ const g=by.get(x.name); if(g){ g.value+=x.value; g.t=Math.max(g.t,x.t); } else by.set(x.name,{t:x.t,name:x.name,value:x.value,label:null}); }
+    rows=[...by.values()].sort((a,b)=>b.value-a.value);
   }
   box.classList.toggle("drawn", rows.length>0);
   if(!rows.length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
@@ -1006,7 +1031,8 @@ function drawTimeline(box,payload){
 function drawPie(box,payload){
   const bad=(payload.series||[]).find(s=>s&&s.error);
   if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
-  const parts=finals(payload).parts.filter(x=>x.value>0);
+  box._payload=payload;
+  const parts=finals(payload,box.dataset.by).parts.filter(x=>x.value>0);
   box.classList.toggle("drawn", parts.length>0);
   if(!parts.length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
   box.dataset.metrics=parts.map(x=>x.name).join(" ");
@@ -1122,7 +1148,8 @@ async function load(){
     try{
       const r=await fetch("/charts/data?panel="+i+"&from="+from+"&to="+to+q);
       const payload=await r.json();
-      ({table:drawTable,pie:drawPie,bars:drawBars,timeline:drawTimeline,candles:drawCandles,stats:drawStats}[p.kind]||drawSeries)(box,payload,p.kind);
+        box._draw=({table:drawTable,pie:drawPie,bars:drawBars,timeline:drawTimeline,candles:drawCandles,stats:drawStats}[p.kind]||drawSeries);
+      box._draw(box,payload,p.kind);
       drawn++;
     }catch(e){ box.innerHTML='<div class=err>'+e+'</div>' }
   }));
@@ -1289,7 +1316,7 @@ async function boot(){
     const box=document.getElementById("plot-"+b.dataset.i);
     b.parentElement.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
     box.dataset.by=b.dataset.by;
-    if(box._payload) drawSeries(box,box._payload,box._kind);
+    if(box._payload&&box._draw) box._draw(box,box._payload,box._kind);
   });
   main.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
     local.hidden=local.hidden.filter(t=>t!==c.dataset.t);

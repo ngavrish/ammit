@@ -203,16 +203,13 @@ tbl("Requests that died, in full",
 # -------------------------------------------------------------- by phase
 row("By phase")
 
-ts("Cost by phase", "What each phase is costing, as it accrues. \"What is the design "
+ts("Cost", "What each phase is costing, as it accrues. \"What is the design "
    "costing us\" is this chart and no other.", "currencyUSD", [
-    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
-         sum(json_extract(payload,'$.usd'))
-           OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
+    q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, json_extract(payload,'$.usd') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"""),
     limit_of("limits.usd_per_run")], 0)
 
-ts("Turns by phase", "One per tool call — runsdb emits a turn from log() when the line is a tool line, so this counts tool calls, not exchanges with the model.", "turns", [
-    q("""SELECT max(at) AS time, coalesce(nullif(phase,''),'no phase') AS metric, count(*) AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to GROUP BY 2 ORDER BY 3 DESC""")], 12)
+ts("Turns", "One per tool call — runsdb emits a turn from log() when the line is a tool line, so this counts tool calls, not exchanges with the model.", "turns", [
+    q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, 1 AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to ORDER BY at""")], 12)
 
 ts("Phase length against timeouts.phase", "One point per finished phase.", "s", [
     q("""SELECT at AS time, coalesce(nullif(phase,''),'?') AS metric,
@@ -229,18 +226,6 @@ ts("Idle inside a phase, against timeouts.turn",
          AND kind IN ('turn','log','session_start','phase_start') ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("timeouts.turn")], 12)
 
-ts("Memory while each phase ran, against limits.memory_mb",
-   "Every sampled container added up, labelled with the phase that was open when the "
-   "reading was taken. It is a claim about time, not about blame: several branches "
-   "share a worker.", "mbytes", [
-    q("""SELECT t AS time, phase AS metric, mb AS value FROM (
-           SELECT s.at AS t, coalesce((SELECT p.phase FROM events p
-             WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at
-             ORDER BY p.at DESC LIMIT 1),'no phase') AS phase,
-             sum(json_extract(s.payload,'$.memory_mb')) AS mb
-           FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' GROUP BY s.at) ORDER BY 1"""),
-    limit_of("limits.memory_mb")], 0)
-
 ts("Time in a phase, minute by minute",
    "How long the open phase has been open. A climb that does not reset is a phase "
    "nothing is ending.", "s", [
@@ -248,13 +233,6 @@ ts("Time in a phase, minute by minute",
 
 # ------------------------------------------------------ by agent session
 row("By agent session")
-
-ts("Cost by agent", "Which agent is spending the money.", "currencyUSD", [
-    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
-         sum(json_extract(payload,'$.usd'))
-           OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
-    limit_of("limits.usd_per_run")], 0)
 
 ts("What one turn carried, against limits.turn_tokens",
    "Every turn as it was sent — the system prompt, whatever was inlined into it, "
@@ -274,9 +252,6 @@ ts("Output per turn, by agent",
          json_extract(payload,'$.tokens_out') AS value
          FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at""")], 12)
 
-ts("Turns by agent", "Which agent is taking the turns.", "turns", [
-    q("""SELECT max(at) AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to GROUP BY 2 ORDER BY 3 DESC""")], 12)
-
 ts("Session length against timeouts.session", "One point per finished session, by agent.",
    "s", [
     q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
@@ -290,17 +265,6 @@ ts("Silence between turns, against timeouts.turn",
          at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("timeouts.turn")], 12)
-
-ts("Memory while each agent ran, against limits.memory_mb",
-   "The same readings, labelled with the session that was open when they were taken.",
-   "mbytes", [
-    q("""SELECT t AS time, agent AS metric, mb AS value FROM (
-           SELECT s.at AS t, coalesce((SELECT a.agent FROM events a
-             WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at
-             ORDER BY a.at DESC LIMIT 1),'nobody') AS agent,
-             sum(json_extract(s.payload,'$.memory_mb')) AS mb
-           FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' GROUP BY s.at) ORDER BY 1"""),
-    limit_of("limits.memory_mb")], 0)
 
 ts("Time in a session, minute by minute",
    "How long the open session has been open, by agent.", "s", [
@@ -320,15 +284,8 @@ ts("Tokens out, per run", "Generated tokens as they accrued. This is the number 
          sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
 
-ts("Tokens out, by phase", "Which phase is generating the volume.", "tokens", [
-    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
-         sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
-
-ts("Tokens out, by agent", "And which agent inside it.", "tokens", [
-    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
-         sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
+ts("Tokens out", "Which phase is generating the volume.", "tokens", [
+    q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, json_extract(payload,'$.tokens_out') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at""")], 12)
 
 ts("Cache read, per run",
    "Context read back rather than re-sent. Large is good here: it is the same "
@@ -357,13 +314,11 @@ tbl("Tokens and what they cost",
 
 row("The machine")
 
-ts("Memory by container against limits.memory_mb",
+ts("Memory against limits.memory_mb",
    "Read from outside every sample.every seconds. A worker the kernel kills leaves no "
    "evidence of its own: the process that would have said so is the one that died.",
    "mbytes", [
-    q("""SELECT at AS time, json_extract(payload,'$.container') AS metric,
-         json_extract(payload,'$.memory_mb') AS value
-         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at"""),
+    q("""SELECT s.at AS time, json_extract(s.payload,'$.container') AS container, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, json_extract(s.payload,'$.memory_mb') AS value FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' ORDER BY s.at"""),
     limit_of("limits.memory_mb")], 0)
 
 ts("CPU by container", "Percent of one core, as the container client reports it.",
@@ -548,21 +503,18 @@ table("What each phase spent its calls on",
 KIND = {
     "Request time against timeouts.request": "scatter",
     "Requests that died, per minute": "columns",
-    "Cost by phase": "pie",
-    "Turns by phase": "bars",
+    "Cost": "pie",
+    "Turns": "bars",
     "Phase length against timeouts.phase": "scatter",
     "Idle inside a phase, against timeouts.turn": "scatter",
     "Time in a phase, minute by minute": "timeline",
-    "Cost by agent": "pie",
     "What one turn carried, against limits.turn_tokens": "scatter",
     "Output per turn, by agent": "scatter",
-    "Turns by agent": "bars",
     "Session length against timeouts.session": "scatter",
     "Silence between turns, against timeouts.turn": "scatter",
     "Time in a session, minute by minute": "timeline",
-    "Tokens out, by phase": "stacked",
-    "Tokens out, by agent": "stacked",
-    "Memory by container against limits.memory_mb": "stacked",
+    "Tokens out": "stacked",
+    "Memory against limits.memory_mb": "stacked",
     "Phases and branches": "timeline",
     "Findings per gate, each time it ran": "columns",
     "How long a round takes, by gate": "columns",
@@ -570,14 +522,18 @@ KIND = {
 
 # A sentence rewritten for the way the chart is drawn now.
 ABOUT = {
+    "Memory against limits.memory_mb":
+        "Read from outside every sample.every seconds: by container, or the same readings added up and labelled with the phase or the agent session that was open when they were taken.",
+    "Tokens out":
+        "Generated tokens as they accrued, stacked by the phase that generated them or by the agent.",
+    "Cost":
+        "What the run is costing, as a share: by the phase that spent it or by the agent that did. The same spend, two questions.",
     "Request time against timeouts.request":
         "One point per wait for the model: ask, and get an answer back. Coloured by agent or by phase - the same waits, two questions.",
-    "Turns by phase":
-        "Tool calls in the window, by the phase that made them.",
+    "Turns":
+        "Tool calls in the window, by the phase that made them or by the agent.",
     "Time in a phase, minute by minute":
         "When each phase began and ended. A bar that reaches the right edge is still open.",
-    "Turns by agent":
-        "Tool calls in the window, by the agent that made them.",
     "Time in a session, minute by minute":
         "When each agent's session began and ended, one row per agent.",
     "Phases and branches":
@@ -587,6 +543,8 @@ ABOUT = {
 # The short heading. The title stays the panel's name - hiding, kinds and
 # additions are keyed by it - and the label is what the page prints.
 LABEL = {
+    "Turns": "Turns",
+    "Cost": "Cost",
     "Cost per run against limits.usd_per_run": "Cost per run",
     "Turns per run against limits.turns_per_run": "Turns per run",
     "How long a run has been going, against timeouts.run": "Run duration",
@@ -596,21 +554,18 @@ LABEL = {
     "Requests that died, in full": "Failed requests",
     "Phase length against timeouts.phase": "Phase length",
     "Idle inside a phase, against timeouts.turn": "Idle within phase",
-    "Memory while each phase ran, against limits.memory_mb": "Memory by phase",
     "Time in a phase, minute by minute": "Phase timeline",
     "What one turn carried, against limits.turn_tokens": "Context per turn",
     "Output per turn, by agent": "Output per turn",
     "Session length against timeouts.session": "Session length",
     "Silence between turns, against timeouts.turn": "Silence between turns",
-    "Memory while each agent ran, against limits.memory_mb": "Memory by agent",
     "Time in a session, minute by minute": "Session timeline",
     "Tokens out, per run": "Tokens out per run",
-    "Tokens out, by phase": "Tokens out by phase",
-    "Tokens out, by agent": "Tokens out by agent",
+    "Tokens out": "Tokens out",
     "Cache read, per run": "Cache read per run",
     "Cache written, per run": "Cache written per run",
     "Tokens and what they cost": "Tokens and cost",
-    "Memory by container against limits.memory_mb": "Memory by container",
+    "Memory against limits.memory_mb": "Memory",
     "Phases and branches": "Phases by run",
     "Findings per gate, each time it ran": "Findings per gate",
     "How long a round takes, by gate": "Round duration by gate",
@@ -633,9 +588,15 @@ LABEL = {
     "Repeated calls, by kind": "Repeated calls by kind",
 }
 
-# Two colourings of one set of points: the page offers the switch.
-BY = {
-    "Request time against timeouts.request": ["agent", "phase"],
+# One query, several colourings: the page offers the switch (by), folds rows
+# that share a moment (agg: sum) and runs a total along each line (acc:
+# cumsum), so four window-function queries become one row-per-event query.
+EXTRA = {
+    "Request time against timeouts.request": {"by": ["agent", "phase"]},
+    "Cost": {"by": ["phase", "agent"], "agg": "sum", "acc": "cumsum"},
+    "Turns": {"by": ["phase", "agent"], "agg": "sum"},
+    "Tokens out": {"by": ["phase", "agent"], "agg": "sum", "acc": "cumsum"},
+    "Memory against limits.memory_mb": {"by": ["container", "phase", "agent"], "agg": "sum"},
 }
 
 spec = {"panels": []}
@@ -665,8 +626,8 @@ for p in panels:
 for p in spec["panels"]:
     if p["title"] in LABEL:
         p["label"] = LABEL[p["title"]]
-    if p["title"] in BY:
-        p["by"] = BY[p["title"]]
+    if p["title"] in EXTRA:
+        p.update(EXTRA[p["title"]])
 
 out = pathlib.Path(__file__).with_name("panels.json")
 out.write_text(json.dumps(spec, indent=1, ensure_ascii=False) + "\n")

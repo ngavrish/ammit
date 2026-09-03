@@ -44,7 +44,12 @@ type panel struct {
 	Top bool `json:"top,omitempty"`
 	// Columns the page may colour the same rows by, when the query returns
 	// them instead of one metric: ["agent", "phase"] is a switch in the heading.
-	By      []string `json:"by,omitempty"`
+	By []string `json:"by,omitempty"`
+	// agg "sum": rows that share a moment and a name are added; acc "cumsum":
+	// every line is its own running total. Together they let one row-per-event
+	// query stand in for a window-function query per colouring.
+	Agg     string   `json:"agg,omitempty"`
+	Acc     string   `json:"acc,omitempty"`
 	About   string   `json:"about"`
 	Unit    string   `json:"unit"`
 	Height  int      `json:"height"`
