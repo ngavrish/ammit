@@ -113,9 +113,9 @@
    "title": "By agent session"
   },
   {
-   "kind": "series",
+   "kind": "candles",
    "title": "What one turn carried, against limits.turn_tokens",
-   "about": "Every turn as it was sent: the system prompt, what was inlined into it, and the conversation so far. A line per agent or per phase, climbing as the conversation grows.",
+   "about": "Every turn as it was sent: the system prompt, what was inlined into it, and the conversation so far. As a spread by agent or by phase, against the cap: which one carries the fat prompt. Over time: how it grew.",
    "unit": "tokens",
    "height": 8,
    "queries": [
@@ -125,7 +125,8 @@
    "label": "Context per turn",
    "by": [
     "agent",
-    "phase"
+    "phase",
+    "time"
    ]
   },
   {

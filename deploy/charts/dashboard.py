@@ -456,8 +456,8 @@ KIND = {
     "Silence between turns, against timeouts.turn": "candles",
     "Cache, read against written": "series",
     "Gates: rounds, findings, minutes": "bars",
-    "What one turn carried, against limits.turn_tokens": "series",
     "Output per turn, by agent": "candles",
+    "What one turn carried, against limits.turn_tokens": "candles",
 }
 
 # A sentence rewritten for the way the chart is drawn now.
@@ -486,10 +486,10 @@ ABOUT = {
         "One row per gate: how many rounds it ran, how much it refused in all, and how many minutes the rounds and their repairs took. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
     "CPU by container":
         "Docker's own figure, as cores: its percent of one core summed over every core, divided by a hundred. Ten cores busy is 10. Docker Desktop overshoots the machine's core count now and then; that is its sampling, not a container.",
-    "What one turn carried, against limits.turn_tokens":
-        "Every turn as it was sent: the system prompt, what was inlined into it, and the conversation so far. A line per agent or per phase, climbing as the conversation grows.",
     "Output per turn, by agent":
         "What the model actually wrote in one turn, as a spread: over time, by agent, or by phase. Read beside Context per turn: three hundred tokens read for every one written is a prompt problem.",
+    "What one turn carried, against limits.turn_tokens":
+        "Every turn as it was sent: the system prompt, what was inlined into it, and the conversation so far. As a spread by agent or by phase, against the cap: which one carries the fat prompt. Over time: how it grew.",
 }
 
 # The short heading. The title stays the panel's name - hiding, kinds and
@@ -548,8 +548,8 @@ EXTRA = {
     "Gates: rounds, findings, minutes": {"unit": ""},
     "Idle time piling up, per run": {"scope": "window"},
     "Phases and branches": {"scope": "window"},
-    "What one turn carried, against limits.turn_tokens": {"by": ["agent", "phase"]},
     "Output per turn, by agent": {"by": ["time", "agent", "phase"]},
+    "What one turn carried, against limits.turn_tokens": {"by": ["agent", "phase", "time"]},
 }
 
 spec = {"panels": []}
