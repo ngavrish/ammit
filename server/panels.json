@@ -252,9 +252,9 @@
    "agg": "sum"
   },
   {
-   "kind": "series",
+   "kind": "stacked",
    "title": "CPU by container",
-   "about": "Docker's own figure, as cores: its percent of one core summed over every core, divided by a hundred. Ten cores busy is 10. Docker Desktop overshoots the machine's core count now and then; that is its sampling, not a container.",
+   "about": "Docker's own figure, as cores, stacked: the height is what the whole machine is doing, the bands are who. Ten cores busy is 10. Docker Desktop overshoots the machine's core count now and then; that is its sampling, not a container.",
    "unit": "cores",
    "height": 8,
    "queries": [

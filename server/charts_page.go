@@ -330,8 +330,10 @@ function limitTitle(name){ return LIMIT_TITLES[name] || name }
 function humanize(text){
   return String(text).replace(/\b(limits|timeouts)\.[a-z_]+/g, m=>LIMIT_TITLES[m] ? "the "+LIMIT_TITLES[m].charAt(0).toLowerCase()+LIMIT_TITLES[m].slice(1) : m);
 }
-const COLORS=["#CD7F32","#0EA5E9","#22C55E","#FB923C","#EF4444","#8B5CF6",
-  "#0891B2","#CA8A04","#2563EB","#DB2777"];
+// Twenty, told apart: seventeen containers on a palette of ten put the two
+// that mattered in the same orange.
+const COLORS=["#CD7F32","#0EA5E9","#22C55E","#EF4444","#8B5CF6","#0891B2","#CA8A04","#2563EB","#DB2777","#059669",
+  "#F97316","#6366F1","#14B8A6","#A16207","#7C3AED","#DC2626","#0284C7","#65A30D","#BE185D","#4B5563"];
 const main=document.getElementById("main");
 let panels=[];
 let local=null;
@@ -648,6 +650,18 @@ function drawSeries(box,payload,kind){
   if(dlo===Infinity){ dlo=p.data[0][0]; dhi=p.data[0][p.data[0].length-1]; }
   const legendFmt=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short",
     hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+  // The series that matters most comes first - on the chart and in the
+  // legend: sorted by peak, biggest first, the limit last. Seventeen
+  // containers in the order the database happened to return them put the
+  // one burning ten cores eleventh.
+  {
+    const peak=p.data.slice(1).map(col=>Math.max(...col.filter(v=>v!=null).map(Math.abs),-Infinity));
+    // A stack is drawn tallest-first and its legend reads in draw order, so
+    // for a stack the names go smallest-first and come out biggest-first.
+    const asc=kind==="columns"||kind==="stacked";
+    const order=p.names.map((_,i)=>i).sort((a,b)=>(LIMIT.test(p.names[a])?1:0)-(LIMIT.test(p.names[b])?1:0)||(asc?peak[a]-peak[b]:peak[b]-peak[a]));
+    p.names=order.map(i=>p.names[i]); p.data=[p.data[0]].concat(order.map(i=>p.data[i+1]));
+  }
   const isLim=p.names.map(n=>LIMIT.test(n));
   // A line is a shape, and one or two points have none: a lone dot in the
   // middle of an axis, or a slope between two runs a day apart that says

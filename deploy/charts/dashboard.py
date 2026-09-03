@@ -458,6 +458,7 @@ KIND = {
     "Gates: rounds, findings, minutes": "bars",
     "Output per turn, by agent": "candles",
     "What one turn carried, against limits.turn_tokens": "candles",
+    "CPU by container": "stacked",
 }
 
 # A sentence rewritten for the way the chart is drawn now.
@@ -484,12 +485,12 @@ ABOUT = {
         "Context read back from the cache against context written into it, as they accrued. Read climbing with written flat is a prompt paid for once; written climbing alongside is a prompt that will not settle.",
     "Gates: rounds, findings, minutes":
         "One row per gate: how many rounds it ran, how much it refused in all, and how many minutes the rounds and their repairs took. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
-    "CPU by container":
-        "Docker's own figure, as cores: its percent of one core summed over every core, divided by a hundred. Ten cores busy is 10. Docker Desktop overshoots the machine's core count now and then; that is its sampling, not a container.",
     "Output per turn, by agent":
         "What the model actually wrote in one turn, as a spread: over time, by agent, or by phase. Read beside Context per turn: three hundred tokens read for every one written is a prompt problem.",
     "What one turn carried, against limits.turn_tokens":
         "Every turn as it was sent: the system prompt, what was inlined into it, and the conversation so far. As a spread by agent or by phase, against the cap: which one carries the fat prompt. Over time: how it grew.",
+    "CPU by container":
+        "Docker's own figure, as cores, stacked: the height is what the whole machine is doing, the bands are who. Ten cores busy is 10. Docker Desktop overshoots the machine's core count now and then; that is its sampling, not a container.",
 }
 
 # The short heading. The title stays the panel's name - hiding, kinds and
