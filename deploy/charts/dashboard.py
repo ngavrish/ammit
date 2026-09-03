@@ -211,21 +211,6 @@ ts("Cost", "What each phase is costing, as it accrues. \"What is the design "
 ts("Turns", "One per tool call — runsdb emits a turn from log() when the line is a tool line, so this counts tool calls, not exchanges with the model.", "turns", [
     q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, 1 AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to ORDER BY at""")], 12)
 
-ts("Phase length against timeouts.phase", "One point per finished phase.", "s", [
-    q("""SELECT at AS time, coalesce(nullif(phase,''),'?') AS metric,
-         json_extract(payload,'$.seconds') AS value
-         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'phase_end' ORDER BY at"""),
-    limit_of("timeouts.phase")], 0, points=True)
-
-ts("Idle inside a phase, against timeouts.turn",
-   "The gap between one thing happening and the next, within a phase. Which phase the "
-   "waiting happens in is the difference between a slow model and a stuck gate.", "s", [
-    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
-         at - lag(at) OVER (PARTITION BY run, coalesce(phase,'') ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL
-         AND kind IN ('turn','log','session_start','phase_start') ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
-    limit_of("timeouts.turn")], 12)
-
 ts("Time in a phase, minute by minute",
    "How long the open phase has been open. A climb that does not reset is a phase "
    "nothing is ending.", "s", [
@@ -252,18 +237,9 @@ ts("Output per turn, by agent",
          json_extract(payload,'$.tokens_out') AS value
          FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at""")], 12)
 
-ts("Session length against timeouts.session", "One point per finished session, by agent.",
-   "s", [
-    q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
-         json_extract(payload,'$.seconds') AS value
-         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'session_end' ORDER BY at"""),
-    limit_of("timeouts.session")], 0, points=True)
-
 ts("Silence between turns, against timeouts.turn",
    "The gap between one turn and the next, per agent.", "s", [
-    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
-         at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
+    q("""SELECT time, agent, phase, value FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'turn') WHERE value IS NOT NULL AND time*1000 BETWEEN $__from AND $__to ORDER BY time"""),
     limit_of("timeouts.turn")], 12)
 
 ts("Time in a session, minute by minute",
@@ -287,19 +263,10 @@ ts("Tokens out, per run", "Generated tokens as they accrued. This is the number 
 ts("Tokens out", "Which phase is generating the volume.", "tokens", [
     q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, json_extract(payload,'$.tokens_out') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at""")], 12)
 
-ts("Cache read, per run",
+ts("Cache, read against written",
    "Context read back rather than re-sent. Large is good here: it is the same "
    "prompt not being paid for twice.", "tokens", [
-    q("""SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric,
-         sum(json_extract(payload,'$.cache_read')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
-
-ts("Cache written, per run",
-   "Context put into the cache. Written once, read many times — a run where this "
-   "keeps climbing is a run whose prompt will not settle.", "tokens", [
-    q("""SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric,
-         sum(json_extract(payload,'$.cache_write')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
+    q("""SELECT at AS time, 'read' AS metric, json_extract(payload,'$.cache_read') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at AS time, 'written' AS metric, json_extract(payload,'$.cache_write') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1""")], 12)
 
 tbl("Tokens and what they cost",
     "Every run in the window: what it generated, what it read back, and the bill.",
@@ -360,29 +327,11 @@ Y[0] += 8
 # ------------------------------------------------------- gates and repair
 row("Gates and repair")
 
-ts("Findings per gate, each time it ran",
+ts("Gates: rounds, findings, minutes",
    "How much each check refuses, round by round. A gate that never finds "
    "anything is a tollbooth; one whose findings do not fall between rounds is "
-   "asking for something the repair cannot give.", "findings", [
-    q("""SELECT at*1000 AS time, phase AS metric, findings AS value
-         FROM gates ORDER BY at""")], 0, points=True)
-
-ts("How long a round takes, by gate",
-   "The check plus the repair it caused. A loop that costs more than the fault "
-   "is a loop worth removing.", "s", [
-    q("""SELECT at*1000 AS time, phase AS metric, seconds AS value
-         FROM gates WHERE seconds > 0 ORDER BY at""")], 12, points=True)
-
-tbl("Rounds to green, per gate",
-    "How many times each check had to run before it stopped refusing, and what "
-    "the rounds cost. One round is a check doing its job; three is a repair that "
-    "cannot hear what is being asked.",
-    """SELECT phase, coalesce(nullif(branch,''),'—') AS branch,
-       max(round) AS rounds, sum(findings) AS findings_total,
-       ROUND(sum(seconds)/60.0,1) AS minutes,
-       max(CASE WHEN verdict='green' THEN 'reached green' ELSE verdict END) AS ended
-       FROM gates GROUP BY phase, branch ORDER BY minutes DESC LIMIT 60""",
-    0, [], w=24)
+   "asking for something the repair cannot give.", "", [
+    q("""SELECT max(at) AS time, 'rounds' AS metric, count(*) AS value, phase AS label FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'findings', sum(findings), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'minutes', round(sum(seconds)/60.0, 1), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase ORDER BY 1""")], 0, points=True)
 
 # ------------------------------------------------------ where time went
 row("Where the time went")
@@ -501,23 +450,20 @@ table("What each phase spent its calls on",
 # a title, a sentence, a kind, and a query returning time/metric/value. That is
 # what this writes, and what ammit renders.
 KIND = {
-    "Request time against timeouts.request": "scatter",
     "Requests that died, per minute": "columns",
     "Cost": "pie",
     "Turns": "bars",
-    "Phase length against timeouts.phase": "scatter",
-    "Idle inside a phase, against timeouts.turn": "scatter",
     "Time in a phase, minute by minute": "timeline",
     "What one turn carried, against limits.turn_tokens": "scatter",
     "Output per turn, by agent": "scatter",
-    "Session length against timeouts.session": "scatter",
-    "Silence between turns, against timeouts.turn": "scatter",
     "Time in a session, minute by minute": "timeline",
     "Tokens out": "stacked",
     "Memory against limits.memory_mb": "stacked",
     "Phases and branches": "timeline",
-    "Findings per gate, each time it ran": "columns",
-    "How long a round takes, by gate": "columns",
+    "Request time against timeouts.request": "candles",
+    "Silence between turns, against timeouts.turn": "candles",
+    "Cache, read against written": "series",
+    "Gates: rounds, findings, minutes": "bars",
 }
 
 # A sentence rewritten for the way the chart is drawn now.
@@ -528,8 +474,6 @@ ABOUT = {
         "Generated tokens as they accrued, stacked by the phase that generated them or by the agent.",
     "Cost":
         "What the run is costing, as a share: by the phase that spent it or by the agent that did. The same spend, two questions.",
-    "Request time against timeouts.request":
-        "One point per wait for the model: ask, and get an answer back. Coloured by agent or by phase - the same waits, two questions.",
     "Turns":
         "Tool calls in the window, by the phase that made them or by the agent.",
     "Time in a phase, minute by minute":
@@ -538,6 +482,14 @@ ABOUT = {
         "When each agent's session began and ended, one row per agent.",
     "Phases and branches":
         "One row per run, a bar per phase, in the order the runs started.",
+    "Request time against timeouts.request":
+        "One wait for the model is one point. By agent or by phase: the spread of those waits as a candle - the fastest to the slowest, the middle half, the average. Over time: every point, when it happened.",
+    "Silence between turns, against timeouts.turn":
+        "The gap from one turn to the next, per agent. By agent or by phase: the spread of the gaps as a candle. Over time: every gap, when it happened. The longest are listed under Longest gaps.",
+    "Cache, read against written":
+        "Context read back from the cache against context written into it, as they accrued. Read climbing with written flat is a prompt paid for once; written climbing alongside is a prompt that will not settle.",
+    "Gates: rounds, findings, minutes":
+        "One row per gate: how many rounds it ran, how much it refused in all, and how many minutes the rounds and their repairs took. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
 }
 
 # The short heading. The title stays the panel's name - hiding, kinds and
@@ -549,27 +501,17 @@ LABEL = {
     "Turns per run against limits.turns_per_run": "Turns per run",
     "How long a run has been going, against timeouts.run": "Run duration",
     "Idle time piling up, per run": "Idle time per run",
-    "Request time against timeouts.request": "Request time",
     "Requests that died, per minute": "Failed requests per minute",
     "Requests that died, in full": "Failed requests",
-    "Phase length against timeouts.phase": "Phase length",
-    "Idle inside a phase, against timeouts.turn": "Idle within phase",
     "Time in a phase, minute by minute": "Phase timeline",
     "What one turn carried, against limits.turn_tokens": "Context per turn",
     "Output per turn, by agent": "Output per turn",
-    "Session length against timeouts.session": "Session length",
-    "Silence between turns, against timeouts.turn": "Silence between turns",
     "Time in a session, minute by minute": "Session timeline",
     "Tokens out, per run": "Tokens out per run",
     "Tokens out": "Tokens out",
-    "Cache read, per run": "Cache read per run",
-    "Cache written, per run": "Cache written per run",
     "Tokens and what they cost": "Tokens and cost",
     "Memory against limits.memory_mb": "Memory",
     "Phases and branches": "Phases by run",
-    "Findings per gate, each time it ran": "Findings per gate",
-    "How long a round takes, by gate": "Round duration by gate",
-    "Rounds to green, per gate": "Rounds to green",
     "Busy and idle, per run": "Busy vs idle",
     "The longest gaps": "Longest gaps",
     "What ammit did": "Judgements",
@@ -586,17 +528,26 @@ LABEL = {
     "What every limit has caught": "Limit hits",
     "Gates, over all runs": "Gates, all time",
     "Repeated calls, by kind": "Repeated calls by kind",
+    "Request time against timeouts.request": "Request time",
+    "Silence between turns, against timeouts.turn": "Silence between turns",
+    "Cache, read against written": "Cache: read vs written",
+    "Gates: rounds, findings, minutes": "Gates",
 }
 
 # One query, several colourings: the page offers the switch (by), folds rows
 # that share a moment (agg: sum) and runs a total along each line (acc:
 # cumsum), so four window-function queries become one row-per-event query.
 EXTRA = {
-    "Request time against timeouts.request": {"by": ["agent", "phase"]},
     "Cost": {"by": ["phase", "agent"], "agg": "sum", "acc": "cumsum"},
     "Turns": {"by": ["phase", "agent"], "agg": "sum"},
     "Tokens out": {"by": ["phase", "agent"], "agg": "sum", "acc": "cumsum"},
     "Memory against limits.memory_mb": {"by": ["container", "phase", "agent"], "agg": "sum"},
+    "Request time against timeouts.request": {"by": ["agent", "phase", "time"], "kinds": {"time": "scatter"}},
+    "Silence between turns, against timeouts.turn": {"by": ["agent", "phase", "time"], "kinds": {"time": "scatter"}},
+    "Cache, read against written": {"agg": "sum", "acc": "cumsum"},
+    "Gates: rounds, findings, minutes": {"unit": ""},
+    "Idle time piling up, per run": {"scope": "window"},
+    "Phases and branches": {"scope": "window"},
 }
 
 spec = {"panels": []}

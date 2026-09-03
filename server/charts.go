@@ -48,14 +48,18 @@ type panel struct {
 	// agg "sum": rows that share a moment and a name are added; acc "cumsum":
 	// every line is its own running total. Together they let one row-per-event
 	// query stand in for a window-function query per colouring.
-	Agg     string   `json:"agg,omitempty"`
-	Acc     string   `json:"acc,omitempty"`
-	About   string   `json:"about"`
-	Unit    string   `json:"unit"`
-	Height  int      `json:"height"`
-	Queries []string `json:"queries"`
-	Hidden  bool     `json:"hidden,omitempty"`
-	Custom  bool     `json:"custom,omitempty"`
+	Agg string `json:"agg,omitempty"`
+	Acc string `json:"acc,omitempty"`
+	// kinds: the kind to draw for a particular colouring, when one of them
+	// wants a different shape - {"time": "scatter"} on a candles panel says
+	// that over time the same points are points.
+	Kinds   map[string]string `json:"kinds,omitempty"`
+	About   string            `json:"about"`
+	Unit    string            `json:"unit"`
+	Height  int               `json:"height"`
+	Queries []string          `json:"queries"`
+	Hidden  bool              `json:"hidden,omitempty"`
+	Custom  bool              `json:"custom,omitempty"`
 	// "lifetime" puts an added chart on the all-time page instead of the run
 	// pages: a chart of every run has no business on the page of one.
 	Scope string `json:"scope,omitempty"`

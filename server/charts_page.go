@@ -107,6 +107,7 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
 .tl .r{display:grid;grid-template-columns:minmax(90px,auto) 1fr;gap:12px;align-items:center;margin:3px 0}
 .tl .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
 .tl .t{position:relative;height:22px;background:var(--hair-soft);border-radius:3px}
+.tl .s i{font-style:normal;font-weight:400;opacity:.85;margin-left:6px}
 .tl .s{position:absolute;top:2px;bottom:2px;border-radius:2px;overflow:hidden;white-space:nowrap;
   font:600 10px/18px var(--sans);color:#fff;padding:0 5px;box-sizing:border-box;min-width:2px}
 .tl .ax{display:grid;grid-template-columns:minmax(90px,auto) 1fr;gap:12px;margin-top:6px}
@@ -846,7 +847,7 @@ function drawBars(box,payload){
     }).join("");
     const lab=i%every===0 ? (byName
       ? '<text x="'+(L+slot*(i+0.5)).toFixed(1)+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#4A5568">'+esc(gr.title)+'</text>'
-      : '<text transform="translate('+(L+slot*(i+0.5)).toFixed(1)+','+(H-B+12)+') rotate(35)" font-size="10.5" fill="#4A5568">'+esc((gr.label||"")+" "+short.format(new Date(gr.t*1000)))+'</text>') : '';
+      : '<text transform="translate('+(L+slot*(i+0.5)).toFixed(1)+','+(H-B+12)+') rotate(35)" font-size="10.5" fill="#4A5568">'+esc(gr.label!=null&&seen[gr.label]===1?gr.title:(gr.label||"")+" "+short.format(new Date(gr.t*1000)))+'</text>') : '';
     return bars+lab;
   }).join("");
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
@@ -912,21 +913,30 @@ function filterValues(){
 function drawCandles(box,payload){
   const bad=(payload.series||[]).find(s=>s&&s.error);
   if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
-  const all=rowsOf(payload);
-  const by=new Map();
+  box._payload=payload;
+  const P=payload.panel||{};
+  const col=box.dataset.by||(P.by||[])[0];
+  // One candle per day when the rows come by the day; one per name - agent,
+  // phase, gate - when the heading's switch says so. The spread is the
+  // same idea either way: what is usual, what is extreme, how many.
+  const byName=!!(col&&col!=="time");
+  const all=rowsOf(payload,byName?col:null);
+  const by=new Map(); let limit=null;
   for(const r of all.rows){ const v=r[2]==null?null:+r[2]; if(v==null||isNaN(v)) continue;
-    const t=secs(+r[0]); if(!by.has(t)) by.set(t,[]); by.get(t).push(v); }
-  const days=[...by.keys()].sort((a,b)=>a-b);
+    if(LIMIT.test(String(r[1]))){ limit={name:String(r[1]),value:v}; continue; }
+    const k=byName?String(r[1]):secs(+r[0]); if(!by.has(k)) by.set(k,[]); by.get(k).push(v); }
+  const q=(a,f)=>{const i=(a.length-1)*f, lo=Math.floor(i), hi=Math.ceil(i); return a[lo]+(a[hi]-a[lo])*(i-lo)};
+  let stat=[...by.keys()].map(k=>{const a=by.get(k).slice().sort((x,y)=>x-y);
+    return {k,t:byName?0:k,n:a.length,min:a[0],max:a[a.length-1],q1:q(a,.25),q3:q(a,.75),avg:a.reduce((x,y)=>x+y,0)/a.length}});
+  stat.sort(byName?((a,b)=>b.avg-a.avg):((a,b)=>a.t-b.t));
+  const days=stat;
   box.classList.toggle("drawn", days.length>0);
   if(!days.length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
-  const U=unitOf(payload.panel&&payload.panel.unit);
-  const q=(a,f)=>{const i=(a.length-1)*f, lo=Math.floor(i), hi=Math.ceil(i); return a[lo]+(a[hi]-a[lo])*(i-lo)};
-  const stat=days.map(t=>{const a=by.get(t).slice().sort((x,y)=>x-y);
-    return {t,n:a.length,min:a[0],max:a[a.length-1],q1:q(a,.25),q3:q(a,.75),avg:a.reduce((x,y)=>x+y,0)/a.length}});
-  box.dataset.metrics=days.length+" days";
+  const U=unitOf(P.unit);
+  box.dataset.metrics=byName?stat.map(s=>s.k).join(" "):days.length+" days";
   const W=box.clientWidth||900, H=Math.max(300,Math.round(innerHeight*0.45));
   const L=78, R=12, T=14, B=70, pw=W-L-R, ph=H-T-B;
-  const top=Math.max(...stat.map(s=>s.max))||1;
+  const top=Math.max(...stat.map(s=>s.max), limit?limit.value:0)||1;
   const nice=niceStep(top,U);
   const ymax=Math.ceil(top/nice)*nice;
   const y=v=>T+ph-(v/ymax)*ph;
@@ -939,17 +949,21 @@ function drawCandles(box,payload){
   for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"#E5E7EB":"#A0AEC0")+'"/>'+
     '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#4A5568">'+esc(U.tick(v))+'</text>';
   const every=Math.ceil(stat.length/12);
+  const nameOf=s=>byName?s.k:day.format(new Date(s.t*1000));
+  const noun=byName?(P.noun||"point"):"run";
   const c=stat.map((s,i)=>{const x=L+slot*(i+0.5);
-    const tip=day.format(new Date(s.t*1000))+': '+s.n+(s.n===1?' run':' runs')+', min '+U.val(s.min)+', average '+U.val(s.avg)+', max '+U.val(s.max);
+    const tip=nameOf(s)+': '+s.n+' '+noun+(s.n===1?'':'s')+', min '+U.val(s.min)+', average '+U.val(s.avg)+', max '+U.val(s.max);
     return '<g data-tip="'+esc(tip)+'">'+
       '<line x1="'+x+'" x2="'+x+'" y1="'+y(s.max)+'" y2="'+y(s.min)+'" stroke="#4A5568" stroke-width="1.5"/>'+
       (s.n>1?'<rect x="'+(x-bw/2)+'" y="'+y(s.q3)+'" width="'+bw+'" height="'+Math.max(1,y(s.q1)-y(s.q3))+'" fill="#CD7F32" fill-opacity=".55" stroke="#CD7F32" rx="2"/>':'')+
       '<line x1="'+(x-bw/2-3)+'" x2="'+(x+bw/2+3)+'" y1="'+y(s.avg)+'" y2="'+y(s.avg)+'" stroke="#001F3F" stroke-width="2"/>'+
-      (i%every===0?'<text x="'+x+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#4A5568">'+day.format(new Date(s.t*1000))+'</text>':'')+
+      (i%every===0?'<text x="'+x+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#4A5568">'+esc(nameOf(s))+'</text>':'')+
       '</g>'});
-  box.innerHTML='<svg class=candles width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+c.join("")+
-    axisNames(W,H,L,B,esc(U.name||"value"),"day ("+zone.replace(/_/g," ")+")")+'</svg>'+
-    '<div class=keys><span>wick: cheapest to dearest run of the day - body: the middle half - line: the average</span></div>';
+  const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
+    '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+U.val(limit.value))+'</text>':'';
+  box.innerHTML='<svg class=candles width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+c.join("")+lim+
+    axisNames(W,H,L,B,esc(U.name||"value"),byName?esc(col+"s, the usual first"):"day ("+zone.replace(/_/g," ")+")")+'</svg>'+
+    '<div class=keys><span>wick: the least to the most - body: the middle half - line: the average'+(limit?' - dashed: '+esc(limitTitle(limit.name)):'')+'</span></div>';
   hoverTips(box);
 }
 
@@ -1011,7 +1025,7 @@ function drawTimeline(box,payload){
       const w=100*(Math.min(x.end,hi)-Math.max(x.start,lo))/W;
       return '<span class=s style="left:'+pct(x.start)+';width:'+w.toFixed(3)+'%;background:'+colour(x.label)+
         '" title="'+esc(x.label)+': '+full.format(new Date(x.start*1000))+' → '+full.format(new Date(x.end*1000))+' ('+dur(x.end-x.start)+')">'+
-        (w>4?esc(x.label):'')+'</span>';
+        (w>4?esc(x.label)+(w>14?' <i>'+dur(x.end-x.start)+'</i>':''):'')+'</span>';
     }).join("")+'</span></div>').join("");
   // Five or six marks along the bottom, at whole minutes or hours.
   const steps=[60,120,300,600,900,1800,3600,7200,10800,21600,43200,86400];
@@ -1148,7 +1162,11 @@ async function load(){
     try{
       const r=await fetch("/charts/data?panel="+i+"&from="+from+"&to="+to+q);
       const payload=await r.json();
-        box._draw=({table:drawTable,pie:drawPie,bars:drawBars,timeline:drawTimeline,candles:drawCandles,stats:drawStats}[p.kind]||drawSeries);
+        box._draw=(box,payload,kind)=>{
+        const by=box.dataset.by||((payload.panel||{}).by||[])[0];
+        const k=((payload.panel||{}).kinds||{})[by]||kind;
+        ({table:drawTable,pie:drawPie,bars:drawBars,timeline:drawTimeline,candles:drawCandles,stats:drawStats}[k]||drawSeries)(box,payload,k);
+      };
       box._draw(box,payload,p.kind);
       drawn++;
     }catch(e){ box.innerHTML='<div class=err>'+e+'</div>' }
@@ -1413,6 +1431,7 @@ function grouped(){
   const by=new Map();
   panels.forEach((p,i)=>{
     if(p.kind==="row"||p.hidden||p.top) return;
+    if(p.scope==="window"&&chosen) return;   // a chart of many runs has no place on the page of one
     const k=groupKey(p);
     if(!by.has(k)) by.set(k,[]);
     by.get(k).push(i);

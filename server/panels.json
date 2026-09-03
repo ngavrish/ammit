@@ -13,16 +13,17 @@
    "queries": [
     "SELECT * FROM (SELECT at AS time, name AS metric, sum(idle) OVER (PARTITION BY run ORDER BY at) AS value FROM ( SELECT e.at AS at, e.run AS run, r.name AS name, CASE WHEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) > 120 THEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) ELSE 0 END AS idle FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.run IS NOT NULL) ORDER BY 1) WHERE time*1000 BETWEEN $__from AND $__to"
    ],
-   "label": "Idle time per run"
+   "label": "Idle time per run",
+   "scope": "window"
   },
   {
    "kind": "row",
    "title": "Requests to the model"
   },
   {
-   "kind": "scatter",
+   "kind": "candles",
    "title": "Request time against timeouts.request",
-   "about": "One point per wait for the model: ask, and get an answer back. Coloured by agent or by phase - the same waits, two questions.",
+   "about": "One wait for the model is one point. By agent or by phase: the spread of those waits as a candle - the fastest to the slowest, the middle half, the average. Over time: every point, when it happened.",
    "unit": "s",
    "height": 8,
    "queries": [
@@ -32,8 +33,12 @@
    "label": "Request time",
    "by": [
     "agent",
-    "phase"
-   ]
+    "phase",
+    "time"
+   ],
+   "kinds": {
+    "time": "scatter"
+   }
   },
   {
    "kind": "columns",
@@ -96,30 +101,6 @@
    "agg": "sum"
   },
   {
-   "kind": "scatter",
-   "title": "Phase length against timeouts.phase",
-   "about": "One point per finished phase",
-   "unit": "s",
-   "height": 8,
-   "queries": [
-    "SELECT at AS time, coalesce(nullif(phase,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'phase_end' ORDER BY at",
-    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.phase' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.phase' AND at*1000 < $__from)) ORDER BY at"
-   ],
-   "label": "Phase length"
-  },
-  {
-   "kind": "scatter",
-   "title": "Idle inside a phase, against timeouts.turn",
-   "about": "The gap between one thing happening and the next, within a phase",
-   "unit": "s",
-   "height": 8,
-   "queries": [
-    "SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(phase,'') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL AND kind IN ('turn','log','session_start','phase_start') ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
-    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.turn' AND at*1000 < $__from)) ORDER BY at"
-   ],
-   "label": "Idle within phase"
-  },
-  {
    "kind": "timeline",
    "title": "Time in a phase, minute by minute",
    "about": "When each phase began and ended. A bar that reaches the right edge is still open.",
@@ -158,28 +139,24 @@
    "label": "Output per turn"
   },
   {
-   "kind": "scatter",
-   "title": "Session length against timeouts.session",
-   "about": "One point per finished session, by agent",
-   "unit": "s",
-   "height": 8,
-   "queries": [
-    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'session_end' ORDER BY at",
-    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.session' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.session' AND at*1000 < $__from)) ORDER BY at"
-   ],
-   "label": "Session length"
-  },
-  {
-   "kind": "scatter",
+   "kind": "candles",
    "title": "Silence between turns, against timeouts.turn",
-   "about": "The gap between one turn and the next, per agent",
+   "about": "The gap from one turn to the next, per agent. By agent or by phase: the spread of the gaps as a candle. Over time: every gap, when it happened. The longest are listed under Longest gaps.",
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind IN ('turn','session_start') AND run IS NOT NULL ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to",
+    "SELECT time, agent, phase, value FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'turn') WHERE value IS NOT NULL AND time*1000 BETWEEN $__from AND $__to ORDER BY time",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.turn' AND at*1000 < $__from)) ORDER BY at"
    ],
-   "label": "Silence between turns"
+   "label": "Silence between turns",
+   "by": [
+    "agent",
+    "phase",
+    "time"
+   ],
+   "kinds": {
+    "time": "scatter"
+   }
   },
   {
    "kind": "timeline",
@@ -226,25 +203,16 @@
   },
   {
    "kind": "series",
-   "title": "Cache read, per run",
-   "about": "Context read back rather than re-sent",
+   "title": "Cache, read against written",
+   "about": "Context read back from the cache against context written into it, as they accrued. Read climbing with written flat is a prompt paid for once; written climbing alongside is a prompt that will not settle.",
    "unit": "tokens",
    "height": 8,
    "queries": [
-    "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.cache_read')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+    "SELECT at AS time, 'read' AS metric, json_extract(payload,'$.cache_read') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at AS time, 'written' AS metric, json_extract(payload,'$.cache_write') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1"
    ],
-   "label": "Cache read per run"
-  },
-  {
-   "kind": "series",
-   "title": "Cache written, per run",
-   "about": "Context put into the cache",
-   "unit": "tokens",
-   "height": 8,
-   "queries": [
-    "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.cache_write')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
-   ],
-   "label": "Cache written per run"
+   "label": "Cache: read vs written",
+   "agg": "sum",
+   "acc": "cumsum"
   },
   {
    "kind": "table",
@@ -308,44 +276,23 @@
    "queries": [
     "SELECT time, metric, value, label FROM (SELECT e.at AS time, '#' || n.seq || ' ' || coalesce(r.name,'') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.phase ORDER BY e.at), r.finished, strftime('%s','now')) AS value, coalesce(nullif(e.phase,''),'?') AS label, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run JOIN (SELECT run, dense_rank() OVER (ORDER BY started) AS seq FROM runs) n ON n.run = e.run WHERE e.kind IN ('phase_start','phase_end') AND ifnull(e.phase,'') <> '') WHERE kind = 'phase_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
    ],
-   "label": "Phases by run"
+   "label": "Phases by run",
+   "scope": "window"
   },
   {
    "kind": "row",
    "title": "Gates and repair"
   },
   {
-   "kind": "columns",
-   "title": "Findings per gate, each time it ran",
-   "about": "How much each check refuses, round by round",
-   "unit": "findings",
-   "height": 8,
-   "queries": [
-    "SELECT at*1000 AS time, phase AS metric, findings AS value FROM gates ORDER BY at"
-   ],
-   "label": "Findings per gate"
-  },
-  {
-   "kind": "columns",
-   "title": "How long a round takes, by gate",
-   "about": "The check plus the repair it caused",
-   "unit": "s",
-   "height": 8,
-   "queries": [
-    "SELECT at*1000 AS time, phase AS metric, seconds AS value FROM gates WHERE seconds > 0 ORDER BY at"
-   ],
-   "label": "Round duration by gate"
-  },
-  {
-   "kind": "table",
-   "title": "Rounds to green, per gate",
-   "about": "How many times each check had to run before it stopped refusing, and what the rounds cost",
+   "kind": "bars",
+   "title": "Gates: rounds, findings, minutes",
+   "about": "One row per gate: how many rounds it ran, how much it refused in all, and how many minutes the rounds and their repairs took. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
    "unit": "",
-   "height": 9,
+   "height": 8,
    "queries": [
-    "SELECT phase, coalesce(nullif(branch,''),'—') AS branch, max(round) AS rounds, sum(findings) AS findings_total, ROUND(sum(seconds)/60.0,1) AS minutes, max(CASE WHEN verdict='green' THEN 'reached green' ELSE verdict END) AS ended FROM gates GROUP BY phase, branch ORDER BY minutes DESC LIMIT 60"
+    "SELECT max(at) AS time, 'rounds' AS metric, count(*) AS value, phase AS label FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'findings', sum(findings), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'minutes', round(sum(seconds)/60.0, 1), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase ORDER BY 1"
    ],
-   "label": "Rounds to green"
+   "label": "Gates"
   },
   {
    "kind": "row",
