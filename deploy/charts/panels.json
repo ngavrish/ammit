@@ -21,15 +21,19 @@
   },
   {
    "kind": "scatter",
-   "title": "How long one request takes, by agent, against timeouts.request",
-   "about": "One point per wait for the model: ask, and get an answer back",
+   "title": "Request time against timeouts.request",
+   "about": "One point per wait for the model: ask, and get an answer back. Coloured by agent or by phase - the same waits, two questions.",
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at",
+    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.seconds') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.request' AND at*1000 < $__from)) ORDER BY at"
    ],
-   "label": "Request time by agent"
+   "label": "Request time",
+   "by": [
+    "agent",
+    "phase"
+   ]
   },
   {
    "kind": "columns",
@@ -41,18 +45,6 @@
     "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' AND json_extract(payload,'$.ok') = 0 GROUP BY 1, 2 ORDER BY 1"
    ],
    "label": "Failed requests per minute"
-  },
-  {
-   "kind": "scatter",
-   "title": "Request time by phase, against timeouts.request",
-   "about": "The same waits, grouped by what the run was doing",
-   "unit": "s",
-   "height": 8,
-   "queries": [
-    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric, json_extract(payload,'$.seconds') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at",
-    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.request' AND at*1000 < $__from)) ORDER BY at"
-   ],
-   "label": "Request time by phase"
   },
   {
    "kind": "table",

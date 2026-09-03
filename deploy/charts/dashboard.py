@@ -175,13 +175,11 @@ ts("Idle time piling up, per run",
 # ----------------------------------------------------- requests to a model
 row("Requests to the model")
 
-ts("How long one request takes, by agent, against timeouts.request",
+ts("Request time against timeouts.request",
    "One point per wait for the model: ask, and get an answer back. Inside the run "
    "this is invisible — a call that never returns has no error and no retry — so it "
    "is timed out here, where something can act on it.", "s", [
-    q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
-         json_extract(payload,'$.seconds') AS value
-         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at"""),
+    q("""SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.seconds') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at"""),
     limit_of("timeouts.request")], 0, points=True)
 
 ts("Requests that died, per minute",
@@ -192,15 +190,6 @@ ts("Requests that died, per minute",
          coalesce(nullif(agent,''),'?') AS metric, count(*) AS value
          FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end'
          AND json_extract(payload,'$.ok') = 0 GROUP BY 1, 2 ORDER BY 1""")], 12)
-
-ts("Request time by phase, against timeouts.request",
-   "The same waits, grouped by what the run was doing. A design phase that waits "
-   "twice as long per request as an implementing one is a prompt problem, not a "
-   "network problem.", "s", [
-    q("""SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
-         json_extract(payload,'$.seconds') AS value
-         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at"""),
-    limit_of("timeouts.request")], 0, points=True)
 
 tbl("Requests that died, in full",
     "What the error was, whose request it was, and how long it had been waiting.",
@@ -557,9 +546,8 @@ table("What each phase spent its calls on",
 # a title, a sentence, a kind, and a query returning time/metric/value. That is
 # what this writes, and what ammit renders.
 KIND = {
-    "How long one request takes, by agent, against timeouts.request": "scatter",
+    "Request time against timeouts.request": "scatter",
     "Requests that died, per minute": "columns",
-    "Request time by phase, against timeouts.request": "scatter",
     "Cost by phase": "pie",
     "Turns by phase": "bars",
     "Phase length against timeouts.phase": "scatter",
@@ -582,6 +570,8 @@ KIND = {
 
 # A sentence rewritten for the way the chart is drawn now.
 ABOUT = {
+    "Request time against timeouts.request":
+        "One point per wait for the model: ask, and get an answer back. Coloured by agent or by phase - the same waits, two questions.",
     "Turns by phase":
         "Tool calls in the window, by the phase that made them.",
     "Time in a phase, minute by minute":
@@ -601,9 +591,8 @@ LABEL = {
     "Turns per run against limits.turns_per_run": "Turns per run",
     "How long a run has been going, against timeouts.run": "Run duration",
     "Idle time piling up, per run": "Idle time per run",
-    "How long one request takes, by agent, against timeouts.request": "Request time by agent",
+    "Request time against timeouts.request": "Request time",
     "Requests that died, per minute": "Failed requests per minute",
-    "Request time by phase, against timeouts.request": "Request time by phase",
     "Requests that died, in full": "Failed requests",
     "Phase length against timeouts.phase": "Phase length",
     "Idle inside a phase, against timeouts.turn": "Idle within phase",
@@ -644,6 +633,11 @@ LABEL = {
     "Repeated calls, by kind": "Repeated calls by kind",
 }
 
+# Two colourings of one set of points: the page offers the switch.
+BY = {
+    "Request time against timeouts.request": ["agent", "phase"],
+}
+
 spec = {"panels": []}
 for p in panels:
     if p["type"] == "row":
@@ -671,6 +665,8 @@ for p in panels:
 for p in spec["panels"]:
     if p["title"] in LABEL:
         p["label"] = LABEL[p["title"]]
+    if p["title"] in BY:
+        p["by"] = BY[p["title"]]
 
 out = pathlib.Path(__file__).with_name("panels.json")
 out.write_text(json.dumps(spec, indent=1, ensure_ascii=False) + "\n")

@@ -232,6 +232,10 @@ td .verdict{font-style:normal;font-weight:700}
 .pact{font:600 10px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;
   color:var(--mute);cursor:pointer;margin-left:12px;vertical-align:middle}
 .pact:hover{color:var(--bronze)}
+.by{margin-left:14px;font:600 10.5px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--mute);vertical-align:middle}
+.by button{font:600 10.5px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--hair);
+  background:none;color:var(--slate);border-radius:5px;padding:3px 7px;margin-left:4px;cursor:pointer}
+.by button.on{background:var(--bronze);border-color:var(--bronze);color:#fff}
 .pact.danger:hover{color:var(--bad)}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{border:1px dashed var(--hair);border-radius:8px;padding:6px 11px;
@@ -562,11 +566,14 @@ const LABEL_FONT='600 12px "Plus Jakarta Sans","Inter",system-ui,sans-serif';
 // Every query a panel has, as one table: the second one is usually the limit.
 // Only the first was read for a long time, so a chart titled "against
 // timeouts.request" never drew the timeout.
-function rowsOf(payload){
+function rowsOf(payload,by){
   let cols=null, rows=[];
   for(const s of payload.series||[]){
     if(!s||s.error||!(s.rows||[]).length) continue;
-    const c=s.columns||[]; const ti=c.indexOf("time"),mi=c.indexOf("metric"),vi=c.indexOf("value"),li=c.indexOf("label");
+    const c=s.columns||[]; const ti=c.indexOf("time"),vi=c.indexOf("value"),li=c.indexOf("label");
+    // One set of points, coloured by whichever column the heading's switch
+    // says - agent or phase - when the query returns those instead of metric.
+    let mi=c.indexOf("metric"); if(by&&c.indexOf(by)>=0) mi=c.indexOf(by);
     if(ti<0||vi<0) continue;
     if(!cols) cols=["time","metric","value","label"];
     for(const r of s.rows) rows.push([r[ti], mi<0?"value":r[mi], r[vi], li<0?null:r[li]]);
@@ -601,7 +608,8 @@ const FONT='"Plus Jakarta Sans","Inter",system-ui,sans-serif';
 function drawSeries(box,payload,kind){
   const bad=(payload.series||[]).find(s=>s&&s.error);
   if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
-  const all=rowsOf(payload);
+  box._payload=payload; box._kind=kind;
+  const all=rowsOf(payload,box.dataset.by||((payload.panel||{}).by||[])[0]);
   const p=pivot(all.cols,all.rows);
   box.classList.toggle("drawn", !!(p&&p.data[0].length));
   if(!p||!p.data[0].length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
@@ -1248,6 +1256,7 @@ async function boot(){
   await fetchLocal();
   const section=(i,colour)=>{const p=panels[i];
     return '<section class=panel style="--g:'+colour+'" title="'+p.title.replace(/"/g,"&quot;")+'"><h2>'+(p.label||humanize(p.title))+
+      ((p.by||[]).length>1?'<span class=by>by '+p.by.map((b,k)=>'<button data-i='+i+' data-by="'+b+'" class="'+(k?'':'on')+'">'+b+'</button>').join("")+'</span>':'')+
       '<span class=pact data-i='+i+' data-act=hide>hide</span>'+
       (p.custom?'<span class="pact danger" data-i='+i+' data-act=del>delete</span>':'')+
       '</h2>'+
@@ -1275,6 +1284,12 @@ async function boot(){
       local.hidden=local.hidden.filter(t=>t!==p.title);
     }else if(!local.hidden.includes(p.title)) local.hidden.push(p.title);
     saveLocal();
+  });
+  main.querySelectorAll(".by button").forEach(b=>b.onclick=()=>{
+    const box=document.getElementById("plot-"+b.dataset.i);
+    b.parentElement.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
+    box.dataset.by=b.dataset.by;
+    if(box._payload) drawSeries(box,box._payload,box._kind);
   });
   main.querySelectorAll(".chip").forEach(c=>c.onclick=()=>{
     local.hidden=local.hidden.filter(t=>t!==c.dataset.t);

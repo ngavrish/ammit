@@ -41,7 +41,10 @@ type panel struct {
 	Label string `json:"label,omitempty"`
 	// Above every group, first thing on the page: the one table the page is
 	// opened for.
-	Top     bool     `json:"top,omitempty"`
+	Top bool `json:"top,omitempty"`
+	// Columns the page may colour the same rows by, when the query returns
+	// them instead of one metric: ["agent", "phase"] is a switch in the heading.
+	By      []string `json:"by,omitempty"`
 	About   string   `json:"about"`
 	Unit    string   `json:"unit"`
 	Height  int      `json:"height"`
