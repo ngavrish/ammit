@@ -224,18 +224,14 @@ ts("What one turn carried, against limits.turn_tokens",
    "and the conversation so far. The per-session average below is a summary that "
    "arrives once the session is over; this is the number while the next turn has "
    "not been paid for yet.", "tokens", [
-    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric,
-         json_extract(payload,'$.context') AS value
-         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at"""),
+    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.context') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at"""),
     limit_of("limits.turn_tokens")], 0)
 
 ts("Output per turn, by agent",
    "What the model actually wrote. Read this beside the chart on the left: three "
    "hundred tokens read for every one written is a prompt problem, not a model "
    "having a hard think.", "tokens", [
-    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric,
-         json_extract(payload,'$.tokens_out') AS value
-         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at""")], 12)
+    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.tokens_out') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at""")], 12)
 
 ts("Silence between turns, against timeouts.turn",
    "The gap between one turn and the next, per agent.", "s", [
@@ -289,10 +285,8 @@ ts("Memory against limits.memory_mb",
     limit_of("limits.memory_mb")], 0)
 
 ts("CPU by container", "Percent of one core, as the container client reports it.",
-   "percent", [
-    q("""SELECT at AS time, json_extract(payload,'$.container') AS metric,
-         json_extract(payload,'$.cpu_pct') AS value
-         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at""")], 12)
+   "cores", [
+    q("""SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.cpu_pct')/100.0 AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at""")], 12)
 
 ts("Processes by container",
    "A count that climbs and never falls is something not being reaped — the browser "
@@ -454,8 +448,6 @@ KIND = {
     "Cost": "pie",
     "Turns": "bars",
     "Time in a phase, minute by minute": "timeline",
-    "What one turn carried, against limits.turn_tokens": "scatter",
-    "Output per turn, by agent": "scatter",
     "Time in a session, minute by minute": "timeline",
     "Tokens out": "stacked",
     "Memory against limits.memory_mb": "stacked",
@@ -464,6 +456,8 @@ KIND = {
     "Silence between turns, against timeouts.turn": "candles",
     "Cache, read against written": "series",
     "Gates: rounds, findings, minutes": "bars",
+    "What one turn carried, against limits.turn_tokens": "series",
+    "Output per turn, by agent": "candles",
 }
 
 # A sentence rewritten for the way the chart is drawn now.
@@ -490,6 +484,12 @@ ABOUT = {
         "Context read back from the cache against context written into it, as they accrued. Read climbing with written flat is a prompt paid for once; written climbing alongside is a prompt that will not settle.",
     "Gates: rounds, findings, minutes":
         "One row per gate: how many rounds it ran, how much it refused in all, and how many minutes the rounds and their repairs took. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
+    "CPU by container":
+        "Docker's own figure, as cores: its percent of one core summed over every core, divided by a hundred. Ten cores busy is 10. Docker Desktop overshoots the machine's core count now and then; that is its sampling, not a container.",
+    "What one turn carried, against limits.turn_tokens":
+        "Every turn as it was sent: the system prompt, what was inlined into it, and the conversation so far. A line per agent or per phase, climbing as the conversation grows.",
+    "Output per turn, by agent":
+        "What the model actually wrote in one turn, as a spread: over time, by agent, or by phase. Read beside Context per turn: three hundred tokens read for every one written is a prompt problem.",
 }
 
 # The short heading. The title stays the panel's name - hiding, kinds and
@@ -505,7 +505,6 @@ LABEL = {
     "Requests that died, in full": "Failed requests",
     "Time in a phase, minute by minute": "Phase timeline",
     "What one turn carried, against limits.turn_tokens": "Context per turn",
-    "Output per turn, by agent": "Output per turn",
     "Time in a session, minute by minute": "Session timeline",
     "Tokens out, per run": "Tokens out per run",
     "Tokens out": "Tokens out",
@@ -532,6 +531,7 @@ LABEL = {
     "Silence between turns, against timeouts.turn": "Silence between turns",
     "Cache, read against written": "Cache: read vs written",
     "Gates: rounds, findings, minutes": "Gates",
+    "Output per turn, by agent": "Output per turn",
 }
 
 # One query, several colourings: the page offers the switch (by), folds rows
@@ -542,12 +542,14 @@ EXTRA = {
     "Turns": {"by": ["phase", "agent"], "agg": "sum"},
     "Tokens out": {"by": ["phase", "agent"], "agg": "sum", "acc": "cumsum"},
     "Memory against limits.memory_mb": {"by": ["container", "phase", "agent"], "agg": "sum"},
-    "Request time against timeouts.request": {"by": ["agent", "phase", "time"], "kinds": {"time": "scatter"}},
-    "Silence between turns, against timeouts.turn": {"by": ["agent", "phase", "time"], "kinds": {"time": "scatter"}},
+    "Request time against timeouts.request": {"by": ["time", "agent", "phase"]},
+    "Silence between turns, against timeouts.turn": {"by": ["time", "agent", "phase"]},
     "Cache, read against written": {"agg": "sum", "acc": "cumsum"},
     "Gates: rounds, findings, minutes": {"unit": ""},
     "Idle time piling up, per run": {"scope": "window"},
     "Phases and branches": {"scope": "window"},
+    "What one turn carried, against limits.turn_tokens": {"by": ["agent", "phase"]},
+    "Output per turn, by agent": {"by": ["time", "agent", "phase"]},
 }
 
 spec = {"panels": []}

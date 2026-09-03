@@ -13,6 +13,7 @@ import (
 // write it. The page's formatter builds every label from this map and from
 // nothing else, so there is one place to look and one place to test.
 var timeWords = map[string]string{
+	"millisecond": "millisecond", "milliseconds": "milliseconds",
 	"second": "second", "seconds": "seconds",
 	"minute": "minute", "minutes": "minutes",
 	"hour": "hour", "hours": "hours",

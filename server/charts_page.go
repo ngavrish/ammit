@@ -511,14 +511,17 @@ function dur(v){
   return neg+count(d,W.day,W.days)+(h?" "+count(h,W.hour,W.hours):"");
 }
 const mb=v=>v==null?"":Math.abs(v)>=1024?trim(v/1024)+" GB":short(v)+" MB";
+// Under a second it is milliseconds, in words like the rest; from a second up
+// it is the clock.
+const ms=v=>v==null?"":Math.abs(v)<1000?count(Math.round(v),TIME_WORDS.millisecond,TIME_WORDS.milliseconds):dur(v/1000);
 const UNITS={
   currencyUSD:{name:"USD", tick:v=>"$"+short(v), val:v=>"$"+(+v).toFixed(Math.abs(v)<10?3:2)},
   s:{name:"seconds", tick:dur, val:dur},
-  ms:{name:"milliseconds", tick:v=>dur(v/1000), val:v=>dur(v/1000)},
+  ms:{name:"milliseconds", tick:v=>ms(v), val:v=>ms(v)},
   m:{name:"minutes", tick:v=>dur(v*60), val:v=>dur(v*60)},
   mbytes:{name:"MB", tick:mb, val:mb},
   bytes:{name:"bytes", tick:v=>short(v)+"B", val:v=>short(v)+"B"},
-  percent:{name:"%", tick:v=>trim(v)+"%", val:v=>trim(v)+"%"},
+  percent:{name:"%", tick:v=>trim(v)+"%", val:v=>Math.round(v)+"%"},
   short:{name:"", tick:short, val:trim},
 };
 // Steps a clock is read in. Left to itself an axis of seconds steps by tens
@@ -528,7 +531,7 @@ const TIME_INCRS=[1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,10800,14400,2
 const COUNT_INCRS=[1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000,1e6,2e6,5e6,1e7];
 function incrsOf(U){
   if(U===UNITS.s) return TIME_INCRS;
-  if(U===UNITS.ms) return TIME_INCRS.map(x=>x*1000);
+  if(U===UNITS.ms) return [1,2,5,10,20,50,100,200,500].concat(TIME_INCRS.map(x=>x*1000));
   if(U===UNITS.m) return TIME_INCRS.map(x=>x/60).filter(x=>x>=1);
   if(U===UNITS.currencyUSD||U===UNITS.percent||U===UNITS.mbytes||U===UNITS.bytes||U===UNITS.short) return null;
   return COUNT_INCRS;   // turns, tokens, runs, findings, processes, requests/min - anything named
@@ -623,7 +626,7 @@ const FONT='"Plus Jakarta Sans","Inter",system-ui,sans-serif';
 function drawSeries(box,payload,kind){
   const bad=(payload.series||[]).find(s=>s&&s.error);
   if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
-  box._payload=payload; box._kind=kind;
+  box._payload=payload;
   const P=payload.panel||{};
   const all=rowsOf(payload,box.dataset.by||(P.by||[])[0]);
   const p=pivot(all.cols,all.rows,P);
@@ -921,10 +924,16 @@ function drawCandles(box,payload){
   // same idea either way: what is usual, what is extreme, how many.
   const byName=!!(col&&col!=="time");
   const all=rowsOf(payload,byName?col:null);
+  // Over time the candles stand on buckets - five minutes, an hour, a day -
+  // chosen so the window holds a few dozen of them. Five thousand requests as
+  // five thousand points is a smear; as forty candles it is a shape.
+  let lo=Infinity, hi=-Infinity;
+  for(const r of all.rows){ if(LIMIT.test(String(r[1]))) continue; const t=secs(+r[0]); if(t<lo) lo=t; if(t>hi) hi=t; }
+  const bucket=byName?0:(TIME_INCRS.find(x=>(hi-lo)/x<=40)||604800);
   const by=new Map(); let limit=null;
   for(const r of all.rows){ const v=r[2]==null?null:+r[2]; if(v==null||isNaN(v)) continue;
     if(LIMIT.test(String(r[1]))){ limit={name:String(r[1]),value:v}; continue; }
-    const k=byName?String(r[1]):secs(+r[0]); if(!by.has(k)) by.set(k,[]); by.get(k).push(v); }
+    const k=byName?String(r[1]):Math.floor(secs(+r[0])/bucket)*bucket; if(!by.has(k)) by.set(k,[]); by.get(k).push(v); }
   const q=(a,f)=>{const i=(a.length-1)*f, lo=Math.floor(i), hi=Math.ceil(i); return a[lo]+(a[hi]-a[lo])*(i-lo)};
   let stat=[...by.keys()].map(k=>{const a=by.get(k).slice().sort((x,y)=>x-y);
     return {k,t:byName?0:k,n:a.length,min:a[0],max:a[a.length-1],q1:q(a,.25),q3:q(a,.75),avg:a.reduce((x,y)=>x+y,0)/a.length}});
@@ -937,20 +946,34 @@ function drawCandles(box,payload){
   const W=box.clientWidth||900, H=Math.max(300,Math.round(innerHeight*0.45));
   const L=78, R=12, T=14, B=70, pw=W-L-R, ph=H-T-B;
   const top=Math.max(...stat.map(s=>s.max), limit?limit.value:0)||1;
-  const nice=niceStep(top,U);
-  const ymax=Math.ceil(top/nice)*nice;
-  const y=v=>T+ph-(v/ymax)*ph;
+  // A spread that runs from a second to ten minutes is a flat line with a
+  // whisker on a linear axis: the body is a hundredth of the height. When the
+  // widest value is twenty times the typical one, the axis goes logarithmic,
+  // and the typical second and the worst ten minutes are both readable.
+  const typical=(()=>{const all=[].concat(...[...by.values()]).filter(v=>v>0).sort((a,b)=>a-b); return all.length?all[Math.floor(all.length/2)]:1})();
+  const log=top/Math.max(typical,1e-9)>20 && U!==UNITS.percent;
+  const positive=[].concat(...[...by.values()]).filter(v=>v>0);
+  const ymin=log?Math.max(Math.min(...positive)*0.8,1e-3):0;
+  const nice=log?0:niceStep(top,U);
+  const ymax=log?top*1.15:Math.ceil(top/nice)*nice;
+  const y=log?(v=>T+ph-(Math.log(Math.max(v,ymin)/ymin)/Math.log(ymax/ymin))*ph):(v=>T+ph-(v/ymax)*ph);
+  // Grid lines on a log axis: every clock step in range for a clock, every
+  // power of ten times one, two and five otherwise.
+  const gridAt=log?((incrsOf(U)||[1,2,5,10,20,50,100,200,500,1e3,2e3,5e3,1e4,2e4,5e4,1e5,2e5,5e5,1e6]).filter(v=>v>=ymin&&v<=ymax)):null;
   // The body takes most of its slot: a dozen days across a wide page are a
   // dozen wide candles, not a dozen matchsticks in a field.
   const slot=pw/stat.length, bw=Math.max(6,Math.min(72,slot*0.6));
   const day=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short"});
   const esc=t=>String(t).replace(/[<&"]/g,x=>x==="<"?"&lt;":x==="&"?"&amp;":"&quot;");
   let g='';
-  for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"#E5E7EB":"#A0AEC0")+'"/>'+
+  const ticks=log?gridAt:(()=>{const o=[]; for(let v=0;v<=ymax+1e-9;v+=nice) o.push(v); return o})();
+  for(const v of ticks) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"#E5E7EB":"#A0AEC0")+'"/>'+
     '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#4A5568">'+esc(U.tick(v))+'</text>';
   const every=Math.ceil(stat.length/12);
-  const nameOf=s=>byName?s.k:day.format(new Date(s.t*1000));
-  const noun=byName?(P.noun||"point"):"run";
+  // A bucket shorter than a day is named by its clock, a day by its date.
+  const clock=new Intl.DateTimeFormat("en-GB",{timeZone:zone,hour:"2-digit",minute:"2-digit",hour12:false});
+  const nameOf=s=>byName?s.k:(bucket&&bucket<86400?clock:day).format(new Date(s.t*1000));
+  const noun=byName||(bucket&&bucket<86400)?(P.noun||"point"):"run";
   const c=stat.map((s,i)=>{const x=L+slot*(i+0.5);
     const tip=nameOf(s)+': '+s.n+' '+noun+(s.n===1?'':'s')+', min '+U.val(s.min)+', average '+U.val(s.avg)+', max '+U.val(s.max);
     return '<g data-tip="'+esc(tip)+'">'+
@@ -962,8 +985,8 @@ function drawCandles(box,payload){
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
     '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+U.val(limit.value))+'</text>':'';
   box.innerHTML='<svg class=candles width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+c.join("")+lim+
-    axisNames(W,H,L,B,esc(U.name||"value"),byName?esc(col+"s, the usual first"):"day ("+zone.replace(/_/g," ")+")")+'</svg>'+
-    '<div class=keys><span>wick: the least to the most - body: the middle half - line: the average'+(limit?' - dashed: '+esc(limitTitle(limit.name)):'')+'</span></div>';
+    axisNames(W,H,L,B,esc((U.name||"value")+(log?", logarithmic":"")),byName?esc(col+"s, the usual first"):(bucket&&bucket<86400?"time, in buckets of "+dur(bucket)+" ("+zone.replace(/_/g," ")+")":"day ("+zone.replace(/_/g," ")+")"))+'</svg>'+
+    '<div class=keys><span>wick: the least to the most - body: the middle half - line: the average'+(limit?' - dashed: '+esc(limitTitle(limit.name)):'')+(log?' - logarithmic axis: the typical and the worst are both readable':'')+'</span></div>';
   hoverTips(box);
 }
 
@@ -1162,9 +1185,10 @@ async function load(){
     try{
       const r=await fetch("/charts/data?panel="+i+"&from="+from+"&to="+to+q);
       const payload=await r.json();
-        box._draw=(box,payload,kind)=>{
+        box._kind=p.kind;
+      box._draw=(box,payload,kind)=>{
         const by=box.dataset.by||((payload.panel||{}).by||[])[0];
-        const k=((payload.panel||{}).kinds||{})[by]||kind;
+        const k=((payload.panel||{}).kinds||{})[by]||kind||box._kind;
         ({table:drawTable,pie:drawPie,bars:drawBars,timeline:drawTimeline,candles:drawCandles,stats:drawStats}[k]||drawSeries)(box,payload,k);
       };
       box._draw(box,payload,p.kind);
