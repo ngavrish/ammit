@@ -227,11 +227,21 @@ ts("What one turn carried, against limits.turn_tokens",
     q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.context') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at"""),
     limit_of("limits.turn_tokens")], 0)
 
+# A turn reports its output twice: `tokens_out` is what the SDK said, and
+# while a session is streaming that is the message_start placeholder — a
+# handful of tokens, never the turn — and `out_est` is what the message was
+# worth at four characters a token. The runner writes both rather than choose,
+# because one of these is priced and an estimate written into a priced field
+# is money nobody spent. Choosing is done here, and it is `max`: whichever
+# number is real, it is the larger one. Every chart that reads a turn's output
+# takes the pair. The `spend` events below are the session's own bill and need
+# none of this.
 ts("Output per turn, by agent",
-   "What the model actually wrote. Read this beside the chart on the left: three "
-   "hundred tokens read for every one written is a prompt problem, not a model "
-   "having a hard think.", "tokens", [
-    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.tokens_out') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at""")], 12)
+   "What the model actually wrote — the SDK's count where it gives one, and "
+   "otherwise the message measured at four characters a token. Read this beside "
+   "the chart on the left: three hundred tokens read for every one written is a "
+   "prompt problem, not a model having a hard think.", "tokens", [
+    q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, max(coalesce(json_extract(payload,'$.tokens_out'),0), coalesce(json_extract(payload,'$.out_est'),0)) AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND max(coalesce(json_extract(payload,'$.tokens_out'),0), coalesce(json_extract(payload,'$.out_est'),0)) > 0 ORDER BY at""")], 12)
 
 ts("Silence between turns, against timeouts.turn",
    "The gap between one turn and the next, per agent.", "s", [
@@ -607,7 +617,7 @@ _after("Cost", [
     {
         "kind": "stacked",
         "title": "Cost per turn",
-        "about": "Every turn in money as it was reported: its tokens at the SDK's own catalog prices and by the SDK's own formula - the one-hour share of cache writes at the one-hour rate, times 1.1 when inferred in the US - stacked by agent or by phase. The bill the SDK sends at session end never comes for a session ammit stopped; this does not wait for it. Turns from before the runner reported token splits are not here.",
+        "about": "Every turn in money as it was reported: its tokens at the SDK's own catalog prices and by the SDK's own formula - the one-hour share of cache writes at the one-hour rate, times 1.1 when inferred in the US - stacked by agent or by phase. The bill the SDK sends at session end never comes for a session ammit stopped; this does not wait for it. Turns from before the runner reported token splits are not here. The output share is priced from the estimate whenever the SDK's own figure was the stream's placeholder, which is nearly every turn: there is no exact per-turn output count, only the session's on session_end.",
         "unit": "currencyUSD",
         "height": 8,
         "by": [
@@ -616,7 +626,7 @@ _after("Cost", [
         ],
         "acc": "cumsum",
         "queries": [
-            "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
+            "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + max(coalesce(json_extract(e.payload,'$.tokens_out'),0), coalesce(json_extract(e.payload,'$.out_est'),0))*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
         ]
     },
     {
@@ -626,7 +636,7 @@ _after("Cost", [
         "unit": "",
         "height": 6,
         "queries": [
-            "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND family IS NULL GROUP BY model ORDER BY turns DESC"
+            "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + max(coalesce(json_extract(e.payload,'$.tokens_out'),0), coalesce(json_extract(e.payload,'$.out_est'),0))*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND family IS NULL GROUP BY model ORDER BY turns DESC"
         ]
     }
 ])
@@ -791,7 +801,7 @@ lifetime["panels"][_i:_i] = [
         "unit": "currencyUSD",
         "height": 8,
         "queries": [
-            "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'counted', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t GROUP BY run) m ON m.run=r.run ORDER BY 1"
+            "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'counted', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + max(coalesce(json_extract(e.payload,'$.tokens_out'),0), coalesce(json_extract(e.payload,'$.out_est'),0))*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t GROUP BY run) m ON m.run=r.run ORDER BY 1"
         ]
     }
 ]
