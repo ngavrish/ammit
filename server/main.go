@@ -68,6 +68,57 @@ CREATE TABLE IF NOT EXISTS prices (
     us_surcharge   REAL NOT NULL
 );
 
+-- Three more things lifted out of the event stream into columns, the way
+-- gates and calls already are: a chart reads a column, not json_extract over
+-- every event there has been, and the same expression is not repeated in
+-- seventy queries. Keyed by the event they came from, so lifting is
+-- idempotent and history can be lifted once on start.
+CREATE TABLE IF NOT EXISTS turns (
+    event_id       INTEGER PRIMARY KEY,
+    at             REAL NOT NULL,
+    run            TEXT,
+    agent          TEXT,
+    phase          TEXT,
+    branch         TEXT,
+    request        TEXT,            -- the wait this turn answered (sid#seq)
+    model          TEXT,
+    context        INTEGER,         -- everything the turn was sent
+    tokens_in      INTEGER,         -- NULL: the runner did not split the context yet
+    tokens_out     INTEGER,         -- exactly what the SDK reported (often the stream's placeholder)
+    out_est        INTEGER,         -- the runner's measure of the message, four characters a token
+    cache_read     INTEGER,
+    cache_write    INTEGER,
+    cache_write_1h INTEGER,         -- the share of cache_write kept an hour
+    geo            TEXT             -- where it was inferred; "us" costs 1.1
+);
+CREATE INDEX IF NOT EXISTS turns_run ON turns (run, at);
+CREATE INDEX IF NOT EXISTS turns_at ON turns (at);
+
+CREATE TABLE IF NOT EXISTS suites (
+    event_id INTEGER PRIMARY KEY,
+    at       REAL NOT NULL,
+    run      TEXT,
+    branch   TEXT NOT NULL DEFAULT '',
+    verdict  TEXT NOT NULL,          -- green | red
+    total    INTEGER,
+    passed   INTEGER,
+    failed   INTEGER,
+    reason   TEXT NOT NULL DEFAULT ''-- why red, in the suite's own words
+);
+CREATE INDEX IF NOT EXISTS suites_run ON suites (run, branch, at);
+
+CREATE TABLE IF NOT EXISTS heal_laps (
+    event_id INTEGER PRIMARY KEY,
+    at       REAL NOT NULL,
+    run      TEXT,
+    branch   TEXT NOT NULL DEFAULT '',
+    phase    TEXT,
+    lap      INTEGER NOT NULL,
+    cap      INTEGER,                -- NULL: lifted from history, the cap was not recorded
+    decision TEXT NOT NULL           -- again | converged | gave_up | unknown
+);
+CREATE INDEX IF NOT EXISTS heal_laps_run ON heal_laps (run, branch, at);
+
 CREATE TABLE IF NOT EXISTS runs (
     run      TEXT PRIMARY KEY,
     name     TEXT,
@@ -345,13 +396,17 @@ func store(e event) {
 		at = float64(time.Now().UnixNano()) / 1e9
 	}
 	payload, _ := json.Marshal(e)
-	if _, err := db.Exec(
+	res, err := db.Exec(
 		`INSERT INTO events (at, kind, run, phase, session, agent, branch, payload)
 		 VALUES (?,?,?,?,?,?,?,?)`,
 		at, e.s("kind"), e.s("run"), e.s("phase"), e.s("session"), e.s("agent"),
-		e.s("branch"), string(payload)); err != nil {
+		e.s("branch"), string(payload))
+	if err != nil {
 		log.Printf("ammit: could not keep an event: %v", err)
 		return
+	}
+	if id, err := res.LastInsertId(); err == nil {
+		lift(id, at, e)
 	}
 	// A run this store has never heard of gets a row on its first event.
 	//
@@ -1756,6 +1811,7 @@ func main() {
 	}
 
 	seedPrices()
+	liftHistory()
 
 	// Readings on their own thread. Judging must never wait for a machine
 	// reading: one is a call out to a daemon that answers when it feels like it,

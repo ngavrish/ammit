@@ -84,7 +84,7 @@
   {
    "kind": "stacked",
    "title": "Cost per turn",
-   "about": "Every turn in money as it was reported: its tokens at the SDK's own catalog prices and by the SDK's own formula - the one-hour share of cache writes at the one-hour rate, times 1.1 when inferred in the US - stacked by agent or by phase. The bill the SDK sends at session end never comes for a session ammit stopped; this does not wait for it. Turns from before the runner reported token splits are not here.",
+   "about": "Every turn in money as it was reported: its tokens at the SDK's own catalog prices and by the SDK's own formula - the one-hour share of cache writes at the one-hour rate, times 1.1 when inferred in the US - stacked by agent or by phase. The output share is the larger of the SDK's per-turn figure and the runner's estimate of the message, because the SDK's per-turn figure is usually the stream's placeholder; the exact output count exists only per session. The bill the SDK sends at session end never comes for a session ammit stopped; this does not wait for it. Turns from before the runner reported token splits are not here.",
    "unit": "currencyUSD",
    "height": 8,
    "by": [
@@ -93,7 +93,7 @@
    ],
    "acc": "cumsum",
    "queries": [
-    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
+    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
    ]
   },
   {
@@ -103,7 +103,7 @@
    "unit": "",
    "height": 6,
    "queries": [
-    "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT e.at, e.run, e.agent, e.phase, e.branch, json_extract(e.payload,'$.model') AS model, json_extract(e.payload,'$.request') AS request, (coalesce(json_extract(e.payload,'$.tokens_in'),0)*p.input + coalesce(json_extract(e.payload,'$.tokens_out'),0)*p.output + coalesce(json_extract(e.payload,'$.cache_read'),0)*p.cache_read + (coalesce(json_extract(e.payload,'$.cache_write'),0) - coalesce(json_extract(e.payload,'$.cache_write_1h'),0))*p.cache_write + coalesce(json_extract(e.payload,'$.cache_write_1h'),0)*p.cache_write_1h)/1e6 * CASE WHEN json_extract(e.payload,'$.geo')='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS family FROM events e LEFT JOIN prices p ON p.model = json_extract(e.payload,'$.model') WHERE e.kind='turn' AND json_extract(e.payload,'$.tokens_in') IS NOT NULL) t WHERE at*1000 BETWEEN $__from AND $__to AND family IS NULL GROUP BY model ORDER BY turns DESC"
+    "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) WHERE at*1000 BETWEEN $__from AND $__to AND tier IS NULL GROUP BY model ORDER BY turns DESC"
    ]
   },
   {
@@ -113,7 +113,7 @@
    "unit": "turns",
    "height": 8,
    "queries": [
-    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, 1 AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
+    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, 1 AS value FROM turns WHERE at*1000 BETWEEN $__from AND $__to ORDER BY at"
    ],
    "label": "Turns",
    "by": [
@@ -144,7 +144,7 @@
    "unit": "tokens",
    "height": 8,
    "queries": [
-    "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.context') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at",
+    "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, context AS value FROM turns WHERE at*1000 BETWEEN $__from AND $__to AND coalesce(context,0) > 0 ORDER BY at",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.turn_tokens' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.turn_tokens' AND at*1000 < $__from)) ORDER BY at"
    ],
    "label": "Context per turn",
@@ -161,7 +161,7 @@
    "unit": "tokens",
    "height": 8,
    "queries": [
-    "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.tokens_out') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at"
+    "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, max(coalesce(tokens_out,0), coalesce(out_est,0)) AS value FROM turns WHERE at*1000 BETWEEN $__from AND $__to AND max(coalesce(tokens_out,0), coalesce(out_est,0)) > 0 ORDER BY at"
    ],
    "label": "Output per turn",
    "by": [
@@ -177,7 +177,7 @@
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT time, agent, phase, value FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'turn') WHERE value IS NOT NULL AND time*1000 BETWEEN $__from AND $__to ORDER BY time",
+    "SELECT time, agent, phase, value FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM turns WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from))) WHERE value IS NOT NULL AND time*1000 BETWEEN $__from AND $__to ORDER BY time",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.turn' AND at*1000 < $__from)) ORDER BY at"
    ],
    "label": "Silence between turns",
@@ -351,7 +351,7 @@
    "unit": "scenarios",
    "height": 8,
    "queries": [
-    "SELECT at AS time, 'passed' AS metric, passed AS value, coalesce(nullif(branch,''),'(no branch)') AS label FROM (SELECT at, run, coalesce(json_extract(payload,'$.branch'),'') AS branch, json_extract(payload,'$.verdict') AS verdict, json_extract(payload,'$.total') AS total, json_extract(payload,'$.passed') AS passed, json_extract(payload,'$.failed') AS failed, coalesce(json_extract(payload,'$.reason'),'') AS reason FROM events WHERE kind='suite' UNION ALL SELECT at, run, coalesce(json_extract(payload,'$.branch'),''), CASE WHEN instr(json_extract(payload,'$.text'),'SUITE GREEN')>0 THEN 'green' ELSE 'red' END, CAST(substr(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'SUITE ')), instr(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'SUITE ')),': ')+2) AS INTEGER), CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'scenarios, ')+11) AS INTEGER), CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER), 'read from the phase text: before the suite event' FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun' AND run NOT IN (SELECT run FROM events WHERE kind='suite')) WHERE at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at, 'failed', failed, coalesce(nullif(branch,''),'(no branch)') FROM (SELECT at, run, coalesce(json_extract(payload,'$.branch'),'') AS branch, json_extract(payload,'$.verdict') AS verdict, json_extract(payload,'$.total') AS total, json_extract(payload,'$.passed') AS passed, json_extract(payload,'$.failed') AS failed, coalesce(json_extract(payload,'$.reason'),'') AS reason FROM events WHERE kind='suite' UNION ALL SELECT at, run, coalesce(json_extract(payload,'$.branch'),''), CASE WHEN instr(json_extract(payload,'$.text'),'SUITE GREEN')>0 THEN 'green' ELSE 'red' END, CAST(substr(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'SUITE ')), instr(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'SUITE ')),': ')+2) AS INTEGER), CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'scenarios, ')+11) AS INTEGER), CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER), 'read from the phase text: before the suite event' FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun' AND run NOT IN (SELECT run FROM events WHERE kind='suite')) WHERE at*1000 BETWEEN $__from AND $__to ORDER BY 1"
+    "SELECT at AS time, 'passed' AS metric, passed AS value, coalesce(nullif(branch,''),'(no branch)') AS label FROM suites WHERE at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at, 'failed', failed, coalesce(nullif(branch,''),'(no branch)') FROM suites WHERE at*1000 BETWEEN $__from AND $__to ORDER BY 1"
    ]
   },
   {
@@ -361,7 +361,7 @@
    "unit": "",
    "height": 9,
    "queries": [
-    "SELECT coalesce(nullif(s.branch,''),'(no branch)') AS branch, count(*) AS suite_runs, coalesce(l.laps, h.laps, 0) AS heal_laps, l.cap AS cap, l.decision AS last_lap, coalesce(h.minutes,0) AS heal_minutes, coalesce(m.usd,0) AS heal_usd, min(CASE WHEN s.n=1 THEN s.failed END) AS failed_first, min(CASE WHEN s.rn=1 THEN s.failed END) AS failed_last, min(CASE WHEN s.rn=1 THEN s.verdict END) AS last_suite, min(CASE WHEN s.rn=1 THEN s.reason END) AS why FROM (SELECT *, row_number() OVER (PARTITION BY branch ORDER BY at) AS n, row_number() OVER (PARTITION BY branch ORDER BY at DESC) AS rn FROM (SELECT at, run, coalesce(json_extract(payload,'$.branch'),'') AS branch, json_extract(payload,'$.verdict') AS verdict, json_extract(payload,'$.total') AS total, json_extract(payload,'$.passed') AS passed, json_extract(payload,'$.failed') AS failed, coalesce(json_extract(payload,'$.reason'),'') AS reason FROM events WHERE kind='suite' UNION ALL SELECT at, run, coalesce(json_extract(payload,'$.branch'),''), CASE WHEN instr(json_extract(payload,'$.text'),'SUITE GREEN')>0 THEN 'green' ELSE 'red' END, CAST(substr(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'SUITE ')), instr(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'SUITE ')),': ')+2) AS INTEGER), CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'scenarios, ')+11) AS INTEGER), CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER), 'read from the phase text: before the suite event' FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun' AND run NOT IN (SELECT run FROM events WHERE kind='suite')) WHERE at*1000 BETWEEN $__from AND $__to) s LEFT JOIN (SELECT branch, max(lap) AS laps, max(cap) AS cap, max(CASE WHEN rn=1 THEN decision END) AS decision FROM (SELECT coalesce(json_extract(payload,'$.branch'),'') AS branch, json_extract(payload,'$.lap') AS lap, json_extract(payload,'$.cap') AS cap, json_extract(payload,'$.decision') AS decision, row_number() OVER (PARTITION BY coalesce(json_extract(payload,'$.branch'),'') ORDER BY at DESC) AS rn FROM events WHERE kind='heal_lap' AND at*1000 BETWEEN $__from AND $__to) GROUP BY branch) l ON l.branch=s.branch LEFT JOIN (SELECT coalesce(json_extract(payload,'$.branch'),'') AS branch, count(*) AS laps, round(sum(json_extract(payload,'$.seconds'))/60.0,1) AS minutes FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) h ON h.branch=s.branch LEFT JOIN (SELECT coalesce(json_extract(payload,'$.branch'),'') AS branch, round(sum(json_extract(payload,'$.usd')),2) AS usd FROM events WHERE kind='spend' AND json_extract(payload,'$.phase') LIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) m ON m.branch=s.branch GROUP BY s.branch ORDER BY heal_laps DESC, suite_runs DESC"
+    "SELECT coalesce(nullif(s.branch,''),'(no branch)') AS branch, count(*) AS suite_runs, coalesce(l.laps,0) AS heal_laps, l.cap AS cap, l.decision AS last_lap, coalesce(h.minutes,0) AS heal_minutes, coalesce(m.usd,0) AS heal_usd, min(CASE WHEN s.n=1 THEN s.failed END) AS failed_first, min(CASE WHEN s.rn=1 THEN s.failed END) AS failed_last, min(CASE WHEN s.rn=1 THEN s.verdict END) AS last_suite, min(CASE WHEN s.rn=1 THEN s.reason END) AS why FROM (SELECT *, row_number() OVER (PARTITION BY branch ORDER BY at) AS n, row_number() OVER (PARTITION BY branch ORDER BY at DESC) AS rn FROM suites WHERE at*1000 BETWEEN $__from AND $__to) s LEFT JOIN (SELECT branch, max(lap) AS laps, max(cap) AS cap, max(CASE WHEN rn=1 THEN decision END) AS decision FROM (SELECT branch, lap, cap, decision, row_number() OVER (PARTITION BY branch ORDER BY at DESC) AS rn FROM heal_laps WHERE at*1000 BETWEEN $__from AND $__to) GROUP BY branch) l ON l.branch=s.branch LEFT JOIN (SELECT coalesce(json_extract(payload,'$.branch'),'') AS branch, round(sum(json_extract(payload,'$.seconds'))/60.0,1) AS minutes FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) h ON h.branch=s.branch LEFT JOIN (SELECT coalesce(json_extract(payload,'$.branch'),'') AS branch, round(sum(json_extract(payload,'$.usd')),2) AS usd FROM events WHERE kind='spend' AND json_extract(payload,'$.phase') LIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) m ON m.branch=s.branch GROUP BY s.branch ORDER BY heal_laps DESC, suite_runs DESC"
    ]
   },
   {

@@ -217,7 +217,7 @@ func fill(sql string, from, to int64) string {
 
 // Every table a panel reads that belongs to a run. limits is not one of them:
 // it is the config as it stood, and it stood the same for everybody.
-var runScoped = []string{"events", "runs", "gates", "judgements", "calls"}
+var runScoped = []string{"events", "runs", "gates", "judgements", "calls", "turns", "suites", "heal_laps"}
 
 // scope narrows a query to one run without touching the query.
 //
