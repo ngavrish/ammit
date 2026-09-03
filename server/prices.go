@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 )
 
@@ -77,6 +78,36 @@ func seedPrices() {
 			log.Printf("ammit: prices: %v", err)
 		}
 	}
+}
+
+// The SDK's formula, in SQL, over the lifted turns: what a run's turns come
+// to at the catalog. The one expression every chart and the judge read.
+const countedSQL = `SELECT coalesce(sum(
+	(coalesce(t.tokens_in,0)*p.input
+	 + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output
+	 + coalesce(t.cache_read,0)*p.cache_read
+	 + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write
+	 + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6
+	* CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END), 0)
+	FROM turns t JOIN prices p ON p.model = t.model
+	WHERE t.run = ? AND t.tokens_in IS NOT NULL`
+
+// countedUSD is what a run's turns come to so far, priced as they arrived.
+func countedUSD(run string) float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	var usd float64
+	if err := db.QueryRow(countedSQL, run).Scan(&usd); err != nil {
+		log.Printf("ammit: counted usd: %v", err)
+	}
+	return usd
+}
+
+// spentUSD is a run's spend as far as anything knows it: the bill where the
+// SDK has sent one, the count of its turns where it has not, whichever is
+// larger. A session this service stopped never sends a bill.
+func spentUSD(r openRun) float64 {
+	return math.Max(r.usd, countedUSD(r.run))
 }
 
 func servePrices(w http.ResponseWriter, r *http.Request) {

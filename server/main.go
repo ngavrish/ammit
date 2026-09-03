@@ -1436,12 +1436,20 @@ func weigh(conf Config) {
 			finish(r.run, "BLOCKED", fmt.Sprintf("ammit: over timeouts.run (%.0fs)", limit))
 			continue
 		}
-		if limit, ok := conf.num("limits", "usd_per_run"); ok && r.usd > limit {
-			action := conf.str("actions", "on_usd", "stop_run")
-			judge("run", r.run, r.name, "limits.usd_per_run", limit, r.usd, action,
-				act(action, conf, ctx))
-			finish(r.run, "BLOCKED", "ammit: over limits.usd_per_run")
-			continue
+		// Money as it arrives, not only as it is billed. The SDK's bill comes
+		// at session end and never for a session this service stops; the turns
+		// come as they happen and the catalog prices them. The larger of the
+		// two is the run's spend: the bill where it has come, the count where
+		// it has not. Judged on the bill alone, eighteen stopped sessions of
+		// run f4a30b19 cost nothing.
+		if limit, ok := conf.num("limits", "usd_per_run"); ok {
+			if usd := spentUSD(r); usd > limit {
+				action := conf.str("actions", "on_usd", "stop_run")
+				judge("run", r.run, r.name, "limits.usd_per_run", limit, usd, action,
+					act(action, conf, ctx))
+				finish(r.run, "BLOCKED", "ammit: over limits.usd_per_run")
+				continue
+			}
 		}
 		// What the pipeline is carrying, turn after turn.
 		//
@@ -1776,24 +1784,22 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 
 var validName = regexp.MustCompile(`^[\w.:/-]{1,120}$`)
 
-func main() {
-	dbPath := env("AMMIT_DB", "/data/ammit.db")
-	docsDir = env("AMMIT_DOCS", strings.TrimSuffix(dbPath, "/"+lastSegment(dbPath))+"/documents")
-	confPath := env("AMMIT_CONFIG", "/config/limits.yml")
-	port := env("AMMIT_PORT", "8099")
-	tick, _ := strconv.Atoi(env("AMMIT_TICK", "20"))
-
+// openDB opens or makes the database at path and brings it up to date: the
+// schema, the columns added since, the price sheet, the history lifted into
+// its tables. main and the tests share it: a test that runs every panel's
+// SQL is only worth having if it runs against the schema the service runs.
+func openDB(dbPath string) error {
 	if err := os.MkdirAll(strings.TrimSuffix(dbPath, "/"+lastSegment(dbPath)), 0o755); err != nil {
 		log.Printf("ammit: could not make the data directory: %v", err)
 	}
 	var err error
 	db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
 	if err != nil {
-		log.Fatalf("ammit: no database: %v", err)
+		return err
 	}
 	dropOldPrices()
 	if _, err := db.Exec(schema); err != nil {
-		log.Fatalf("ammit: could not make the tables: %v", err)
+		return fmt.Errorf("could not make the tables: %w", err)
 	}
 	// Columns added to a table that already exists. CREATE TABLE IF NOT EXISTS
 	// does nothing to a database that has the table, so a new column arrives
@@ -1809,9 +1815,21 @@ func main() {
 			log.Printf("ammit: %s (%v)", add, err)
 		}
 	}
-
 	seedPrices()
 	liftHistory()
+	return nil
+}
+
+func main() {
+	dbPath := env("AMMIT_DB", "/data/ammit.db")
+	docsDir = env("AMMIT_DOCS", strings.TrimSuffix(dbPath, "/"+lastSegment(dbPath))+"/documents")
+	confPath := env("AMMIT_CONFIG", "/config/limits.yml")
+	port := env("AMMIT_PORT", "8099")
+	tick, _ := strconv.Atoi(env("AMMIT_TICK", "20"))
+
+	if err := openDB(dbPath); err != nil {
+		log.Fatalf("ammit: no database: %v", err)
+	}
 
 	// Readings on their own thread. Judging must never wait for a machine
 	// reading: one is a call out to a daemon that answers when it feels like it,
