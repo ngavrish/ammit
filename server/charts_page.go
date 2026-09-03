@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-import _ "embed"
-
 // The page. uPlot is vendored rather than fetched: a chart that needs the
 // internet is a chart that is blank on the machine that most needs it.
 

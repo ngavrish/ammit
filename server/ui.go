@@ -25,7 +25,8 @@ import (
 // adding a command, renaming a section.
 //
 // One page, no framework, no build step.
-func pageHTML() string { return `<!doctype html>
+func pageHTML() string {
+	return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>ammit</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -357,7 +358,8 @@ async function refresh() {
 }
 
 load(); refresh(); setInterval(refresh, 10000);
-</script>` + footerHTML() + `</body></html>` }
+</script>` + footerHTML() + `</body></html>`
+}
 
 // serveUI wires the page and the routes it edits the config through.
 func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
