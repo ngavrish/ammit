@@ -938,7 +938,12 @@ function drawStats(box,payload){
     if(u==="moment") return when.format(new Date(secs(+v)*1000));
     const U=unitOf(u); const n=+v;
     if(U===UNITS.currencyUSD) return "$"+n.toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2});
-    if(U===UNITS.s||U===UNITS.m||U===UNITS.ms) return U.val(n);
+    // A tile in minutes stays in minutes - "270 minutes", not "4 hours 30
+    // minutes" - because that is the unit the person asked to read it in.
+    if(U===UNITS.m) return Math.round(n).toLocaleString("en-GB")+" "+TIME_WORDS.minutes;
+    if(U===UNITS.s||U===UNITS.ms) return U.val(n);
+    // Billions of tokens read as billions: 4.79G, not 4,794,086,795.
+    if(u==="tokens") return short(n)+" tokens";
     return Math.round(n).toLocaleString("en-GB");
   };
   box.dataset.metrics=rows.map(r=>r[mi]).join(" ");
