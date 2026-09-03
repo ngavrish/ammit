@@ -327,6 +327,14 @@ ts("Gates: rounds, findings, minutes",
    "asking for something the repair cannot give.", "", [
     q("""SELECT max(at) AS time, 'rounds' AS metric, count(*) AS value, phase AS label FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'findings', sum(findings), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'minutes', round(sum(seconds)/60.0, 1), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase ORDER BY 1""")], 0, points=True)
 
+ts("Suite runs, passed against failed",
+   "Every suite run of the branch loop as a pair of bars, passed beside failed, titled by branch. Failed bars that do not shrink lap after lap are a loop healing nothing. A red suite with nothing failed is the runner exiting non-zero, not the tests.", "scenarios", [
+    q("""SELECT at AS time, 'passed' AS metric, CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'scenarios, ')+11) AS INTEGER) AS value, coalesce(json_extract(payload,'$.branch'),'(no branch)') AS label FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun' AND at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at, 'failed', CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER), coalesce(json_extract(payload,'$.branch'),'(no branch)') FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1""")], 0, points=True)
+
+tbl("Heal loop by branch",
+    "One row per branch: how many times its suite ran, how many heal laps that took, what the laps cost in minutes and dollars, and the failures at the first suite against the last. The last column is what the branch left with.",
+    """SELECT s.branch AS branch, count(*) AS suite_runs, coalesce(h.laps,0) AS heal_laps, coalesce(h.minutes,0) AS heal_minutes, coalesce(m.usd,0) AS heal_usd, min(CASE WHEN s.n=1 THEN s.failed END) AS failed_first, min(CASE WHEN s.rn=1 THEN s.failed END) AS failed_last, min(CASE WHEN s.rn=1 THEN s.suite END) AS last_suite FROM (SELECT coalesce(json_extract(payload,'$.branch'),'(no branch)') AS branch, CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER) AS failed, CASE WHEN instr(json_extract(payload,'$.text'),'SUITE GREEN')>0 THEN 'green' ELSE 'red' END AS suite, row_number() OVER (PARTITION BY coalesce(json_extract(payload,'$.branch'),'(no branch)') ORDER BY at) AS n, row_number() OVER (PARTITION BY coalesce(json_extract(payload,'$.branch'),'(no branch)') ORDER BY at DESC) AS rn FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun' AND at*1000 BETWEEN $__from AND $__to) s LEFT JOIN (SELECT coalesce(json_extract(payload,'$.branch'),'(no branch)') AS branch, count(*) AS laps, round(sum(json_extract(payload,'$.seconds'))/60.0,1) AS minutes FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) h ON h.branch=s.branch LEFT JOIN (SELECT coalesce(json_extract(payload,'$.branch'),'(no branch)') AS branch, round(sum(json_extract(payload,'$.usd')),2) AS usd FROM events WHERE kind='spend' AND json_extract(payload,'$.phase') LIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) m ON m.branch=s.branch GROUP BY s.branch ORDER BY heal_laps DESC, suite_runs DESC""", 0, ())
+
 # ------------------------------------------------------ where time went
 row("Where the time went")
 
@@ -456,6 +464,7 @@ KIND = {
     "Silence between turns, against timeouts.turn": "candles",
     "Cache, read against written": "series",
     "Gates: rounds, findings, minutes": "bars",
+    "Suite runs, passed against failed": "bars",
     "Output per turn, by agent": "candles",
     "What one turn carried, against limits.turn_tokens": "candles",
     "CPU by container": "stacked",
@@ -714,3 +723,137 @@ for p in lifetime["panels"]:
 out3 = pathlib.Path(__file__).with_name("lifetime.json")
 out3.write_text(json.dumps(lifetime, indent=1, ensure_ascii=False) + "\n")
 print(f"{out3}: {len([x for x in lifetime['panels'] if x['kind'] != 'row'])} panels")
+
+# The learning loop, on its own page. The model in the shadow, what every
+# run leaves for it, and whether the runs are getting any better for it.
+learning = {
+    "sections": "rows",
+    "panels": [
+        {
+            "kind": "row",
+            "title": "The model in the shadow"
+        },
+        {
+            "kind": "series",
+            "title": "Shadow model against sonnet",
+            "about": "Gate-pass rate of the local model's requirement rows against the sonnet rows that shipped, judged by the same mechanical gate, once per run. The gap between the lines is the distance to handing the pipeline's biggest bill to a model that costs nothing.",
+            "unit": "percent",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'local: ' || json_extract(payload,'$.model') AS metric, json_extract(payload,'$.local_rate') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' UNION ALL SELECT at, 'sonnet', json_extract(payload,'$.sonnet_rate') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "table",
+            "title": "Shadow evals",
+            "about": "Every shadow eval there has been, newest first: which model, on how many requirement pairs, and how the two scored.",
+            "unit": "",
+            "height": 7,
+            "queries": [
+                "SELECT at, json_extract(payload,'$.model') AS model, json_extract(payload,'$.pairs') AS pairs, round(json_extract(payload,'$.sonnet_rate')) AS sonnet_pct, round(json_extract(payload,'$.local_rate')) AS local_pct, round(json_extract(payload,'$.sonnet_rate')-json_extract(payload,'$.local_rate')) AS gap FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' ORDER BY at DESC"
+            ]
+        },
+        {
+            "kind": "row",
+            "title": "What every run leaves behind"
+        },
+        {
+            "kind": "bars",
+            "title": "Hoard shipped per run",
+            "about": "What each run's transcripts, requirement pairs and suite verdicts weighed once tarred and shipped to the learning store. A run that shipped nothing left nothing to tune on.",
+            "unit": "mbytes",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'shipped' AS metric, json_extract(payload,'$.kb')/1024.0 AS value, json_extract(payload,'$.ticket') AS label FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "bars",
+            "title": "Hoard contents per run",
+            "about": "Inside each shipment: how many session transcripts and how many requirement-author files. The files are the pairs a tune is made of.",
+            "unit": "files",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'transcripts' AS metric, json_extract(payload,'$.transcripts') AS value, json_extract(payload,'$.ticket') AS label FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' UNION ALL SELECT at, 'funcreq files', json_extract(payload,'$.funcreq'), json_extract(payload,'$.ticket') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "series",
+            "title": "Lessons in memory",
+            "about": "How many lessons the global memory held after each store or ingest. A line that does not climb while heal laps stay high is a memory nothing is being written to.",
+            "unit": "lessons",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'total' AS metric, json_extract(payload,'$.total') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "columns",
+            "title": "Lessons per store",
+            "about": "Each time the memory was written to: how many lessons were new and how many confirmed one already there.",
+            "unit": "lessons",
+            "height": 8,
+            "queries": [
+                "SELECT at AS time, 'fresh' AS metric, json_extract(payload,'$.fresh') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' UNION ALL SELECT at, 'confirmed', json_extract(payload,'$.confirmed') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "bars",
+            "title": "Memory stored and injected per run",
+            "about": "Per run: how many times the runner stored the run's case into the ticket's memory after a heal or revise phase, and how many times it injected past cases into a batch. Sessions do not ask the memory themselves; the runner asks for them.",
+            "unit": "times",
+            "height": 8,
+            "queries": [
+                "SELECT r.started AS time, 'stored' AS metric, coalesce(m.stored,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run UNION ALL SELECT r.started, 'injected', coalesce(m.injected,0), r.name FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "row",
+            "title": "Is it learning"
+        },
+        {
+            "kind": "bars",
+            "title": "Heal laps per run",
+            "about": "Every run in the order it started: how many times a suite came back red and a healer was sent in. The number the memory is judged by: it has to fall as lessons accumulate, or nothing is being learned.",
+            "unit": "laps",
+            "height": 8,
+            "queries": [
+                "SELECT r.started AS time, 'heal laps' AS metric, coalesce(h.laps,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, count(*) AS laps FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run) h ON h.run=r.run ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "bars",
+            "title": "Suite failures, first against last",
+            "about": "Per run, the failing scenarios summed over its branches at the first suite run and at the last. The distance between the two bars is what the heal loop bought; a last bar as tall as the first is a loop that ran and repaired nothing.",
+            "unit": "scenarios",
+            "height": 8,
+            "queries": [
+                "SELECT r.started AS time, 'first suite' AS metric, coalesce(sum(CASE WHEN s.n=1 THEN s.failed END),0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER) AS failed, row_number() OVER (PARTITION BY run, json_extract(payload,'$.branch') ORDER BY at) AS n, row_number() OVER (PARTITION BY run, json_extract(payload,'$.branch') ORDER BY at DESC) AS rn FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun') s ON s.run=r.run GROUP BY r.run UNION ALL SELECT r.started, 'last suite', coalesce(sum(CASE WHEN s.rn=1 THEN s.failed END),0), r.name FROM runs r LEFT JOIN (SELECT run, CAST(substr(json_extract(payload,'$.text'), instr(json_extract(payload,'$.text'),'passed, ')+8) AS INTEGER) AS failed, row_number() OVER (PARTITION BY run, json_extract(payload,'$.branch') ORDER BY at) AS n, row_number() OVER (PARTITION BY run, json_extract(payload,'$.branch') ORDER BY at DESC) AS rn FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun') s ON s.run=r.run GROUP BY r.run ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "bars",
+            "title": "Gate refusals per run",
+            "about": "How often a gate refused, per run. Falling with the lessons is learning; flat is a pipeline that reads its memory and does the same thing again.",
+            "unit": "refusals",
+            "height": 8,
+            "queries": [
+                "SELECT r.started AS time, 'red gates' AS metric, coalesce(g.reds,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(verdict='red') AS reds FROM gates GROUP BY run) g ON g.run=r.run ORDER BY 1"
+            ]
+        },
+        {
+            "kind": "bars",
+            "title": "Heal spend per run",
+            "about": "What the heal laps cost per run, in the sessions that reported a bill. A session ammit stopped part-way reports none, so this is a floor.",
+            "unit": "currencyUSD",
+            "height": 8,
+            "queries": [
+                "SELECT r.started AS time, 'heal' AS metric, coalesce(m.usd,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, round(sum(json_extract(payload,'$.usd')),2) AS usd FROM events WHERE kind='spend' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run) m ON m.run=r.run ORDER BY 1"
+            ]
+        }
+    ]
+}
+
+out4 = pathlib.Path(__file__).with_name("learning.json")
+out4.write_text(json.dumps(learning, indent=1, ensure_ascii=False) + "\n")
+print(f"{out4}: {len([x for x in learning['panels'] if x['kind'] != 'row'])} panels")

@@ -335,7 +335,7 @@ function humanize(text){
 const COLORS=["#CD7F32","#0EA5E9","#22C55E","#EF4444","#8B5CF6","#0891B2","#CA8A04","#2563EB","#DB2777","#059669",
   "#F97316","#6366F1","#14B8A6","#A16207","#7C3AED","#DC2626","#0284C7","#65A30D","#BE185D","#4B5563"];
 const main=document.getElementById("main");
-let panels=[];
+let panels=[], spec={};
 let local=null;
 
 // What was added and what was put away, as the server keeps it. Saved whole:
@@ -414,6 +414,8 @@ async function windowForNewest(){
   }catch(e){/* leave the default */}
 }
 let runs=[], scope="runs", chosen="";
+// The pages about every run at once: no window, no run, the widest range.
+const ALLTIME=["lifetime","learning"];
 
 // A verdict is a word this pipeline chose, and there are several for each of the
 // two outcomes. Colour is about which of the two it was. ABANDONED is neither:
@@ -1189,7 +1191,7 @@ function drawTable(box,payload){
 
 async function load(){
   const [from,to]=windowMs();
-  const q=(scope==="lifetime"?"&scope=lifetime":"")+runParam();
+  const q=(ALLTIME.includes(scope)?"&scope="+scope:"")+runParam();
   const note=document.getElementById("note");
   let drawn=0;
   await Promise.all(panels.map(async (p,i)=>{
@@ -1325,13 +1327,13 @@ async function boot(){
   if(!document.getElementById("tz").options.length) fillZones();
   // The filter group collapses whole, so the row cannot half-empty and reflow.
   const picking = scope==="runs" && !chosen;
-  document.getElementById("filters").style.display=(picking||scope==="lifetime")?"flex":"none";
+  document.getElementById("filters").style.display=(picking||ALLTIME.includes(scope))?"flex":"none";
   document.getElementById("seek").style.display=picking?"none":"flex";
   document.getElementById("range").style.display=scope==="window"?"flex":"none";
   if(scope==="window") await windowForNewest();
   if(picking){ await fillRuns(); drawTiles(); return; }
   if(scope==="runs") await fillRuns();
-  panels=(await (await fetch("/charts/panels"+(scope==="lifetime"?"?scope=lifetime":""))).json()).panels;
+  spec=await (await fetch("/charts/panels"+(ALLTIME.includes(scope)?"?scope="+scope:""))).json(); panels=spec.panels;
   const r=runs.find(x=>x.run===chosen);
   const head=r?'<div class=back id=back>← every run</div><div class=row>'+
     (r.name||r.run)+" — "+when(r.started)+" — "+(r.verdict||"running")+
@@ -1456,7 +1458,7 @@ const HOW_MONEY="Cost as the Claude SDK reports it per session (total_cost_usd),
   "prices for input, cache and output tokens, summed per run. On the subscription nobody is "+
   "billed this; it is what the same tokens would cost.";
 const GROUPS=[["currencyUSD","Money (USD)",HOW_MONEY],["s","Time"],["tokens","Tokens"],
-  ["turns","Turns"],["mbytes","Memory (MB)"],["percent","CPU (%)"],["requests/min","Requests per minute"],
+  ["turns","Turns"],["mbytes","Memory (MB)"],["percent","Share (%)"],["requests/min","Requests per minute"],
   ["processes","Processes"],["findings","Findings"],["runs","Runs"],
   ["other","Other"],["timeline","On the clock"],["table","Tables"]];
 function groupKey(p){
@@ -1466,6 +1468,18 @@ function groupKey(p){
   return GROUPS.some(g=>g[0]===u) ? u : "other";
 }
 function grouped(){
+  // A spec that sections by its rows keeps its order: each row opens a
+  // chapter, and what follows it belongs to it, empty or not.
+  if(spec.sections==="rows"){
+    const out=[]; let cur=null;
+    panels.forEach((p,i)=>{
+      if(p.kind==="row"){ cur={key:"row"+i,title:p.title,blurb:p.about||"",items:[],colour:COLORS[out.length%COLORS.length]}; out.push(cur); return; }
+      if(p.hidden||p.top) return;
+      if(!cur){ cur={key:"row",title:"Charts",blurb:"",items:[],colour:COLORS[0]}; out.push(cur); }
+      cur.items.push(i);
+    });
+    return out.filter(g=>g.items.length);
+  }
   const by=new Map();
   panels.forEach((p,i)=>{
     if(p.kind==="row"||p.hidden||p.top) return;
@@ -1481,7 +1495,7 @@ async function render(){
   const parts=location.pathname.split("/").filter(Boolean);   // ammit, view, id?
   const view=parts[1]||"runs";
   chosen = view==="runs" && parts[2] ? parts[2] : "";
-  scope  = ["window","lifetime"].includes(view) ? view : "runs";
+  scope  = ["window","lifetime","learning"].includes(view) ? view : "runs";
   document.querySelectorAll(".tab").forEach(x=>
     x.classList.toggle("on", !chosen && x.dataset.scope===scope));
   await boot();

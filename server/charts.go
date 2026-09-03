@@ -33,6 +33,9 @@ var panelSpec []byte
 //go:embed lifetime.json
 var lifetimeSpec []byte
 
+//go:embed learning.json
+var learningSpec []byte
+
 type panel struct {
 	Kind  string `json:"kind"`
 	Title string `json:"title"`
@@ -66,7 +69,10 @@ type panel struct {
 }
 
 type chartSpec struct {
-	Panels []panel `json:"panels"`
+	// "rows": the page sections by the spec's own rows, in its order, rather
+	// than by unit. A page that tells a story keeps its chapters.
+	Sections string  `json:"sections,omitempty"`
+	Panels   []panel `json:"panels"`
 }
 
 // What the person watching added or took away, kept beside limits.yml for the
@@ -107,12 +113,16 @@ func readsOnly(q string) bool {
 // merged is the one spec both /charts/panels and /charts/data read, so an
 // index into it means the same panel to both. Built-ins first, additions after
 // — hiding marks rather than removes, precisely so the numbering never moves.
-// Additions belong to the run pages unless they say scope: lifetime; the
-// lifetime page is a different question (one row per run, no window).
-func merged(lifetime bool) chartSpec {
+// Additions belong to the run pages unless they say scope: lifetime or
+// scope: learning; those pages are different questions (one row per run, no
+// window; and the learning loop, which is about every run at once).
+func merged(page string) chartSpec {
 	base := panelsOf()
-	if lifetime {
+	switch page {
+	case "lifetime":
 		base = lifetimeOf()
+	case "learning":
+		base = learningOf()
 	}
 	loc := localOf()
 	away := map[string]bool{}
@@ -123,7 +133,7 @@ func merged(lifetime bool) chartSpec {
 		base.Panels[i].Hidden = away[base.Panels[i].Title]
 	}
 	for _, p := range loc.Panels {
-		if (p.Scope == "lifetime") != lifetime {
+		if p.Scope != page {
 			continue
 		}
 		p.Custom = true
@@ -145,12 +155,24 @@ func lifetimeOf() chartSpec {
 	return s
 }
 
+func learningOf() chartSpec {
+	var s chartSpec
+	_ = json.Unmarshal(learningSpec, &s)
+	return s
+}
+
+// The pages that are about every run at once rather than a window of one.
+var allTime = map[string]bool{"lifetime": true, "learning": true}
+
 // which set a request is about. The lifetime panels carry no window — they are
 // about every run there has been — so the macros are filled with the widest
 // possible range rather than being left in the SQL to fail.
-func specFor(r *http.Request) (chartSpec, bool) {
-	lifetime := r.URL.Query().Get("scope") == "lifetime"
-	return merged(lifetime), lifetime
+func specFor(r *http.Request) (chartSpec, string) {
+	page := r.URL.Query().Get("scope")
+	if !allTime[page] {
+		page = ""
+	}
+	return merged(page), page
 }
 
 // window turns Grafana's macros into the numbers they stood for. The queries
@@ -289,13 +311,13 @@ func serveCharts(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /charts/data", func(w http.ResponseWriter, r *http.Request) {
 		idx, err := strconv.Atoi(r.URL.Query().Get("panel"))
-		spec, lifetime := specFor(r)
+		spec, page := specFor(r)
 		if err != nil || idx < 0 || idx >= len(spec.Panels) {
 			http.Error(w, "no such panel", http.StatusNotFound)
 			return
 		}
 		from, to := window(r)
-		if lifetime {
+		if page != "" {
 			from, to = 0, time.Now().UnixMilli()+86400000
 		}
 		var series []any
@@ -390,6 +412,8 @@ func serveCharts(mux *http.ServeMux) {
 			active = "window"
 		case strings.HasPrefix(r.URL.Path, "/ammit/lifetime"):
 			active = "lifetime"
+		case strings.HasPrefix(r.URL.Path, "/ammit/learning"):
+			active = "learning"
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, chartsPageHTML(active))
@@ -398,6 +422,7 @@ func serveCharts(mux *http.ServeMux) {
 	mux.HandleFunc("GET /ammit/runs/{id}", page)
 	mux.HandleFunc("GET /ammit/window", page)
 	mux.HandleFunc("GET /ammit/lifetime", page)
+	mux.HandleFunc("GET /ammit/learning", page)
 
 	// Where the old addresses went, so anything already sent still arrives.
 	for from, to := range map[string]string{
