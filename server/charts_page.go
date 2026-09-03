@@ -81,6 +81,67 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
    strip. A lens in front of it, room for a whole ticket key, and the type that
    ticket keys are written in. */
 .find{display:flex;align-items:center;padding-left:10px;border-radius:7px}
+#seek{border:1px solid var(--hair);border-radius:8px;background:var(--ground)}
+#seek input{border:0;background:none;padding:8px 12px;font:inherit;font-size:14.5px;
+  color:var(--ink);width:52ch;outline:0}
+#seek input::placeholder{color:var(--mute)}
+#seek:focus-within{background:var(--bronze-wash)}
+.how{color:var(--mute);font-size:11.5px;margin:6px 0 -6px}
+.panel.away{display:none}
+.bars{display:grid;grid-template-columns:auto 1fr auto;gap:6px 14px;align-items:center;
+  font:12px/1.4 var(--mono);font-variant-numeric:tabular-nums;max-width:900px}
+.bars .n{color:var(--ink);white-space:nowrap}
+.bars .t{position:relative;height:18px;background:var(--hair-soft);border-radius:3px}
+.bars .b{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+.bars .lim{position:absolute;top:-3px;bottom:-3px;width:0;border-left:2px dashed var(--bad)}
+.bars .v{color:var(--slate);white-space:nowrap;text-align:right}
+.bars .v em{font-style:normal;color:var(--ink);font-weight:700;margin-left:10px;display:inline-block;min-width:4ch}
+.bars .t.hdr{background:none;height:16px}
+.bars .zero{position:absolute;left:0;top:0;font:11px var(--sans);color:var(--mute)}
+.bars .limlab{position:absolute;top:0;transform:translateX(-100%);padding-right:6px;white-space:nowrap;
+  font:600 11px var(--sans);color:var(--bad)}
+.bars .cap{grid-column:1/-1;color:var(--mute);font:11px var(--sans)}
+.bars .cap i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 5px 0 10px;vertical-align:-1px}
+.bars .cap i:first-child{margin-left:0}
+.tl{font:11.5px/1.4 var(--mono);font-variant-numeric:tabular-nums}
+.tl .r{display:grid;grid-template-columns:minmax(90px,auto) 1fr;gap:12px;align-items:center;margin:3px 0}
+.tl .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.tl .t{position:relative;height:22px;background:var(--hair-soft);border-radius:3px}
+.tl .s{position:absolute;top:2px;bottom:2px;border-radius:2px;overflow:hidden;white-space:nowrap;
+  font:600 10px/18px var(--sans);color:#fff;padding:0 5px;box-sizing:border-box;min-width:2px}
+.tl .ax{display:grid;grid-template-columns:minmax(90px,auto) 1fr;gap:12px;margin-top:6px}
+.tl .ax div{position:relative;height:16px;color:var(--slate);font-size:11px}
+.tl .ax div span{position:absolute;transform:translateX(-50%)}
+.tl .keys{margin-top:16px;color:var(--slate);font:11px var(--sans)}
+.tl .n b{font:600 12px var(--sans);color:var(--ink)}
+.tl .ax .xn{text-align:center;font:600 12px var(--sans);color:var(--ink);height:auto;margin-top:8px}
+.candles + .keys{margin-top:12px;color:var(--mute);font:11px var(--sans)}
+.tl .keys i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 5px 0 12px;vertical-align:-1px}
+.candles{display:block;max-width:100%}
+.candles g:hover rect{fill-opacity:.9}
+.plot{position:relative}
+.tip{position:absolute;display:none;pointer-events:none;z-index:5;background:var(--navy);color:#F7FAFC;
+  font:12px/1.4 var(--mono);padding:6px 9px;border-radius:6px;white-space:nowrap;box-shadow:0 2px 10px rgba(15,21,32,.2)}
+.vbars{cursor:crosshair;user-select:none}
+.vbars g:hover rect{filter:brightness(.85)}
+.vbars + .keys{margin-top:14px;color:var(--slate);font:11px var(--sans)}
+.vbars + .keys i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 5px 0 12px;vertical-align:-1px}
+.vbars + .keys i:first-child{margin-left:0}
+.vbars + .keys span{color:var(--mute);margin-left:12px}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px 18px}
+.stat{border:1px solid var(--hair);border-radius:8px;padding:10px 12px;background:var(--ground)}
+.stat b{display:block;font:700 22px/1.2 var(--sans);color:var(--navy);letter-spacing:-.01em;white-space:nowrap}
+.stat span{font:12px/1.4 var(--sans);color:var(--slate)}
+.pie{display:flex;align-items:center;gap:28px;flex-wrap:wrap}
+.pie canvas{flex:none}
+.slices{width:auto;min-width:280px;font-variant-numeric:tabular-nums}
+.slices td{padding:4px 10px 4px 0;border-bottom:1px solid var(--hair-soft);white-space:nowrap}
+.slices td:nth-child(n+2){text-align:right;color:var(--slate)}
+.slices i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:-1px}
+.slices tr{cursor:pointer}
+.slices tr.hot td{background:var(--bronze-wash)}
+.slices tr.off td{color:var(--mute);text-decoration:line-through}
+.slices tr.off i{opacity:.3}
 .find::before{content:"";width:13px;height:13px;flex:none;opacity:.5;
   background:var(--slate);
   -webkit-mask:var(--lens) center/contain no-repeat;
@@ -107,13 +168,19 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
 main{padding:20px 22px 72px;display:flex;flex-direction:column;gap:26px}
 .row{font:700 11px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;
   color:var(--bronze);border-bottom:1px solid var(--hair);padding-bottom:8px;margin-top:12px}
+.panel{border-left:3px solid var(--g,transparent);padding-left:14px;margin-left:-17px}
+.row.grp{border-left:3px solid var(--g);padding-left:14px;margin-left:-17px}
+.row.grp small{margin-left:10px;font:400 11px/1 var(--mono);color:var(--mute);letter-spacing:0}
+.blurb{border-left:3px solid var(--g);padding-left:14px;margin:-14px 0 -6px -17px;color:var(--slate);
+  font-size:12.5px;line-height:1.5;max-width:100ch}
 .panel h2{font:700 14px/1.3 var(--sans);margin:0 0 3px;color:var(--navy)}
 .panel p{margin:0 0 10px;color:var(--slate);font-size:12px;max-width:92ch}
 /* Height for a plot, not for a message. A panel with nothing in this window
    holds one line of text, and reserving two thirds of the screen under it turns
    an empty window into a page of scrolling. */
 .plot{min-height:0}
-.plot.drawn{min-height:360px}
+/* Room for a chart, not for a row of bars or a pie: those are as tall as they are. */
+.plot.drawn:has(.uplot){min-height:360px}
 
 table{border-collapse:collapse;width:100%;font:12px/1.5 var(--mono);display:block;
   overflow:auto;max-height:360px;border:1px solid var(--hair);border-radius:6px}
@@ -123,9 +190,18 @@ th{color:var(--slate);position:sticky;top:0;background:var(--raised);
   font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.04em;
   text-transform:uppercase}
 tbody tr:hover{background:var(--bronze-wash)}
+tbody tr:nth-child(even){background:var(--raised)}
+td.num{text-align:right}
+td.t{color:var(--slate)}
+td small{color:var(--mute);font-size:10.5px;margin-left:6px}
+td .verdict{font-style:normal;font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:26px 22px;align-items:start;
+  grid-auto-flow:dense}   /* a narrow table climbs into the gap a wide one left */
+.grid .panel{grid-column:span 6;min-width:0}
+.grid table{max-height:420px}
 .err{color:var(--bad);font-size:12px}
 .empty{color:var(--mute);font-size:12px;padding:8px 0}
-.u-legend{font-size:11px;color:var(--slate)}
+.u-legend{font-size:11px;color:var(--slate);margin-top:12px}
 
 .tiles{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(258px,1fr))}
 .tile{border:1px solid var(--hair);border-left:3px solid var(--mute);border-radius:8px;
@@ -135,12 +211,14 @@ tbody tr:hover{background:var(--bronze-wash)}
 .tile.green{border-left-color:var(--good)}
 .tile.red{border-left-color:var(--bad)}
 .tile.going{border-left-color:var(--warm)}
+.tile.abandoned{border-left-color:var(--mute)}
 .tile b{font:700 14px/1.3 var(--sans);display:block;color:var(--navy)}
 .tile .verdict{font:700 10px/1.6 var(--sans);letter-spacing:.11em;
   text-transform:uppercase;color:var(--slate)}
 .tile.green .verdict{color:var(--good)}
 .tile.red .verdict{color:var(--bad)}
 .tile.going .verdict{color:var(--warm)}
+.tile.abandoned .verdict{color:var(--mute)}
 .tile dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:10px 0 0;
   font:11.5px/1.5 var(--mono);font-variant-numeric:tabular-nums}
 .tile dt{color:var(--mute);font-family:var(--sans)}
@@ -205,6 +283,9 @@ dialog#dlg{border:1px solid var(--hair);border-radius:10px;padding:18px 20px;
     <button class=tick data-s=3600>1h</button>
   </nav>
   <button id=refresh title="run every query again now">refresh</button>
+  <span class=find id=seek title="which charts to show: a word from the title, what it is about, its unit, or a line's name">
+    <input id=find placeholder="find a chart: cost, memory, audit…" autocomplete=off spellcheck=false>
+  </span>
   <button id=addchart title="a chart of your own, kept in charts-local.json">add chart</button>
   <select id=tz title="which clock the times are read in"></select>
   <span id=note></span>
@@ -221,7 +302,7 @@ dialog#dlg{border:1px solid var(--hair);border-radius:10px;padding:18px 20px;
   <label>about</label><input id=cabout autocomplete=off>
   <div style="display:flex;gap:12px">
     <span style="flex:1"><label>kind</label>
-      <select id=ckind><option>series</option><option>table</option></select></span>
+      <select id=ckind><option>series</option><option>scatter</option><option>columns</option><option>stacked</option><option>bars</option><option>pie</option><option>stats</option><option>candles</option><option>timeline</option><option>table</option></select></span>
     <span style="flex:1"><label>unit</label><input id=cunit placeholder="ms"></span>
   </div>
   <label>sql</label><textarea id=csql spellcheck=false
@@ -235,6 +316,15 @@ dialog#dlg{border:1px solid var(--hair);border-radius:10px;padding:18px 20px;
 ` + footerHTML() + `
 <script>` + uplotJS + `</script>
 <script>
+// What a limit is called when a person reads it, keyed by what the config
+// calls it. Served by the same map the Limits page prints.
+const LIMIT_TITLES=` + limitTitlesJS() + `;
+function limitTitle(name){ return LIMIT_TITLES[name] || name }
+// A sentence with a machine name in it, said in words: "against limits.usd_per_run"
+// becomes "against the cost cap per run".
+function humanize(text){
+  return String(text).replace(/\b(limits|timeouts)\.[a-z_]+/g, m=>LIMIT_TITLES[m] ? "the "+LIMIT_TITLES[m].charAt(0).toLowerCase()+LIMIT_TITLES[m].slice(1) : m);
+}
 const COLORS=["#CD7F32","#0EA5E9","#22C55E","#FB923C","#EF4444","#8B5CF6",
   "#0891B2","#CA8A04","#2563EB","#DB2777"];
 const main=document.getElementById("main");
@@ -277,11 +367,17 @@ function fillZones(){
 function tzFmt(){
   const day=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short"});
   const min=new Intl.DateTimeFormat("en-GB",{timeZone:zone,hour:"2-digit",minute:"2-digit",hour12:false});
-  return (u,splits)=>splits.map((t,i)=>{
-    const d=new Date(t*1000);
-    const hm=min.format(d);
-    return (i===0||hm==="00:00") ? hm+"\n"+day.format(d) : hm;
-  });
+  const sec=new Intl.DateTimeFormat("en-GB",{timeZone:zone,hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+  return (u,splits)=>{
+    // Ticks closer than a minute need the seconds, or the axis reads 21:25
+    // 21:25 21:26 21:26 and looks broken.
+    const fine=splits.length>1 && splits[1]-splits[0]<60;
+    return splits.map((t,i)=>{
+      const d=new Date(t*1000);
+      const hm=fine?sec.format(d):min.format(d);
+      return (i===0||hm==="00:00") ? hm+"\n"+day.format(d) : hm;
+    });
+  };
 }
 
 function hours(){
@@ -313,10 +409,13 @@ async function windowForNewest(){
 let runs=[], scope="runs", chosen="";
 
 // A verdict is a word this pipeline chose, and there are several for each of the
-// two outcomes. Colour is about which of the two it was.
+// two outcomes. Colour is about which of the two it was. ABANDONED is neither:
+// it is what the sweeper calls a run nothing reported on, not a verdict about
+// the work, so it is grey rather than red.
 function shade(r){
   if(!r.finished) return "going";
   const v=(r.verdict||"").toUpperCase();
+  if(v==="ABANDONED") return "abandoned";
   if(/PASS|GREEN|DONE|APPROVE|SHIPPED/.test(v)) return "green";
   if(!v) return "";
   return "red";
@@ -335,7 +434,9 @@ function when(t){return new Date(t*1000).toLocaleString()}
 function windowMs(){
   if(chosen){
     const r=runs.find(x=>x.run===chosen);
-    if(r) return [r.started*1000-2000, (r.finished||Date.now()/1000)*1000+2000];
+    // Whole milliseconds. started is a float of seconds, and the server reads
+    // the window as an integer: a fraction sent it back to its default.
+    if(r) return [Math.floor(r.started*1000-2000), Math.ceil((r.finished||Date.now()/1000)*1000+2000)];
   }
   const to=Date.now();return[to-hours()*3600e3,to];
 }
@@ -367,49 +468,633 @@ function pivot(cols,rows){
   return {data,names};
 }
 
-function drawSeries(box,payload){
-  const s=payload.series[0]||{};
-  if(s.error){box.classList.remove("drawn");box.innerHTML='<div class=err>'+s.error+'</div>';return}
-  const p=pivot(s.columns||[],s.rows||[]);
+// What a number on the value axis is. The panel says it in Grafana's words —
+// these charts were Grafana once — and anything it says that is not one of
+// those is taken as the unit's own name and written as it is: turns, tokens.
+function trim(v){ return String(+(+v).toFixed(2)) }
+function short(v){
+  if(v==null) return "";
+  const a=Math.abs(v);
+  return a>=1e9 ? trim(v/1e9)+"G" : a>=1e6 ? trim(v/1e6)+"M" : a>=1e3 ? trim(v/1e3)+"k" : trim(v);
+}
+// A span of time, in words. Never a letter: "27h 47m" is a code, and the
+// axis is read by people who did not write it. Every word comes from
+// TIME_WORDS, which the server hands over and a test guards.
+const TIME_WORDS=` + timeWordsJS() + `;
+function count(n,one,many){ return trim(n)+" "+(n===1?one:many) }
+function dur(v){
+  if(v==null) return "";
+  const W=TIME_WORDS, a=Math.abs(v), neg=v<0?"-":"";
+  if(a<60) return neg+count(a<10?+a.toFixed(1):Math.round(a),W.second,W.seconds);
+  if(a<3600){ const m=Math.floor(a/60), sec=Math.round(a%60); return neg+count(m,W.minute,W.minutes)+(sec?" "+count(sec,W.second,W.seconds):"") }
+  if(a<172800){ const h=Math.floor(a/3600), m=Math.round((a%3600)/60); return neg+count(h,W.hour,W.hours)+(m?" "+count(m,W.minute,W.minutes):"") }
+  const d=Math.floor(a/86400), h=Math.round((a%86400)/3600);
+  return neg+count(d,W.day,W.days)+(h?" "+count(h,W.hour,W.hours):"");
+}
+const mb=v=>v==null?"":Math.abs(v)>=1024?trim(v/1024)+" GB":short(v)+" MB";
+const UNITS={
+  currencyUSD:{name:"USD", tick:v=>"$"+short(v), val:v=>"$"+(+v).toFixed(Math.abs(v)<10?3:2)},
+  s:{name:"seconds", tick:dur, val:dur},
+  ms:{name:"milliseconds", tick:v=>dur(v/1000), val:v=>dur(v/1000)},
+  m:{name:"minutes", tick:v=>dur(v*60), val:v=>dur(v*60)},
+  mbytes:{name:"MB", tick:mb, val:mb},
+  bytes:{name:"bytes", tick:v=>short(v)+"B", val:v=>short(v)+"B"},
+  percent:{name:"%", tick:v=>trim(v)+"%", val:v=>trim(v)+"%"},
+  short:{name:"", tick:short, val:trim},
+};
+// Steps a clock is read in. Left to itself an axis of seconds steps by tens
+// of thousands - 5h 33m, 11h 7m - because ten is what it knows.
+const TIME_INCRS=[1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,10800,14400,21600,43200,86400,172800,604800];
+// Counts step by whole numbers: an axis of turns does not pass 0.2 of one.
+const COUNT_INCRS=[1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,20000,50000,100000,200000,500000,1e6,2e6,5e6,1e7];
+function incrsOf(U){
+  if(U===UNITS.s) return TIME_INCRS;
+  if(U===UNITS.ms) return TIME_INCRS.map(x=>x*1000);
+  if(U===UNITS.m) return TIME_INCRS.map(x=>x/60).filter(x=>x>=1);
+  if(U===UNITS.currencyUSD||U===UNITS.percent||U===UNITS.mbytes||U===UNITS.bytes||U===UNITS.short) return null;
+  return COUNT_INCRS;   // turns, tokens, runs, findings, processes, requests/min - anything named
+}
+// A grid step that ends up with about five lines: on a clock one of the steps
+// above, otherwise 1, 2 or 5 times a power of ten.
+function niceStep(top,U){
+  const inc=incrsOf(U);
+  if(inc){ return inc.find(x=>top/x<=6)||inc[inc.length-1]; }
+  const raw=top/5, m=Math.pow(10,Math.floor(Math.log10(raw))), f=raw/m;
+  return (f<=1?1:f<=2?2:f<=5?5:10)*m;
+}
+function unitOf(u){
+  u=(u||"").trim();
+  if(!u) return UNITS.short;
+  if(UNITS[u]) return UNITS[u];
+  if(/^(min|mins|minutes)$/.test(u)) return UNITS.m;
+  if(/^(sec|secs|seconds)$/.test(u)) return UNITS.s;
+  return {name:u, tick:short, val:v=>trim(v)+" "+u};
+}
+
+// The value axis is as wide as its widest label and no wider. It was seventy-
+// four pixels whatever it held, which is a lot of nothing beside "5".
+function axisWidth(u,values,i,cycle){
+  const ax=u.axes[i];
+  if(cycle>1) return ax._size;
+  let w=ax.ticks.size+ax.gap+8;
+  const longest=(values||[]).reduce((a,v)=>String(v).length>a.length?String(v):a,"");
+  if(longest){ u.ctx.font=ax.font[0]; w+=u.ctx.measureText(longest).width/devicePixelRatio; }
+  return Math.ceil(w);
+}
+
+// What each chart is zoomed to, kept beside the chart rather than in it: the
+// chart is thrown away and drawn again on every tick, and a zoom that lasted
+// five seconds would not be a zoom. Forgotten when the view changes - another
+// run, another span - because a time range from one is nonsense on the next.
+const zooms=new WeakMap();
+function zoomOf(box){
+  const key=scope+"|"+chosen+"|"+hours();
+  let z=zooms.get(box);
+  if(!z||z.key!==key){ z={key,x:null,y:null}; zooms.set(box,z); }
+  return z;
+}
+
+// The unit and the clock, big enough to read from where the chart is read.
+// The size of a tick value, a step below the panel title: it names the axis,
+// it does not compete with it.
+const LABEL_FONT='600 12px "Plus Jakarta Sans","Inter",system-ui,sans-serif';
+
+// Every query a panel has, as one table: the second one is usually the limit.
+// Only the first was read for a long time, so a chart titled "against
+// timeouts.request" never drew the timeout.
+function rowsOf(payload){
+  let cols=null, rows=[];
+  for(const s of payload.series||[]){
+    if(!s||s.error||!(s.rows||[]).length) continue;
+    const c=s.columns||[]; const ti=c.indexOf("time"),mi=c.indexOf("metric"),vi=c.indexOf("value"),li=c.indexOf("label");
+    if(ti<0||vi<0) continue;
+    if(!cols) cols=["time","metric","value","label"];
+    for(const r of s.rows) rows.push([r[ti], mi<0?"value":r[mi], r[vi], li<0?null:r[li]]);
+  }
+  // Content starts where the numbers do. The rule for every chart on this
+  // page, applied once, here, on the way in: rows before the first non-zero
+  // value and after the last are not drawn, so a run of zeros at the edge
+  // cannot leave a chart mostly blank. Zeros in the middle stay - they are
+  // the shape - and a limit line is not content.
+  let lo=Infinity, hi=-Infinity;
+  for(const r of rows){ if(LIMIT.test(String(r[1]))) continue; const v=+r[2]; if(r[2]==null||isNaN(v)||v===0) continue; const t=secs(+r[0]); if(t<lo) lo=t; if(t>hi) hi=t; }
+  if(lo<=hi) rows=rows.filter(r=>{ if(LIMIT.test(String(r[1]))) return true; const t=secs(+r[0]); return t>=lo&&t<=hi; });
+  return {cols:cols||[],rows};
+}
+const LIMIT=/^(limits|timeouts)\.|limit|cap|ceiling/i;
+// A verdict wears its own colour, whatever position it holds in the legend:
+// green is green, a refusal is red, an abandoned run is grey, a run with no
+// verdict yet is the warm colour a running tile has. Everything else takes
+// the next colour of the palette.
+function colourFor(name,i){
+  const v=String(name).toUpperCase();
+  if(/ABANDON/.test(v)) return "#A0AEC0";
+  if(/PASS|GREEN|DONE|APPROVE|SHIPPED/.test(v)) return "#22C55E";
+  if(/RED|FAIL|BLOCK|ERROR|REFUSE/.test(v)) return "#EF4444";
+  if(/STOP|CUT|KILL|TIMEOUT/.test(v)) return "#FB923C";   // ammit's hand, not the work's verdict
+  if(/NONE|RUNNING/.test(v)) return "#0EA5E9";
+  if(/UNKNOWN|\?/.test(v)) return "#4A5568";
+  return COLORS[i%COLORS.length];
+}
+const FONT='"Plus Jakarta Sans","Inter",system-ui,sans-serif';
+
+function drawSeries(box,payload,kind){
+  const bad=(payload.series||[]).find(s=>s&&s.error);
+  if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
+  const all=rowsOf(payload);
+  const p=pivot(all.cols,all.rows);
   box.classList.toggle("drawn", !!(p&&p.data[0].length));
   if(!p||!p.data[0].length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
+  box.dataset.metrics=p.names.join(" ");
+  const U=unitOf(payload.panel&&payload.panel.unit);
+  const Z=zoomOf(box);
+  const from=payload.from/1000, to=payload.to/1000;
+  // Where the data is, not counting the limit: a limit query carries one point
+  // at the start of the window so the dashed line has somewhere to begin, and
+  // that point stretched a forty-minute run across twelve hours of nothing.
+  // And only the data inside the window: a query that forgets to filter by
+  // time brings every point there has ever been, and the first of them is
+  // not where this chart starts.
+  let dlo=Infinity, dhi=-Infinity;
+  p.names.forEach((n,i)=>{ if(LIMIT.test(n)) return;
+    p.data[i+1].forEach((v,k)=>{ if(v!=null){ const t=p.data[0][k]; if(t<from||t>to) return; if(t<dlo) dlo=t; if(t>dhi) dhi=t; } }); });
+  if(dlo===Infinity){ dlo=p.data[0][0]; dhi=p.data[0][p.data[0].length-1]; }
+  const legendFmt=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short",
+    hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+  const isLim=p.names.map(n=>LIMIT.test(n));
+  // A line is a shape, and one or two points have none: a lone dot in the
+  // middle of an axis, or a slope between two runs a day apart that says
+  // nothing about the day between. One number per run is a column per run.
+  if(kind==="series"||!kind){
+    const sparse=p.names.every((n,i)=>LIMIT.test(n)||p.data[i+1].filter(v=>v!=null).length<=2);
+    if(sparse) kind="columns";
+  }
+  // What is drawn versus what is said. Stacked kinds draw running sums so the
+  // top of one series is the floor of the next, and the legend still answers
+  // with the series' own number.
+  const own=p.data.slice(1);
+  let cols=own, order=p.names.map((_,i)=>i);
+  if(kind==="columns"||kind==="stacked"){
+    const n=p.data[0].length; let floor=new Array(n).fill(0);
+    cols=p.names.map((_,i)=>{
+      if(isLim[i]) return own[i];
+      const col=new Array(n); let last=0;
+      for(let k=0;k<n;k++){
+        let v=own[i][k];
+        if(v==null) v = kind==="stacked" ? last : 0;   // a running total keeps its last value; a count is zero
+        last=v; col[k]=floor[k]+v; floor[k]=col[k];
+      }
+      return col;
+    });
+    // The tallest stack first, so each one shows over the one beneath it.
+    order=p.names.map((_,i)=>i).filter(i=>!isLim[i]).reverse().concat(p.names.map((_,i)=>i).filter(i=>isLim[i]));
+  }
+  // The data columns in the same order as the series that draw them. They
+  // were not, once: the tallest stack drew under the wrong name and the
+  // whole chart came out the colour of the last series.
+  const data=[p.data[0]].concat(order.map(i=>cols[i]));
+  const series=order.map(i=>{
+    const n=p.names[i], color=colourFor(n,i);
+    const s={label:isLim[i]?limitTitle(n):n,stroke:color,width:1.4,
+      value:(u,v,si,k)=>{const o=own[i][k]; return o==null?"—":U.val(o)}};
+    if(isLim[i]) return {...s,scale:"lim",dash:[6,4],width:1};
+    if(kind==="scatter") return {...s,paths:()=>null,points:{show:true,size:6,fill:color,stroke:color}};
+    if(kind==="columns") return {...s,paths:uPlot.paths.bars({size:[0.7,80],align:0}),fill:color,width:0,points:{show:false}};
+    if(kind==="stacked") return {...s,fill:color+"55",width:1,points:{show:false}};
+    return s;
+  });
   const opts={
     width:box.clientWidth||900,
     // Two thirds of the window, whatever the panel asked for. A time series
     // squeezed into two hundred pixels is a line that goes up: the shape is the
     // whole point of drawing it, and the shape needs room.
     height:Math.max(360, Math.round(innerHeight*0.66)),
-    // The window that was asked for, not the extent of whatever came back. Some
-    // queries return every point of a run that merely overlaps the window, so a
-    // chart labelled three hours was drawing twenty-four and saying so along its
-    // own axis.
-    scales:{x:{time:true,range:()=>[payload.from/1000, payload.to/1000]}},
+    scales:{
+      // As wide as what came back, inside the window that was asked for. The
+      // window alone drew a forty-minute run as a hair at the right edge of
+      // twelve hours; the data alone let a run that merely overlaps a
+      // three-hour window draw all twenty-four of its own.
+      x:{time:true,range:(u,min,max)=>{
+        if(Z.x) return Z.x;
+        const lo=Math.max(dlo,from), hi=Math.min(dhi,to);
+        if(!(hi>lo)) return [lo-600, lo+600];
+        const pad=(hi-lo)*0.015; return [lo-pad, hi+pad];
+      }},
+      // Fitted to what is in view, unless somebody has zoomed it, in which case
+      // it stays where they put it while the time axis moves under it.
+      y:{auto:()=>!Z.y, range:(u,min,max)=>Z.y||uPlot.rangeNum(min,max,0.1,true)},
+      // The limit rides the value axis without stretching it: a sixty-dollar
+      // ceiling over an eight-dollar run would flatten the run to the floor.
+      // Off the top when it is far away, and always in the legend.
+      lim:{from:"y",range:(u,min,max)=>[min,max]},
+    },
+    // Drag along the time axis to zoom time, along the value axis to zoom the
+    // values, and diagonally for both; double-click to have it all back. uni
+    // is how far a drag has to go in one direction before it counts as only
+    // that direction.
+    cursor:{drag:{x:true,y:true,uni:30,dist:6,setScale:false},
+            bind:{dblclick:(u,targ,handler)=>e=>{ Z.x=Z.y=null; u.setData(u.data); }}},
+    hooks:{setSelect:[u=>{
+      const sel=u.select;
+      if(!(sel.width>0||sel.height>0)) return;
+      const W=u.over.clientWidth, H=u.over.clientHeight;
+      const alongX=sel.width>0 && sel.width<W-1;
+      const alongY=sel.height>0 && sel.height<H-1;
+      if(alongX) Z.x=[u.posToVal(sel.left,"x"), u.posToVal(sel.left+sel.width,"x")];
+      if(alongY) Z.y=[u.posToVal(sel.top+sel.height,"y"), u.posToVal(sel.top,"y")];
+      u.setSelect({left:0,top:0,width:0,height:0},false);
+      if(alongX) u.setScale("x",{min:Z.x[0],max:Z.x[1]});
+      if(alongY) u.setScale("y",{min:Z.y[0],max:Z.y[1]});
+    }]},
     axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:44,
-           values:tzFmt()},
-          // Wide enough for the number. Left at its default the axis cut its own
-          // labels — a chart of turns per run read "0,000" down the side.
-          {stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:74,
-           values:(u,vs)=>vs.map(v=>v==null?"":
-             Math.abs(v)>=1e6 ? (v/1e6).toFixed(1)+"M" :
-             Math.abs(v)>=1e3 ? (v/1e3).toFixed(v%1e3?1:0)+"k" : v)}],
-    series:[{},...p.names.map((n,i)=>({
-      label:n,stroke:COLORS[i%COLORS.length],width:1.4,
-      // A limit is drawn as it behaves: flat until it is changed.
-      ...(/limit|cap|ceiling/i.test(n)?{dash:[6,4],width:1}:{})
-    }))],
+           values:tzFmt(),
+           // Which clock the times are read in, said on the axis itself rather
+           // than only in a dropdown at the top of the page.
+           label:"time ("+zone.replace(/_/g," ")+")",labelSize:26,labelFont:LABEL_FONT,labelGap:10},
+          {stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},
+           size:axisWidth,
+           ...(incrsOf(U)?{incrs:incrsOf(U)}:{}),
+           values:(u,vs)=>vs.map(v=>v==null?"":U.tick(v)),
+           label:U.name||"value",labelSize:22,labelFont:LABEL_FONT,labelGap:4}],
+    // The legend's moment in the same clock as the axis. Left alone uPlot
+    // writes it in the browser's zone, beside an axis that says another.
+    series:[{value:(u,t)=>t==null?"—":legendFmt.format(new Date(t*1000))},...series],
   };
   box.innerHTML="";
-  new uPlot(opts,p.data,box);
+  const u=new uPlot(opts,data,box);
+  if(Z.x) u.setScale("x",{min:Z.x[0],max:Z.x[1]});
+  if(Z.y) u.setScale("y",{min:Z.y[0],max:Z.y[1]});
 }
 
+// The end of every line, as a bar: how many turns each phase took, how long
+// each run went. The limit, if the panel has one, is a dashed mark on the
+// same scale rather than a number in a corner.
+function finals(payload){
+  const all=rowsOf(payload), p=pivot(all.cols,all.rows);
+  if(!p) return {parts:[],limit:null};
+  let limit=null; const parts=[];
+  p.names.forEach((n,i)=>{
+    const col=p.data[i+1]; let v=null;
+    for(let k=col.length-1;k>=0;k--) if(col[k]!=null){v=col[k];break}
+    if(LIMIT.test(n)){ if(v!=null) limit={name:n,value:v}; return; }
+    if(v!=null) parts.push({name:n,value:v});
+  });
+  parts.sort((a,b)=>b.value-a.value);
+  return {parts,limit};
+}
+function drawBars(box,payload){
+  const bad=(payload.series||[]).find(s=>s&&s.error);
+  if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
+  // One column per row, left to right in the order they started. "Per run"
+  // means the axis is runs, not time: a row is a run (its start is the row's
+  // time, its name the label), and a chart with several numbers per run gets
+  // several columns per run, coloured by which. A row per category - turns
+  // by phase - is the same thing with the category for a label.
+  //
+  // The limit is a dashed line across, and every column knows its share of
+  // it. Drag across the columns to keep only those runs; double-click for
+  // all of them. The name and date filters at the top narrow it too.
+  const all=rowsOf(payload); let limit=null; const rows=[];
+  for(const r of all.rows){
+    const v=r[2]==null?null:+r[2]; if(v==null||isNaN(v)) continue;
+    const name=String(r[1]);
+    if(LIMIT.test(name)){ limit={name,value:v}; continue; }
+    rows.push({t:secs(+r[0]),name,value:v,label:r[3]==null?null:String(r[3])});
+  }
+  box.classList.toggle("drawn", rows.length>0);
+  if(!rows.length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
+  const U=unitOf(payload.panel&&payload.panel.unit);
+  const Z=zoomOf(box);
+  const metrics=[...new Set(rows.map(x=>x.name))];
+  const groups=new Map();
+  rows.sort((a,b)=>a.t-b.t).forEach(x=>{ const k=x.label!=null?x.label+" "+x.t:String(x.t); if(!groups.has(k)) groups.set(k,{t:x.t,label:x.label,bars:[]}); groups.get(k).bars.push(x); });
+  const when=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
+  const short=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short"});
+  let gs=[...groups.values()];
+  const oneEach=gs.every(g=>g.bars.length===1), distinct=metrics.length===rows.length;
+  const byName=oneEach&&distinct;
+  gs.forEach(g=>{ g.title = g.label!=null ? g.label : (byName ? g.bars[0].name : when.format(new Date(g.t*1000))); });
+  const seen={}; gs.forEach(g=>{seen[g.title]=(seen[g.title]||0)+1});
+  gs.forEach(g=>{ if(seen[g.title]>1) g.title+=" "+when.format(new Date(g.t*1000)); });
+  box.dataset.metrics=metrics.concat(gs.map(g=>g.title)).join(" ");
+  // The filters at the top, when the page shows them, and the drag.
+  const f=document.getElementById("filters").style.display!=="none" ? filterValues() : null;
+  const total=gs.length;
+  if(f){
+    if(f.name) gs=gs.filter(g=>g.title.toLowerCase().includes(f.name));
+    if(f.sf) gs=gs.filter(g=>g.t>=f.sf);
+    if(f.st) gs=gs.filter(g=>g.t<=f.st+86399);
+  }
+  if(Z.x) gs=gs.filter(g=>g.t>=Z.x[0]&&g.t<=Z.x[1]);
+  if(!gs.length){box.innerHTML='<div class=empty>no run matches that</div>';return}
+  const esc=t=>String(t).replace(/[<&"]/g,x=>x==="<"?"&lt;":x==="&"?"&amp;":"&quot;");
+  const colour=n=>COLORS[metrics.indexOf(n)%COLORS.length];
+  const W=box.clientWidth||900, H=Math.max(320,Math.round(innerHeight*0.45));
+  const L=78, R=16, T=18, B=(byName?34:62)+30, pw=W-L-R, ph=H-T-B;
+  const top=Math.max(...gs.flatMap(g=>g.bars.map(x=>x.value)), limit?limit.value:0)||1;
+  const nice=niceStep(top,U);
+  const ymax=Math.ceil(top/nice)*nice||1;
+  const y=v=>T+ph-(v/ymax)*ph;
+  const slot=pw/gs.length, per=metrics.length, bw=Math.max(2,Math.min(36,(slot*0.72)/per));
+  let g='';
+  for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"#E5E7EB":"#A0AEC0")+'"/>'+
+    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#4A5568">'+esc(U.tick(v))+'</text>';
+  const every=Math.ceil(gs.length/Math.max(4,Math.floor(pw/(byName?60:92))));
+  const showVal=gs.length*per<=24;
+  const share=v=>limit?Math.round(100*v/limit.value)+"%":"";
+  const cols=gs.map((gr,i)=>{
+    const x0=L+slot*i+(slot-bw*per)/2;
+    const bars=gr.bars.map((x,j)=>{
+      const bx=x0+bw*j, hot=limit&&x.value>=limit.value;
+      const tip=gr.title+(per>1?" - "+x.name:"")+": "+U.val(x.value)+(limit?" ("+share(x.value)+" of the "+limitTitle(limit.name).toLowerCase()+")":"");
+      return '<g data-tip="'+esc(tip)+'"><rect x="'+bx.toFixed(1)+'" y="'+y(x.value).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0.5,y(0)-y(x.value)).toFixed(1)+
+        '" fill="'+(hot?"#EF4444":colour(x.name))+'" rx="1.5"/>'+
+        (showVal?'<text x="'+(bx+bw/2).toFixed(1)+'" y="'+(y(x.value)-4).toFixed(1)+'" text-anchor="middle" font-size="10.5" fill="#0F1520">'+esc(U.val(x.value))+(limit?'<tspan fill="#4A5568"> '+share(x.value)+'</tspan>':'')+'</text>':'')+'</g>';
+    }).join("");
+    const lab=i%every===0 ? (byName
+      ? '<text x="'+(L+slot*(i+0.5)).toFixed(1)+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#4A5568">'+esc(gr.title)+'</text>'
+      : '<text transform="translate('+(L+slot*(i+0.5)).toFixed(1)+','+(H-B+12)+') rotate(35)" font-size="10.5" fill="#4A5568">'+esc((gr.label||"")+" "+short.format(new Date(gr.t*1000)))+'</text>') : '';
+    return bars+lab;
+  }).join("");
+  const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
+    '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+U.val(limit.value))+'</text>':'';
+  const keys=per>1?metrics.map(m=>'<i style="background:'+colour(m)+'"></i>'+esc(m)).join(""):'';
+  const note=(gs.length<total?gs.length+" of "+total+" - ":"")+(limit?"hover a column for its share of the limit - ":"")+"drag across columns to keep a range, double-click for all";
+  const xName=byName ? (payload.panel&&/by (phase|agent)/i.test(payload.panel.title) ? payload.panel.title.match(/by (phase|agent)/i)[1].toLowerCase()+"s" : "name") : "runs, in the order they started ("+zone.replace(/_/g," ")+")";
+  box.innerHTML='<svg class="candles vbars" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+cols+lim+axisNames(W,H,L,B,esc(U.name||"value"),esc(xName))+
+    '<rect class=sel x="0" y="'+T+'" width="0" height="'+ph+'" fill="#CD7F32" fill-opacity=".15" style="display:none"/></svg>'+
+    '<div class=keys>'+keys+'<span>'+esc(note)+'</span></div>';
+  hoverTips(box);
+  const svg=box.querySelector("svg"), sel=svg.querySelector(".sel");
+  let x0=null;
+  const px=e=>{const rc=svg.getBoundingClientRect(); return (e.clientX-rc.left)*W/rc.width};
+  svg.onmousedown=e=>{x0=px(e); sel.setAttribute("x",x0); sel.setAttribute("width",0); sel.style.display=""; e.preventDefault();};
+  svg.onmousemove=e=>{if(x0==null) return; const x=px(e); sel.setAttribute("x",Math.min(x0,x)); sel.setAttribute("width",Math.abs(x-x0));};
+  svg.onmouseup=e=>{if(x0==null) return; const x1=px(e); const lo=Math.min(x0,x1), hi=Math.max(x0,x1); x0=null; sel.style.display="none";
+    if(hi-lo<6) return;
+    const i0=Math.max(0,Math.floor((lo-L)/slot)), i1=Math.min(gs.length-1,Math.floor((hi-L)/slot));
+    if(i1<i0) return;
+    Z.x=[gs[i0].t, gs[i1].t]; drawBars(box,payload);};
+  svg.onmouseleave=()=>{x0=null; sel.style.display="none";};
+  svg.ondblclick=()=>{Z.x=null; drawBars(box,payload);};
+}
+
+// The two axis names of an SVG chart: the value axis up the side, the other
+// along the bottom. Every chart says what its axes are; none is left to be
+// guessed from the title.
+function axisNames(W,H,L,B,yName,xName){
+  return '<text transform="translate(13,'+((H-B)/2+8).toFixed(0)+') rotate(-90)" text-anchor="middle" font-size="12" font-weight="600" fill="#0F1520">'+yName+'</text>'+
+    '<text x="'+(L+(W-L)/2).toFixed(0)+'" y="'+(H-4)+'" text-anchor="middle" font-size="12" font-weight="600" fill="#0F1520">'+xName+'</text>';
+}
+
+// The number under the pointer, at once. A browser's own tooltip on an SVG
+// title arrives a second late and small; this one follows the mouse.
+function hoverTips(box){
+  const svg=box.querySelector("svg"); if(!svg) return;
+  let tip=box.querySelector(".tip");
+  if(!tip){ tip=document.createElement("div"); tip.className="tip"; box.appendChild(tip); }
+  svg.addEventListener("mousemove",e=>{
+    const g=e.target.closest("g[data-tip]");
+    if(!g){ tip.style.display="none"; return; }
+    tip.textContent=g.dataset.tip; tip.style.display="block";
+    const rc=box.getBoundingClientRect();
+    let x=e.clientX-rc.left+14, y=e.clientY-rc.top-30;
+    if(x+tip.offsetWidth>rc.width-8) x=e.clientX-rc.left-tip.offsetWidth-14;
+    tip.style.left=x+"px"; tip.style.top=Math.max(0,y)+"px";
+  });
+  svg.addEventListener("mouseleave",()=>{tip.style.display="none"});
+}
+
+// What the boxes at the top say, as values: a name to look for, and the days.
+function filterValues(){
+  const day=id=>{const v=document.getElementById(id).value; return v?Math.floor(new Date(v).getTime()/1000):0};
+  return {name:document.getElementById("q").value.trim().toLowerCase(), sf:day("sf"), st:day("st"), ff:day("ff"), ft:day("ft")};
+}
+
+// A spread, not a point: every run of the day as one candle. The query gives
+// one row per run - its day for time, its number for value - and the page
+// works out the rest: wick from the cheapest to the dearest, body across the
+// middle half (25th to 75th percentile), a line at the average. A day with
+// one run is a line with no body.
+function drawCandles(box,payload){
+  const bad=(payload.series||[]).find(s=>s&&s.error);
+  if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
+  const all=rowsOf(payload);
+  const by=new Map();
+  for(const r of all.rows){ const v=r[2]==null?null:+r[2]; if(v==null||isNaN(v)) continue;
+    const t=secs(+r[0]); if(!by.has(t)) by.set(t,[]); by.get(t).push(v); }
+  const days=[...by.keys()].sort((a,b)=>a-b);
+  box.classList.toggle("drawn", days.length>0);
+  if(!days.length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
+  const U=unitOf(payload.panel&&payload.panel.unit);
+  const q=(a,f)=>{const i=(a.length-1)*f, lo=Math.floor(i), hi=Math.ceil(i); return a[lo]+(a[hi]-a[lo])*(i-lo)};
+  const stat=days.map(t=>{const a=by.get(t).slice().sort((x,y)=>x-y);
+    return {t,n:a.length,min:a[0],max:a[a.length-1],q1:q(a,.25),q3:q(a,.75),avg:a.reduce((x,y)=>x+y,0)/a.length}});
+  box.dataset.metrics=days.length+" days";
+  const W=box.clientWidth||900, H=Math.max(300,Math.round(innerHeight*0.45));
+  const L=78, R=12, T=14, B=70, pw=W-L-R, ph=H-T-B;
+  const top=Math.max(...stat.map(s=>s.max))||1;
+  const nice=niceStep(top,U);
+  const ymax=Math.ceil(top/nice)*nice;
+  const y=v=>T+ph-(v/ymax)*ph;
+  // The body takes most of its slot: a dozen days across a wide page are a
+  // dozen wide candles, not a dozen matchsticks in a field.
+  const slot=pw/stat.length, bw=Math.max(6,Math.min(72,slot*0.6));
+  const day=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short"});
+  const esc=t=>String(t).replace(/[<&"]/g,x=>x==="<"?"&lt;":x==="&"?"&amp;":"&quot;");
+  let g='';
+  for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"#E5E7EB":"#A0AEC0")+'"/>'+
+    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#4A5568">'+esc(U.tick(v))+'</text>';
+  const every=Math.ceil(stat.length/12);
+  const c=stat.map((s,i)=>{const x=L+slot*(i+0.5);
+    const tip=day.format(new Date(s.t*1000))+': '+s.n+(s.n===1?' run':' runs')+', min '+U.val(s.min)+', average '+U.val(s.avg)+', max '+U.val(s.max);
+    return '<g data-tip="'+esc(tip)+'">'+
+      '<line x1="'+x+'" x2="'+x+'" y1="'+y(s.max)+'" y2="'+y(s.min)+'" stroke="#4A5568" stroke-width="1.5"/>'+
+      (s.n>1?'<rect x="'+(x-bw/2)+'" y="'+y(s.q3)+'" width="'+bw+'" height="'+Math.max(1,y(s.q1)-y(s.q3))+'" fill="#CD7F32" fill-opacity=".55" stroke="#CD7F32" rx="2"/>':'')+
+      '<line x1="'+(x-bw/2-3)+'" x2="'+(x+bw/2+3)+'" y1="'+y(s.avg)+'" y2="'+y(s.avg)+'" stroke="#001F3F" stroke-width="2"/>'+
+      (i%every===0?'<text x="'+x+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#4A5568">'+day.format(new Date(s.t*1000))+'</text>':'')+
+      '</g>'});
+  box.innerHTML='<svg class=candles width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+c.join("")+
+    axisNames(W,H,L,B,esc(U.name||"value"),"day ("+zone.replace(/_/g," ")+")")+'</svg>'+
+    '<div class=keys><span>wick: cheapest to dearest run of the day - body: the middle half - line: the average</span></div>';
+  hoverTips(box);
+}
+
+// Numbers, not a chart: the query returns metric, value and the unit each
+// value is read in, and each becomes a tile - the number large, the name
+// under it. For the handful of figures a page is opened to find out.
+function drawStats(box,payload){
+  const s=payload.series[0]||{};
+  if(s.error){box.classList.remove("drawn");box.innerHTML='<div class=err>'+s.error+'</div>';return}
+  const c=s.columns||[]; const mi=c.indexOf("metric"), vi=c.indexOf("value"), ui=c.indexOf("unit");
+  const rows=(s.rows||[]).filter(r=>r[vi]!=null);
+  box.classList.toggle("drawn", rows.length>0);
+  if(!rows.length){box.innerHTML='<div class=empty>nothing yet</div>';return}
+  const when=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short",year:"numeric"});
+  const esc=t=>String(t).replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;");
+  // Whole numbers with their thousands, a total is read exactly; the unit's
+  // word is under the tile, not repeated in it.
+  const show=(v,u)=>{
+    if(u==="moment") return when.format(new Date(secs(+v)*1000));
+    const U=unitOf(u); const n=+v;
+    if(U===UNITS.currencyUSD) return "$"+n.toLocaleString("en-GB",{minimumFractionDigits:2,maximumFractionDigits:2});
+    if(U===UNITS.s||U===UNITS.m||U===UNITS.ms) return U.val(n);
+    return Math.round(n).toLocaleString("en-GB");
+  };
+  box.dataset.metrics=rows.map(r=>r[mi]).join(" ");
+  box.innerHTML='<div class=stats>'+rows.map(r=>'<div class=stat><b>'+esc(show(r[vi],ui<0?"":r[ui]))+'</b><span>'+esc(r[mi])+'</span></div>').join("")+'</div>';
+  const panel=box.closest(".panel"); if(panel&&box.closest(".grid")) panel.style.gridColumn="span 4";
+}
+
+// Spans on a clock: when each phase or session began and ended, one row per
+// name. The query returns time (the start), metric (the row), value (the end)
+// and, if it wants a different word on the bar than on the row, label.
+function drawTimeline(box,payload){
+  const bad=(payload.series||[]).find(s=>s&&s.error);
+  if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
+  const all=rowsOf(payload);
+  const from=payload.from/1000, to=payload.to/1000;
+  const spans=all.rows.map(r=>({start:secs(+r[0]),row:String(r[1]),end:secs(+r[2]),label:r[3]==null?String(r[1]):String(r[3])}))
+    .filter(x=>x.end>x.start&&x.end>=from&&x.start<=to);
+  box.classList.toggle("drawn", spans.length>0);
+  if(!spans.length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
+  const rows=[...new Set(spans.map(x=>x.row))];
+  const labels=[...new Set(spans.map(x=>x.label))];
+  box.dataset.metrics=rows.concat(labels).join(" ");
+  const lo=Math.max(from, Math.min(...spans.map(x=>x.start)));
+  const hi=Math.min(to, Math.max(...spans.map(x=>x.end)));
+  const W=hi-lo||1, pct=t=>(100*(Math.min(Math.max(t,lo),hi)-lo)/W).toFixed(3)+"%";
+  const hm=new Intl.DateTimeFormat("en-GB",{timeZone:zone,hour:"2-digit",minute:"2-digit",hour12:false});
+  const full=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+  const esc=t=>String(t).replace(/[<&"]/g,x=>x==="<"?"&lt;":x==="&"?"&amp;":"&quot;");
+  const colour=l=>COLORS[labels.indexOf(l)%COLORS.length];
+  const html=rows.map(r=>'<div class=r><span class=n title="'+esc(r)+'">'+esc(r)+'</span><span class=t>'+
+    spans.filter(x=>x.row===r).map(x=>{
+      const w=100*(Math.min(x.end,hi)-Math.max(x.start,lo))/W;
+      return '<span class=s style="left:'+pct(x.start)+';width:'+w.toFixed(3)+'%;background:'+colour(x.label)+
+        '" title="'+esc(x.label)+': '+full.format(new Date(x.start*1000))+' → '+full.format(new Date(x.end*1000))+' ('+dur(x.end-x.start)+')">'+
+        (w>4?esc(x.label):'')+'</span>';
+    }).join("")+'</span></div>').join("");
+  // Five or six marks along the bottom, at whole minutes or hours.
+  const steps=[60,120,300,600,900,1800,3600,7200,10800,21600,43200,86400];
+  const step=steps.find(st=>W/st<=7)||86400;
+  let ticks=""; for(let t=Math.ceil(lo/step)*step;t<=hi;t+=step) ticks+='<span style="left:'+pct(t)+'">'+hm.format(new Date(t*1000))+'</span>';
+  const keys=labels.length>1||labels[0]!==rows[0] ? '<div class=keys>'+labels.map(l=>'<i style="background:'+colour(l)+'"></i>'+esc(l)).join("")+
+    ' <span style="margin-left:14px">'+zone.replace(/_/g," ")+'</span></div>' : '<div class=keys>'+zone.replace(/_/g," ")+'</div>';
+  const rowName=payload.panel&&/session/i.test(payload.panel.title)?"agent":/branch/i.test((payload.panel||{}).title)?"run":"phase";
+  box.innerHTML='<div class=tl><div class=r><span class=n><b>'+rowName+'</b></span><span></span></div>'+html+
+    '<div class=ax><span></span><div>'+ticks+'</div></div><div class=ax><span></span><div class=xn>time of day ('+zone.replace(/_/g," ")+')</div></div>'+keys+'</div>';
+}
+
+// A share, not a history. The query is the same one the line chart reads —
+// each line a running total — and a pie is what those totals are at the end
+// of the window, one slice per line. So a chart that was a line can become a
+// pie by saying so, and nobody rewrites the SQL.
+function drawPie(box,payload){
+  const bad=(payload.series||[]).find(s=>s&&s.error);
+  if(bad){box.classList.remove("drawn");box.innerHTML='<div class=err>'+bad.error+'</div>';return}
+  const parts=finals(payload).parts.filter(x=>x.value>0);
+  box.classList.toggle("drawn", parts.length>0);
+  if(!parts.length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
+  box.dataset.metrics=parts.map(x=>x.name).join(" ");
+  const U=unitOf(payload.panel&&payload.panel.unit);
+  const size=Math.max(260, Math.min(420, Math.round(innerHeight*0.42)));
+  const dpr=devicePixelRatio||1, c=document.createElement("canvas");
+  c.width=size*dpr; c.height=size*dpr; c.style.width=c.style.height=size+"px";
+  const ctx=c.getContext("2d");
+  const cx=size/2, cy=size/2, r=size/2-10, hole=r*0.55;
+  const esc=t=>String(t).replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;");
+  // A slice under the pointer steps out and says what it is; a click on a
+  // slice or on its row takes it out of the whole, so the rest can be read as
+  // shares of what is left. Click again and it is back.
+  const off=new Set(); let hot=-1; let arcs=[];
+  function draw(){
+    const live=parts.filter((_,i)=>!off.has(i));
+    const total=live.reduce((a,x)=>a+x.value,0)||1;
+    ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,size,size);
+    arcs=[]; let a=-Math.PI/2;
+    parts.forEach((x,i)=>{
+      if(off.has(i)) return;
+      const b=a+2*Math.PI*x.value/total, mid=(a+b)/2, out=i===hot?6:0;
+      const ox=out*Math.cos(mid), oy=out*Math.sin(mid);
+      ctx.beginPath(); ctx.moveTo(cx+ox+hole*Math.cos(a),cy+oy+hole*Math.sin(a));
+      ctx.arc(cx+ox,cy+oy,r,a,b); ctx.arc(cx+ox,cy+oy,hole,b,a,true); ctx.closePath();
+      ctx.fillStyle=COLORS[i%COLORS.length]; ctx.globalAlpha=hot>=0&&i!==hot?0.55:1; ctx.fill(); ctx.globalAlpha=1;
+      ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();
+      arcs.push({i,a,b}); a=b;
+    });
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    if(hot>=0&&!off.has(hot)){
+      const x=parts[hot];
+      ctx.fillStyle=COLORS[hot%COLORS.length]; ctx.font='700 13px '+FONT; ctx.fillText(x.name,cx,cy-20);
+      ctx.fillStyle="#0F1520"; ctx.font='700 18px '+FONT; ctx.fillText(U.val(x.value),cx,cy+2);
+      ctx.fillStyle="#4A5568"; ctx.font='500 11px '+FONT; ctx.fillText((100*x.value/total).toFixed(1)+"%",cx,cy+22);
+    }else{
+      ctx.fillStyle="#0F1520"; ctx.font='700 18px '+FONT; ctx.fillText(U.val(total),cx,cy-8);
+      ctx.fillStyle="#4A5568"; ctx.font='500 11px '+FONT; ctx.fillText(off.size?"of what is on":"in all",cx,cy+12);
+    }
+    box.querySelectorAll(".slices tr").forEach((tr,i)=>{
+      tr.classList.toggle("off",off.has(i)); tr.classList.toggle("hot",i===hot);
+      const share=off.has(i)?"—":(100*parts[i].value/total).toFixed(1)+"%";
+      tr.lastElementChild.textContent=share;
+    });
+  }
+  function at(e){
+    const rc=c.getBoundingClientRect(), x=e.clientX-rc.left-cx, y=e.clientY-rc.top-cy;
+    const d=Math.hypot(x,y); if(d<hole-4||d>r+8) return -1;
+    let ang=Math.atan2(y,x); if(ang<-Math.PI/2) ang+=2*Math.PI;
+    const hit=arcs.find(s=>ang>=s.a&&ang<s.b); return hit?hit.i:-1;
+  }
+  c.onmousemove=e=>{const i=at(e); if(i!==hot){hot=i; c.style.cursor=i>=0?"pointer":""; draw();}};
+  c.onmouseleave=()=>{hot=-1; draw();};
+  c.onclick=e=>{const i=at(e); if(i<0) return; off.has(i)?off.delete(i):off.add(i); if(off.size===parts.length) off.clear(); draw();};
+  box.innerHTML='<div class=pie></div>';
+  const wrap=box.firstChild; wrap.appendChild(c);
+  wrap.insertAdjacentHTML("beforeend",'<table class=slices><tbody>'+parts.map((x,i)=>
+    '<tr data-i='+i+'><td><i style="background:'+COLORS[i%COLORS.length]+'"></i>'+esc(x.name)+'</td>'+
+    '<td>'+U.val(x.value)+'</td><td></td></tr>').join("")+
+    '</tbody></table>');
+  wrap.querySelectorAll(".slices tr").forEach(tr=>{
+    const i=+tr.dataset.i;
+    tr.onmouseenter=()=>{hot=i; draw();}; tr.onmouseleave=()=>{hot=-1; draw();};
+    tr.onclick=()=>{off.has(i)?off.delete(i):off.add(i); if(off.size===parts.length) off.clear(); draw();};
+  });
+  draw();
+}
+
+// A table that reads: numbers on the right, moments in the chosen clock,
+// money with its sign, a verdict in its colour, a limit by its name. And a
+// width that is its own: the panel spans as much of the six-column grid as
+// the table needs, measured, so three narrow tables sit in one row.
 function drawTable(box,payload){
   const s=payload.series[0]||{};
   if(s.error){box.innerHTML='<div class=err>'+s.error+'</div>';return}
   if(!(s.rows||[]).length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
-  const th=(s.columns||[]).map(c=>"<th>"+c+"</th>").join("");
-  const tr=s.rows.slice(0,300).map(r=>"<tr>"+r.map(c=>"<td>"+
-    (c==null?"":String(c)).replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;")+"</td>").join("")+"</tr>").join("");
-  box.innerHTML="<table><thead><tr>"+th+"</tr></thead><tbody>"+tr+"</tbody></table>";
+  const cols=s.columns||[];
+  const when=new Intl.DateTimeFormat("en-GB",{timeZone:zone,day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false});
+  const esc=t=>String(t).replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;");
+  const isMoment=c=>/^(at|started|finished|changed|time|when)$/i.test(c);
+  const isMoney=c=>/^(usd|cost|bill)$|_usd$|^usd_/i.test(c);
+  const isVerdict=c=>/verdict|ended|outcome|action/i.test(c);
+  const cell=(c,v)=>{
+    if(v==null||v==="") return '<td class=num>—</td>';
+    if(isMoment(c)&&!isNaN(+v)&&+v>1e9) return '<td class=t>'+when.format(new Date(secs(+v)*1000))+'</td>';
+    if(isMoney(c)&&!isNaN(+v)) return '<td class=num>$'+(+v).toFixed(Math.abs(+v)<10?3:2)+'</td>';
+    if(c==="name"&&LIMIT_TITLES[v]) return '<td><b>'+esc(LIMIT_TITLES[v])+'</b> <small>'+esc(v)+'</small></td>';
+    if(isVerdict(c)&&/^[A-Za-z_ ]+$/.test(String(v))) return '<td><i class=verdict style="color:'+colourFor(v,9)+'">'+esc(v)+'</i></td>';
+    if(typeof v==="number"||(/^-?\d+(\.\d+)?$/.test(String(v)))) return '<td class=num>'+esc(v)+'</td>';
+    return '<td>'+esc(v)+'</td>';
+  };
+  const th=cols.map(c=>'<th>'+esc(c)+'</th>').join("");
+  const tr=s.rows.slice(0,300).map(r=>'<tr>'+r.map((v,i)=>cell(cols[i],v)).join("")+'</tr>').join("");
+  box.innerHTML='<table style="width:max-content"><thead><tr>'+th+'</tr></thead><tbody>'+tr+'</tbody></table>';
+  const table=box.firstChild, grid=box.closest(".grid");
+  if(grid){
+    const unit=grid.getBoundingClientRect().width/6;
+    const span=Math.min(6,Math.max(2,Math.ceil((table.offsetWidth+8)/unit)));
+    box.closest(".panel").style.gridColumn="span "+span;
+  }
+  table.style.width="100%";
 }
 
 async function load(){
@@ -424,7 +1109,7 @@ async function load(){
     try{
       const r=await fetch("/charts/data?panel="+i+"&from="+from+"&to="+to+q);
       const payload=await r.json();
-      (p.kind==="table"?drawTable:drawSeries)(box,payload);
+      ({table:drawTable,pie:drawPie,bars:drawBars,timeline:drawTimeline,candles:drawCandles,stats:drawStats}[p.kind]||drawSeries)(box,payload,p.kind);
       drawn++;
     }catch(e){ box.innerHTML='<div class=err>'+e+'</div>' }
   }));
@@ -433,6 +1118,7 @@ async function load(){
   note.textContent = withData===drawn ? drawn+" panels"
     : withData+" of "+drawn+" panels have data";
   sink();
+  sift();
 }
 
 function filters(){
@@ -474,6 +1160,58 @@ function drawTiles(){
 // Panels with nothing in them go to the bottom, together, under a line. Left
 // where they are, they put a gap between every pair of charts and reading the
 // page became scrolling past what is not there.
+// One box for finding a chart, whatever you know about it: a word of the title,
+// of what it is about, the unit it is drawn in, or the name of a line on it. Words that mean the same thing here are the same word —
+// "cost" finds the USD charts and "money" finds them too. Every word typed has
+// to land somewhere; where does not matter.
+const KIN=[
+  ["cost","usd","money","spend","spent","price","dollar","bill","стоимость","деньги","цена","бюджет","доллар"],
+  ["time","seconds","second","duration","long","idle","silence","latency","minute","timeout","took","время","длительность","секунд","минут","таймаут","простой"],
+  ["memory","mb","mbytes","ram","память"],
+  ["tokens","token","cache","context","токен","токены","кэш","контекст"],
+  ["turns","turn","ход","ходы","шаг"],
+  ["cpu","percent","processor","процессор","процент"],
+  ["requests","request","call","calls","запрос","запросы","вызов"],
+  ["runs","run","прогон","прогоны"],
+  ["phase","phases","фаза","фазы"],
+  ["agent","agents","агент","агенты"],
+  ["container","containers","контейнер","docker"],
+  ["limit","limits","cap","ceiling","against","лимит","предел"],
+  ["gate","gates","findings","finding","ворота","замечания"],
+  ["processes","process","pids","процесс","процессы"],
+  ["died","error","errors","failed","ошибка","ошибки","упал"],
+];
+function kin(word){
+  const out=new Set([word]);
+  for(const row of KIN) if(row.some(w=>w===word||w.startsWith(word)&&word.length>2)) row.forEach(w=>out.add(w));
+  return [...out];
+}
+function haystack(sec,i){
+  const p=panels[i]||{}, box=sec.querySelector(".plot");
+  const U=unitOf(p.unit);
+  // Not the query: every one of them says "AS time" and "AS metric", so a
+  // word from the SQL is a word that finds everything.
+  return [p.title,p.label,humanize(p.title),p.about,p.unit,U.name,box&&box.dataset.metrics]
+    .filter(Boolean).join(" \n ").toLowerCase();
+}
+function sift(){
+  const q=document.getElementById("find").value.trim().toLowerCase();
+  const words=q.split(/\s+/).filter(Boolean);
+  const secs=[...main.querySelectorAll(".panel")];
+  let shown=0;
+  secs.forEach(sec=>{
+    const i=+sec.querySelector(".pact").dataset.i;
+    const hay=haystack(sec,i);
+    const hit=words.every(w=>kin(w).some(k=>hay.includes(k)));
+    sec.classList.toggle("away",!hit);
+    if(hit) shown++;
+  });
+  const note=document.getElementById("note");
+  if(words.length) note.textContent=shown+" of "+secs.length+" charts match";
+  else if(/charts match$/.test(note.textContent)) note.textContent=secs.length+" panels";
+}
+document.getElementById("find").oninput=()=>{clearTimeout(window._s);window._s=setTimeout(sift,120)};
+
 function sink(){
   const empties=[...document.querySelectorAll(".panel")]
     .filter(p=>{const b=p.querySelector(".plot");
@@ -491,7 +1229,8 @@ async function boot(){
   if(!document.getElementById("tz").options.length) fillZones();
   // The filter group collapses whole, so the row cannot half-empty and reflow.
   const picking = scope==="runs" && !chosen;
-  document.getElementById("filters").style.display=picking?"flex":"none";
+  document.getElementById("filters").style.display=(picking||scope==="lifetime")?"flex":"none";
+  document.getElementById("seek").style.display=picking?"none":"flex";
   document.getElementById("range").style.display=scope==="window"?"flex":"none";
   if(scope==="window") await windowForNewest();
   if(picking){ await fillRuns(); drawTiles(); return; }
@@ -502,15 +1241,23 @@ async function boot(){
     (r.name||r.run)+" — "+when(r.started)+" — "+(r.verdict||"running")+
     " — "+(r.turns||0)+" turns — $"+(r.usd||0).toFixed(2)+'</div>':"";
   await fetchLocal();
-  main.innerHTML=head+panels.map((p,i)=>p.kind==="row"
-    ? '<div class=row>'+p.title+'</div>'
-    : p.hidden ? '' :
-      '<section class=panel><h2>'+p.title+
+  const section=(i,colour)=>{const p=panels[i];
+    return '<section class=panel style="--g:'+colour+'" title="'+p.title.replace(/"/g,"&quot;")+'"><h2>'+(p.label||humanize(p.title))+
       '<span class=pact data-i='+i+' data-act=hide>hide</span>'+
       (p.custom?'<span class="pact danger" data-i='+i+' data-act=del>delete</span>':'')+
       '</h2>'+
       (p.about?'<p>'+p.about.replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;")+'</p>':'')+
-      '<div class=plot id=plot-'+i+'></div></section>').join("");
+      '<div class=plot id=plot-'+i+'></div></section>'};
+  // What the page is opened for goes first, above every group.
+  const tops=panels.map((p,i)=>p.top&&!p.hidden&&p.kind!=="row"?i:-1).filter(i=>i>=0);
+  main.innerHTML=head+'<div class=how>drag along the time axis or the value axis to zoom that axis, '+
+    'diagonally for both; double-click a chart to have it all back</div>'+
+    (tops.length?'<div class=grid>'+tops.map(i=>section(i,"var(--bronze)")).join("")+'</div>':'')+
+    grouped().map(g=>'<div class="row grp" style="--g:'+g.colour+'">'+g.title+
+      '<small>'+g.items.length+'</small></div>'+
+      (g.blurb?'<p class=blurb style="--g:'+g.colour+'">'+g.blurb+'</p>':'')+
+      // Tables share the width: a three-column table does not need a screen.
+      (g.key==="table"?'<div class=grid>':'')+g.items.map(i=>section(i,g.colour)).join("")+(g.key==="table"?'</div>':'')).join("");
   const away=panels.filter(p=>p.kind!=="row"&&p.hidden);
   if(away.length)
     main.innerHTML+='<div class=row>Hidden ('+away.length+')</div><div class=chips>'+
@@ -594,6 +1341,36 @@ function go(path){
   if(location.pathname === path){ render(); return; }
   history.pushState(null,"",path);
   render();
+}
+
+// Grouped by what the value axis measures rather than by what the query is
+// about. Time is always along the bottom, so what makes two charts kin is the
+// unit up the side: every dollar chart together, every seconds chart together.
+// Spans on a clock and tables have no value axis and come last.
+// Where the money figure comes from, said once at the top of the money charts
+// rather than guessed at under each of them.
+const HOW_MONEY="Cost as the Claude SDK reports it per session (total_cost_usd), at public API "+
+  "prices for input, cache and output tokens, summed per run. On the subscription nobody is "+
+  "billed this; it is what the same tokens would cost.";
+const GROUPS=[["currencyUSD","Money (USD)",HOW_MONEY],["s","Time"],["tokens","Tokens"],
+  ["turns","Turns"],["mbytes","Memory (MB)"],["percent","CPU (%)"],["requests/min","Requests per minute"],
+  ["processes","Processes"],["findings","Findings"],["runs","Runs"],
+  ["other","Other"],["timeline","On the clock"],["table","Tables"]];
+function groupKey(p){
+  if(p.kind==="table"||p.kind==="timeline") return p.kind;
+  const u=(p.unit||"").trim(), U=unitOf(u);
+  if(U===UNITS.m||U===UNITS.ms||U===UNITS.s) return "s";
+  return GROUPS.some(g=>g[0]===u) ? u : "other";
+}
+function grouped(){
+  const by=new Map();
+  panels.forEach((p,i)=>{
+    if(p.kind==="row"||p.hidden||p.top) return;
+    const k=groupKey(p);
+    if(!by.has(k)) by.set(k,[]);
+    by.get(k).push(i);
+  });
+  return GROUPS.filter(g=>by.has(g[0])).map((g,n)=>({key:g[0],title:g[1],blurb:g[2]||"",items:by.get(g[0]),colour:COLORS[n%COLORS.length]}));
 }
 
 async function render(){

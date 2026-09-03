@@ -75,6 +75,11 @@ sample:
 # The names below refer to the commands underneath, so this service never needs
 # to know whether it is watching a container, a pod or a process.
 actions:
+  # The one switch over every hand below. off: every limit is still judged
+  # and written down, but nothing is stopped, retried or restarted - for a
+  # debug run on the subscription, where the bill is not the point. Starting
+  # a run and warning still go. Flip it back when the run is done.
+  enforce: on
   on_run_timeout: stop_run
   on_usd: stop_run
   on_phase_timeout: stop_phase

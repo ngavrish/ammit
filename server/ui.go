@@ -103,6 +103,7 @@ legend{color:var(--bronze);font:500 11px/1 var(--mono);letter-spacing:.22em;
 .fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(19rem,1fr));
         gap:1rem 1.75rem}
 label{display:grid;gap:.3rem}
+label .t{font:600 12.5px/1.3 var(--sans);color:var(--ink)}
 label .k{font:500 12px/1.4 var(--mono);color:var(--mute);letter-spacing:.04em}
 .field{display:flex;align-items:center;gap:.6rem}
 input,select,textarea{background:var(--deeper);color:var(--ink);
@@ -200,7 +201,10 @@ const when = (t) => t ? new Date(t*1000).toLocaleString() : "";
 // What each setting is for, in the words somebody changing it under pressure
 // would use. Anything not named here still gets a field — this service does not
 // decide which of somebody's limits are the interesting ones.
+// What each limit is called when a person reads it; the key stays the key.
+const TITLES = {{titles}};
 const HINT = {
+  "actions.enforce": "on: limits act. off: limits still judge and write it down, but stop, retry and restart nothing - for a debug run on the subscription. start_run and warn still go.",
   "queue.parallel": "runs allowed to be going at once",
   "timeouts.run": "the whole run, start to verdict",
   "timeouts.phase": "one phase",
@@ -237,7 +241,11 @@ function field(section, key, value) {
   const name = section + "." + key;
   const secs = SECONDS.test(name);
   const num = /^-?\d+(\.\d+)?$/.test(value);
-  const control = section === "actions"
+  const control = name === "actions.enforce"
+    ? "<select data-name='" + name + "' onchange='touch(this)'>" +
+        ["on", "off"].map(c => "<option" + (c === value ? " selected" : "") + ">" + c + "</option>").join("") +
+      "</select>"
+    : section === "actions"
     ? "<select data-name='" + name + "' onchange='touch(this)'>" +
         Object.keys(conf.commands || {}).concat(
           Object.keys(conf.commands || {}).includes(value) ? [] : [value])
@@ -246,7 +254,8 @@ function field(section, key, value) {
     : "<input data-name='" + name + "' value='" + esc(value) + "'" +
       (num ? " type='number' step='any' inputmode='decimal'" : " type='text'") +
       " oninput='touch(this)'>";
-  return "<label><span class='k'>" + esc(key) + "</span>" +
+  return "<label>" + (TITLES[name] ? "<span class='t'>" + esc(TITLES[name]) + "</span>" : "") +
+    "<span class='k'>" + esc(key) + "</span>" +
     "<span class='field'>" + control +
     (secs ? "<span class='as' data-as='" + name + "'>" + human(value) + "</span>" : "") +
     "</span>" +
@@ -354,7 +363,8 @@ load(); refresh(); setInterval(refresh, 10000);
 func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 	limits := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		io.WriteString(w, strings.ReplaceAll(pageHTML(), "{{charts}}", chartsURL))
+		page := strings.ReplaceAll(pageHTML(), "{{charts}}", chartsURL)
+		io.WriteString(w, strings.ReplaceAll(page, "{{titles}}", limitTitlesJS()))
 	}
 	mux.HandleFunc("GET /ammit/limits", limits)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {

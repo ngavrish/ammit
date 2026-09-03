@@ -11,34 +11,99 @@
    "about": "Every verdict this pipeline has recorded, and what each cost",
    "queries": [
     "SELECT coalesce(nullif(verdict,''),'(none)') AS verdict, count(*) AS runs, round(sum(usd),2) AS usd, sum(turns) AS turns, round(avg(coalesce(finished,started)-started)/60,1) AS avg_minutes FROM runs GROUP BY 1 ORDER BY runs DESC"
+   ],
+   "label": "Verdicts",
+   "top": true
+  },
+  {
+   "kind": "stats",
+   "title": "All time, in numbers",
+   "label": "All time",
+   "about": "Totals over every run there has been. Nothing per day or per run here; those are the charts below.",
+   "height": 7,
+   "top": true,
+   "queries": [
+    "SELECT 'runs' AS metric, count(*) AS value, 'runs' AS unit FROM runs UNION ALL SELECT 'spent', round(sum(usd),2), 'currencyUSD' FROM runs UNION ALL SELECT 'runs over the cost cap', sum(coalesce(usd,0) >= (SELECT value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY id DESC LIMIT 1)), 'runs' FROM runs UNION ALL SELECT 'turns', sum(coalesce(turns,0)), 'turns' FROM runs UNION ALL SELECT 'tokens out', sum(coalesce(json_extract(payload,'$.tokens_out'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'cache read', sum(coalesce(json_extract(payload,'$.cache_read'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'cache written', sum(coalesce(json_extract(payload,'$.cache_write'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'agent sessions', count(*), 'sessions' FROM events WHERE kind = 'session_end' UNION ALL SELECT 'gate rounds', count(*), 'rounds' FROM gates UNION ALL SELECT 'heal sessions', count(*), 'sessions' FROM events WHERE kind = 'spend' AND json_extract(payload,'$.agent') LIKE '%heal%' UNION ALL SELECT 'dearest session (' || coalesce((SELECT json_extract(payload,'$.agent') FROM events WHERE kind = 'spend' ORDER BY json_extract(payload,'$.usd') DESC LIMIT 1),'?') || ')', max(json_extract(payload,'$.usd')), 'currencyUSD' FROM events WHERE kind = 'spend' UNION ALL SELECT 'longest run (' || coalesce((SELECT name FROM runs WHERE finished IS NOT NULL ORDER BY finished - started DESC LIMIT 1),'?') || ')', max(finished - started), 's' FROM runs WHERE finished IS NOT NULL"
    ]
   },
   {
-   "kind": "series",
+   "kind": "bars",
+   "title": "Cost per run against limits.usd_per_run",
+   "about": "Every run there has been, in the order they started: what each cost, against the limit.",
+   "unit": "currencyUSD",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'cost' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r ORDER BY 1",
+    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 < $__from)) ORDER BY at"
+   ],
+   "label": "Cost per run"
+  },
+  {
+   "kind": "bars",
+   "title": "Turns per run against limits.turns_per_run",
+   "about": "Every run: how many turns it took, against the limit. One per tool call, which is what the pipeline reports as a turn.",
+   "unit": "turns",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'turns' AS metric, coalesce(r.turns,0) AS value, r.name AS label FROM runs r ORDER BY 1",
+    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.turns_per_run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.turns_per_run' AND at*1000 < $__from)) ORDER BY at"
+   ],
+   "label": "Turns per run"
+  },
+  {
+   "kind": "bars",
+   "title": "How long a run has been going, against timeouts.run",
+   "about": "Every run: how long it ran. A bar that reaches the dashed mark is a run ammit stopped.",
+   "unit": "s",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'elapsed' AS metric, coalesce(r.finished, strftime('%s','now')) - r.started AS value, r.name AS label FROM runs r ORDER BY 1",
+    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.run' AND at*1000 < $__from)) ORDER BY at"
+   ],
+   "label": "Run duration"
+  },
+  {
+   "kind": "columns",
    "title": "Runs finished, by day",
-   "unit": "short",
+   "unit": "runs",
    "about": "One line per verdict",
    "queries": [
     "SELECT cast(strftime('%s', date(finished,'unixepoch')) AS INTEGER)*1000 AS time, coalesce(nullif(verdict,''),'(none)') AS metric, count(*) AS value FROM runs WHERE finished IS NOT NULL GROUP BY 1,2 ORDER BY 1"
-   ]
+   ],
+   "label": "Runs per day"
   },
   {
-   "kind": "series",
-   "title": "What a run costs, by day",
+   "kind": "columns",
+   "title": "Spent, by day",
+   "about": "What every run started that day cost, added up. The bar that answers whether it mattered.",
    "unit": "currencyUSD",
-   "about": "Total and average",
+   "height": 7,
    "queries": [
-    "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, 'spent that day' AS metric, round(sum(usd),2) AS value FROM runs GROUP BY 1 UNION ALL SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000, 'average per run', round(avg(usd),2) FROM runs GROUP BY 1 ORDER BY 1"
-   ]
+    "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, 'spent' AS metric, round(sum(usd),2) AS value FROM runs GROUP BY 1 ORDER BY 1"
+   ],
+   "label": "Spend per day"
   },
   {
-   "kind": "series",
-   "title": "Turns a run takes, by day",
-   "unit": "short",
-   "about": "Counted from what the model actually returned, not from tool calls: a tool call was…",
+   "kind": "candles",
+   "title": "What a run costs, by day",
+   "about": "Every run of the day as one candle: the cheapest to the dearest, the middle half, and the average. The candle that answers whether a change made runs cheaper.",
+   "unit": "currencyUSD",
+   "height": 7,
    "queries": [
-    "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, 'average per run' AS metric, round(avg(turns),0) AS value FROM runs WHERE turns > 0 GROUP BY 1 UNION ALL SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000, 'the longest that day', max(turns) FROM runs WHERE turns > 0 GROUP BY 1 ORDER BY 1"
-   ]
+    "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, name AS metric, coalesce(usd,0) AS value FROM runs ORDER BY 1"
+   ],
+   "label": "Cost per run, by day"
+  },
+  {
+   "kind": "candles",
+   "title": "Turns a run takes, by day",
+   "about": "Every run of the day as one candle, in turns: the shortest to the longest, the middle half, and the average.",
+   "unit": "turns",
+   "height": 7,
+   "queries": [
+    "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, name AS metric, turns AS value FROM runs WHERE turns > 0 ORDER BY 1"
+   ],
+   "label": "Turns per run, by day"
   },
   {
    "kind": "table",
@@ -47,7 +112,8 @@
    "about": "Every agent that has ever cost anything, dearest first, with what it charges per session",
    "queries": [
     "SELECT json_extract(payload,'$.agent') AS agent, count(*) AS sessions, round(sum(json_extract(payload,'$.usd')),2) AS usd, round(avg(json_extract(payload,'$.usd')),3) AS usd_each, round(sum(json_extract(payload,'$.seconds'))/3600,1) AS hours FROM events WHERE kind='session_end' AND json_extract(payload,'$.agent') IS NOT NULL GROUP BY 1 HAVING usd > 0 ORDER BY usd DESC LIMIT 40"
-   ]
+   ],
+   "label": "Cost by agent, all time"
   },
   {
    "kind": "table",
@@ -56,7 +122,8 @@
    "about": "Each rule, how often it has fired and what was done about it",
    "queries": [
     "SELECT rule, action, count(*) AS times, round(min(observed),1) AS smallest, round(max(observed),1) AS largest, max(threshold) AS threshold FROM judgements WHERE action <> 'started' GROUP BY rule, action ORDER BY times DESC LIMIT 40"
-   ]
+   ],
+   "label": "Limit hits"
   },
   {
    "kind": "table",
@@ -65,16 +132,18 @@
    "about": "How often each check refuses, and how long its repair takes",
    "queries": [
     "SELECT phase, count(*) AS rounds, sum(verdict='red') AS red, sum(verdict='green') AS green, sum(findings) AS findings, round(avg(seconds)/60,1) AS avg_minutes FROM gates GROUP BY phase ORDER BY rounds DESC LIMIT 40"
-   ]
+   ],
+   "label": "Gates, all time"
   },
   {
    "kind": "table",
-   "title": "What every run did twice",
+   "title": "Repeated calls, by kind",
    "height": 8,
-   "about": "The same call, across every run there has been",
+   "about": "Every call across every run, by kind: how many there were, how many were distinct, and how many were the same call made again.",
    "queries": [
     "SELECT kind, count(*) AS calls, count(DISTINCT signature) AS distinct_calls, count(*) - count(DISTINCT signature) AS repeats FROM calls GROUP BY kind ORDER BY calls DESC"
-   ]
+   ],
+   "label": "Repeated calls by kind"
   }
  ]
 }

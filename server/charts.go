@@ -34,14 +34,23 @@ var panelSpec []byte
 var lifetimeSpec []byte
 
 type panel struct {
-	Kind    string   `json:"kind"`
-	Title   string   `json:"title"`
+	Kind  string `json:"kind"`
+	Title string `json:"title"`
+	// What the heading says. The title is the panel's name everywhere else -
+	// hiding, kinds, additions - and can be long; the label is short.
+	Label string `json:"label,omitempty"`
+	// Above every group, first thing on the page: the one table the page is
+	// opened for.
+	Top     bool     `json:"top,omitempty"`
 	About   string   `json:"about"`
 	Unit    string   `json:"unit"`
 	Height  int      `json:"height"`
 	Queries []string `json:"queries"`
 	Hidden  bool     `json:"hidden,omitempty"`
 	Custom  bool     `json:"custom,omitempty"`
+	// "lifetime" puts an added chart on the all-time page instead of the run
+	// pages: a chart of every run has no business on the page of one.
+	Scope string `json:"scope,omitempty"`
 }
 
 type chartSpec struct {
@@ -86,8 +95,8 @@ func readsOnly(q string) bool {
 // merged is the one spec both /charts/panels and /charts/data read, so an
 // index into it means the same panel to both. Built-ins first, additions after
 // — hiding marks rather than removes, precisely so the numbering never moves.
-// Additions belong to the run pages; the lifetime page is a different question
-// (one row per run, no window) and gets only the hiding.
+// Additions belong to the run pages unless they say scope: lifetime; the
+// lifetime page is a different question (one row per run, no window).
 func merged(lifetime bool) chartSpec {
 	base := panelsOf()
 	if lifetime {
@@ -101,12 +110,13 @@ func merged(lifetime bool) chartSpec {
 	for i := range base.Panels {
 		base.Panels[i].Hidden = away[base.Panels[i].Title]
 	}
-	if !lifetime {
-		for _, p := range loc.Panels {
-			p.Custom = true
-			p.Hidden = away[p.Title]
-			base.Panels = append(base.Panels, p)
+	for _, p := range loc.Panels {
+		if (p.Scope == "lifetime") != lifetime {
+			continue
 		}
+		p.Custom = true
+		p.Hidden = away[p.Title]
+		base.Panels = append(base.Panels, p)
 	}
 	return base
 }
@@ -138,14 +148,18 @@ func window(r *http.Request) (from, to int64) {
 	now := time.Now().UnixMilli()
 	to = now
 	from = now - 12*3600*1000
+	// A float is accepted: runs.started is a float of seconds, so the page
+	// asking for a run's own window sent 1788377388476.8336, ParseInt refused
+	// it, and every run page was silently drawn on the twelve-hour default -
+	// the run at the far right edge of a chart of nothing.
 	if v := r.URL.Query().Get("from"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			from = n
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
+			from = int64(n)
 		}
 	}
 	if v := r.URL.Query().Get("to"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			to = n
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
+			to = int64(n)
 		}
 	}
 	return from, to

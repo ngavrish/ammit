@@ -287,6 +287,16 @@ func (c Config) num(section, key string) (float64, bool) {
 	return f, true
 }
 
+// handsOff is actions.enforce read as a switch: anything but on, yes, true
+// or 1 means the watchdog watches and writes and touches nothing.
+func handsOff(c Config) bool {
+	switch strings.ToLower(c.str("actions", "enforce", "on")) {
+	case "on", "yes", "true", "1":
+		return false
+	}
+	return true
+}
+
 func (c Config) str(section, key, fallback string) string {
 	if v, ok := c[section][key]; ok && v != "" {
 		return v
@@ -595,6 +605,13 @@ func act(name string, conf Config, ctx map[string]string) string {
 	tmpl := conf.str("commands", name, "")
 	if tmpl == "" {
 		return "no command named " + name
+	}
+	// A debug run on the subscription is a run the limits must watch and must
+	// not touch. actions.enforce: off keeps every judgement and drops every
+	// hand - nothing is stopped, retried or restarted until it is on again,
+	// and the judgement says so. Starting a run and warning are not hands.
+	if handsOff(conf) && name != "start_run" && name != "warn" {
+		return "[hands off] " + name + " not run: actions.enforce is off"
 	}
 	// One cap on reviving, across every kind of retry. A retry that never
 	// gives up is the same outage with more billing - 41 restarts in one

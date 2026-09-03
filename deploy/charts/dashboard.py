@@ -160,30 +160,6 @@ def tbl(title, desc, sql, x, time_cols, w=12, h=9):
 # --------------------------------------------------------------- the run
 row("The run")
 
-ts("Cost per run against limits.usd_per_run",
-   "Each line is one run's spend as it accrued. The dashed line is the limit in "
-   "force at that moment: edit it on the ammit page and the line bends here.",
-   "currencyUSD", [
-    q("""SELECT * FROM (SELECT e.at AS time, r.name AS metric,
-         sum(json_extract(e.payload,'$.usd')) OVER (PARTITION BY e.run ORDER BY e.at) AS value
-         FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.kind = 'spend' ORDER BY e.at) WHERE time*1000 BETWEEN $__from AND $__to"""),
-    limit_of("limits.usd_per_run")], 0)
-
-ts("Turns per run against limits.turns_per_run", "One per tool call, which is what the pipeline reports as a turn: the heartbeat that proves a session is still moving. Not the number of exchanges with the model.",
-   "short", [
-    q("""SELECT * FROM (SELECT e.at AS time, r.name AS metric,
-         count(*) OVER (PARTITION BY e.run ORDER BY e.at) AS value
-         FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.kind = 'turn' ORDER BY e.at) WHERE time*1000 BETWEEN $__from AND $__to"""),
-    limit_of("limits.turns_per_run")], 12)
-
-ts("How long a run has been going, against timeouts.run",
-   "A line that reaches the dashed one is a run ammit stopped; the annotation there "
-   "says what it ran to stop it.", "s", [
-    q("""SELECT CAST(e.at/60 AS INTEGER)*60 AS time, r.name AS metric,
-         max(e.at - r.started) AS value FROM events e JOIN runs r ON r.run = e.run
-         WHERE r.started IS NOT NULL GROUP BY 1, 2 ORDER BY 1"""),
-    limit_of("timeouts.run")], 0)
-
 ts("Idle time piling up, per run",
    "Every gap over two minutes, added up as the run went. A staircase that climbs as "
    "fast as the run is a run that is mostly waiting: 377 of 636 minutes, once.", "s", [
@@ -211,7 +187,7 @@ ts("How long one request takes, by agent, against timeouts.request",
 ts("Requests that died, per minute",
    "A request that came back as an error rather than an answer, by agent. A row here "
    "and a gap on the chart beside it is a retry; a row here and nothing after it is a "
-   "session that stopped.", "short", [
+   "session that stopped.", "requests/min", [
     q("""SELECT CAST(at/60 AS INTEGER)*60 AS time,
          coalesce(nullif(agent,''),'?') AS metric, count(*) AS value
          FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end'
@@ -246,10 +222,8 @@ ts("Cost by phase", "What each phase is costing, as it accrues. \"What is the de
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"""),
     limit_of("limits.usd_per_run")], 0)
 
-ts("Turns by phase", "One per tool call — runsdb emits a turn from log() when the line is a tool line, so this counts tool calls, not exchanges with the model.", "short", [
-    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
-         count(*) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'turn' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
+ts("Turns by phase", "One per tool call — runsdb emits a turn from log() when the line is a tool line, so this counts tool calls, not exchanges with the model.", "turns", [
+    q("""SELECT max(at) AS time, coalesce(nullif(phase,''),'no phase') AS metric, count(*) AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to GROUP BY 2 ORDER BY 3 DESC""")], 12)
 
 ts("Phase length against timeouts.phase", "One point per finished phase.", "s", [
     q("""SELECT at AS time, coalesce(nullif(phase,''),'?') AS metric,
@@ -281,14 +255,7 @@ ts("Memory while each phase ran, against limits.memory_mb",
 ts("Time in a phase, minute by minute",
    "How long the open phase has been open. A climb that does not reset is a phase "
    "nothing is ending.", "s", [
-    q("""SELECT CAST(e.at/60 AS INTEGER)*60 AS time,
-         coalesce(nullif(e.phase,''),'no phase') AS metric,
-         max(e.at - (SELECT p.at FROM events p WHERE p.kind = 'phase_start'
-             AND p.run = e.run AND p.phase = e.phase AND p.at <= e.at
-             ORDER BY p.at DESC LIMIT 1)) AS value
-         FROM events e WHERE e.at*1000 BETWEEN $__from AND $__to AND e.run IS NOT NULL AND ifnull(e.phase,'') <> ''
-         GROUP BY 1, 2 ORDER BY 1"""),
-    limit_of("timeouts.phase")], 12)
+    q("""SELECT time, metric, value FROM (SELECT e.at AS time, coalesce(nullif(e.phase,''),'?') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.phase ORDER BY e.at), r.finished, strftime('%s','now')) AS value, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run WHERE e.kind IN ('phase_start','phase_end') AND ifnull(e.phase,'') <> '') WHERE kind = 'phase_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time""")], 12)
 
 # ------------------------------------------------------ by agent session
 row("By agent session")
@@ -304,26 +271,22 @@ ts("What one turn carried, against limits.turn_tokens",
    "Every turn as it was sent — the system prompt, whatever was inlined into it, "
    "and the conversation so far. The per-session average below is a summary that "
    "arrives once the session is over; this is the number while the next turn has "
-   "not been paid for yet.", "short", [
+   "not been paid for yet.", "tokens", [
     q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric,
          json_extract(payload,'$.context') AS value
-         FROM events WHERE kind = 'turn'
-         AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at"""),
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.context'),0) > 0 ORDER BY at"""),
     limit_of("limits.turn_tokens")], 0)
 
 ts("Output per turn, by agent",
    "What the model actually wrote. Read this beside the chart on the left: three "
    "hundred tokens read for every one written is a prompt problem, not a model "
-   "having a hard think.", "short", [
+   "having a hard think.", "tokens", [
     q("""SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS metric,
          json_extract(payload,'$.tokens_out') AS value
-         FROM events WHERE kind = 'turn'
-         AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at""")], 12)
+         FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'turn' AND coalesce(json_extract(payload,'$.tokens_out'),0) > 0 ORDER BY at""")], 12)
 
-ts("Turns by agent", "Which agent is taking the turns.", "short", [
-    q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
-         count(*) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value
-         FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'turn' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
+ts("Turns by agent", "Which agent is taking the turns.", "turns", [
+    q("""SELECT max(at) AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE kind = 'turn' AND at*1000 BETWEEN $__from AND $__to GROUP BY 2 ORDER BY 3 DESC""")], 12)
 
 ts("Session length against timeouts.session", "One point per finished session, by agent.",
    "s", [
@@ -352,14 +315,7 @@ ts("Memory while each agent ran, against limits.memory_mb",
 
 ts("Time in a session, minute by minute",
    "How long the open session has been open, by agent.", "s", [
-    q("""SELECT CAST(e.at/60 AS INTEGER)*60 AS time,
-         coalesce(nullif(e.agent,''),'?') AS metric,
-         max(e.at - (SELECT a.at FROM events a WHERE a.kind = 'session_start'
-             AND a.run = e.run AND a.agent = e.agent AND a.at <= e.at
-             ORDER BY a.at DESC LIMIT 1)) AS value
-         FROM events e WHERE e.at*1000 BETWEEN $__from AND $__to AND e.run IS NOT NULL AND ifnull(e.agent,'') <> ''
-         GROUP BY 1, 2 ORDER BY 1"""),
-    limit_of("timeouts.session")], 12)
+    q("""SELECT time, metric, value FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.agent ORDER BY e.at), r.finished, strftime('%s','now')) AS value, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run WHERE e.kind IN ('session_start','session_end') AND ifnull(e.agent,'') <> '') WHERE kind = 'session_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time""")], 12)
 
 # --------------------------------------------------------------- machine
 # ------------------------------------------------------------------ tokens
@@ -370,31 +326,31 @@ ts("Time in a session, minute by minute",
 row("Tokens")
 
 ts("Tokens out, per run", "Generated tokens as they accrued. This is the number "
-   "that moves the bill; cache read below is charged at a fraction of it.", "short", [
+   "that moves the bill; cache read below is charged at a fraction of it.", "tokens", [
     q("""SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric,
          sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
 
-ts("Tokens out, by phase", "Which phase is generating the volume.", "short", [
+ts("Tokens out, by phase", "Which phase is generating the volume.", "tokens", [
     q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS metric,
          sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(phase,''),'no phase') ORDER BY at) AS value
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
 
-ts("Tokens out, by agent", "And which agent inside it.", "short", [
+ts("Tokens out, by agent", "And which agent inside it.", "tokens", [
     q("""SELECT * FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS metric,
          sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY coalesce(nullif(agent,''),'?') ORDER BY at) AS value
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
 
 ts("Cache read, per run",
    "Context read back rather than re-sent. Large is good here: it is the same "
-   "prompt not being paid for twice.", "short", [
+   "prompt not being paid for twice.", "tokens", [
     q("""SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric,
          sum(json_extract(payload,'$.cache_read')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 12)
 
 ts("Cache written, per run",
    "Context put into the cache. Written once, read many times — a run where this "
-   "keeps climbing is a run whose prompt will not settle.", "short", [
+   "keeps climbing is a run whose prompt will not settle.", "tokens", [
     q("""SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric,
          sum(json_extract(payload,'$.cache_write')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value
          FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to""")], 0)
@@ -429,7 +385,7 @@ ts("CPU by container", "Percent of one core, as the container client reports it.
 
 ts("Processes by container",
    "A count that climbs and never falls is something not being reaped — the browser "
-   "runs this pipeline leaves behind, most often.", "short", [
+   "runs this pipeline leaves behind, most often.", "processes", [
     q("""SELECT at AS time, json_extract(payload,'$.container') AS metric,
          json_extract(payload,'$.pids') AS value
          FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at""")], 0)
@@ -454,16 +410,7 @@ panels.append({
     # one. The run lane is numbered in the order they started, so the moment a
     # band changes there is a new run — which the thin annotation line was too
     # quiet to say.
-    "targets": [q("""SELECT time, run, phase FROM (
-                       SELECT CAST(e.at/60 AS INTEGER)*60 AS time,
-                              max('#' || n.seq) AS run,
-                              max(coalesce(nullif(e.phase,''), e.agent, '?')) AS phase
-                       FROM events e
-                       LEFT JOIN (SELECT run, dense_rank() OVER (ORDER BY started) AS seq
-                                  FROM runs) n ON n.run = e.run
-                       WHERE e.at*1000 BETWEEN $__from AND $__to
-                         AND e.kind IN ('turn','log','session_start')
-                       GROUP BY 1) ORDER BY time""", "table", ("time",))]})
+    "targets": [q("""SELECT time, metric, value, label FROM (SELECT e.at AS time, '#' || n.seq || ' ' || coalesce(r.name,'') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.phase ORDER BY e.at), r.finished, strftime('%s','now')) AS value, coalesce(nullif(e.phase,''),'?') AS label, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run JOIN (SELECT run, dense_rank() OVER (ORDER BY started) AS seq FROM runs) n ON n.run = e.run WHERE e.kind IN ('phase_start','phase_end') AND ifnull(e.phase,'') <> '') WHERE kind = 'phase_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time""", "table", ("time",))]})
 Y[0] += 8
 
 # ------------------------------------------------------- gates and repair
@@ -472,7 +419,7 @@ row("Gates and repair")
 ts("Findings per gate, each time it ran",
    "How much each check refuses, round by round. A gate that never finds "
    "anything is a tollbooth; one whose findings do not fall between rounds is "
-   "asking for something the repair cannot give.", "short", [
+   "asking for something the repair cannot give.", "findings", [
     q("""SELECT at*1000 AS time, phase AS metric, findings AS value
          FROM gates ORDER BY at""")], 0, points=True)
 
@@ -609,6 +556,94 @@ table("What each phase spent its calls on",
 # one sqlite file for one page that already exists. What each panel actually is:
 # a title, a sentence, a kind, and a query returning time/metric/value. That is
 # what this writes, and what ammit renders.
+KIND = {
+    "How long one request takes, by agent, against timeouts.request": "scatter",
+    "Requests that died, per minute": "columns",
+    "Request time by phase, against timeouts.request": "scatter",
+    "Cost by phase": "pie",
+    "Turns by phase": "bars",
+    "Phase length against timeouts.phase": "scatter",
+    "Idle inside a phase, against timeouts.turn": "scatter",
+    "Time in a phase, minute by minute": "timeline",
+    "Cost by agent": "pie",
+    "What one turn carried, against limits.turn_tokens": "scatter",
+    "Output per turn, by agent": "scatter",
+    "Turns by agent": "bars",
+    "Session length against timeouts.session": "scatter",
+    "Silence between turns, against timeouts.turn": "scatter",
+    "Time in a session, minute by minute": "timeline",
+    "Tokens out, by phase": "stacked",
+    "Tokens out, by agent": "stacked",
+    "Memory by container against limits.memory_mb": "stacked",
+    "Phases and branches": "timeline",
+    "Findings per gate, each time it ran": "columns",
+    "How long a round takes, by gate": "columns",
+}
+
+# A sentence rewritten for the way the chart is drawn now.
+ABOUT = {
+    "Turns by phase":
+        "Tool calls in the window, by the phase that made them.",
+    "Time in a phase, minute by minute":
+        "When each phase began and ended. A bar that reaches the right edge is still open.",
+    "Turns by agent":
+        "Tool calls in the window, by the agent that made them.",
+    "Time in a session, minute by minute":
+        "When each agent's session began and ended, one row per agent.",
+    "Phases and branches":
+        "One row per run, a bar per phase, in the order the runs started.",
+}
+
+# The short heading. The title stays the panel's name - hiding, kinds and
+# additions are keyed by it - and the label is what the page prints.
+LABEL = {
+    "Cost per run against limits.usd_per_run": "Cost per run",
+    "Turns per run against limits.turns_per_run": "Turns per run",
+    "How long a run has been going, against timeouts.run": "Run duration",
+    "Idle time piling up, per run": "Idle time per run",
+    "How long one request takes, by agent, against timeouts.request": "Request time by agent",
+    "Requests that died, per minute": "Failed requests per minute",
+    "Request time by phase, against timeouts.request": "Request time by phase",
+    "Requests that died, in full": "Failed requests",
+    "Phase length against timeouts.phase": "Phase length",
+    "Idle inside a phase, against timeouts.turn": "Idle within phase",
+    "Memory while each phase ran, against limits.memory_mb": "Memory by phase",
+    "Time in a phase, minute by minute": "Phase timeline",
+    "What one turn carried, against limits.turn_tokens": "Context per turn",
+    "Output per turn, by agent": "Output per turn",
+    "Session length against timeouts.session": "Session length",
+    "Silence between turns, against timeouts.turn": "Silence between turns",
+    "Memory while each agent ran, against limits.memory_mb": "Memory by agent",
+    "Time in a session, minute by minute": "Session timeline",
+    "Tokens out, per run": "Tokens out per run",
+    "Tokens out, by phase": "Tokens out by phase",
+    "Tokens out, by agent": "Tokens out by agent",
+    "Cache read, per run": "Cache read per run",
+    "Cache written, per run": "Cache written per run",
+    "Tokens and what they cost": "Tokens and cost",
+    "Memory by container against limits.memory_mb": "Memory by container",
+    "Phases and branches": "Phases by run",
+    "Findings per gate, each time it ran": "Findings per gate",
+    "How long a round takes, by gate": "Round duration by gate",
+    "Rounds to green, per gate": "Rounds to green",
+    "Busy and idle, per run": "Busy vs idle",
+    "The longest gaps": "Longest gaps",
+    "What ammit did": "Judgements",
+    "Limits, as they stand": "Current limits",
+    "The same call, again": "Repeated calls",
+    "The same file, however it was reached": "Repeated file touches",
+    "What each phase spent its calls on": "Calls by phase",
+    "How runs end": "Verdicts",
+    "Runs finished, by day": "Runs per day",
+    "Spent, by day": "Spend per day",
+    "What a run costs, by day": "Cost per run, by day",
+    "Turns a run takes, by day": "Turns per run, by day",
+    "Where the money goes, over all runs": "Cost by agent, all time",
+    "What every limit has caught": "Limit hits",
+    "Gates, over all runs": "Gates, all time",
+    "Repeated calls, by kind": "Repeated calls by kind",
+}
+
 spec = {"panels": []}
 for p in panels:
     if p["type"] == "row":
@@ -617,14 +652,25 @@ for p in panels:
     for t in p.get("targets", []):
         pass
     spec["panels"].append({
-        "kind": {"timeseries": "series", "table": "table",
-                 "state-timeline": "states"}.get(p["type"], "series"),
+        # How each one is drawn. Grafana had one word for every line; the
+        # page has a word for what the numbers are: points that are one event
+        # each, columns that are a count per bucket, stacks that are a share
+        # over time, bars that are one per run or per category, spans on a
+        # clock, a pie of the end of every line.
+        "kind": KIND.get(p["title"]) or {"timeseries": "series", "table": "table",
+                 "state-timeline": "timeline"}.get(p["type"], "series"),
         "title": p["title"],
-        "about": p.get("description", ""),
+        # The first sentence: the page shows it under the title, the rest is
+        # for whoever opens this file.
+        "about": ABOUT.get(p["title"], p.get("description", "").split(". ")[0].rstrip(".")),
         "unit": ((p.get("fieldConfig") or {}).get("defaults") or {}).get("unit", ""),
         "height": (p.get("gridPos") or {}).get("h", 8),
         "queries": [q.get("rawQueryText", "") for q in p.get("targets", [])],
     })
+
+for p in spec["panels"]:
+    if p["title"] in LABEL:
+        p["label"] = LABEL[p["title"]]
 
 out = pathlib.Path(__file__).with_name("panels.json")
 out.write_text(json.dumps(spec, indent=1, ensure_ascii=False) + "\n")
@@ -643,7 +689,7 @@ print(f"{out}: {len([x for x in spec['panels'] if x['kind'] != 'row'])} panels")
 lifetime = {"panels": [
     {"kind": "row", "title": "Every run there has been"},
 
-    {"kind": "table", "title": "How runs end", "height": 7,
+    {"kind": "table", "title": "How runs end", "height": 7, "top": True,
      "about": "Every verdict this pipeline has recorded, and what each cost. "
               "ABANDONED is not a verdict about the work: it is what a run is "
               "called when nothing reported on it for longer than a run is "
@@ -654,7 +700,34 @@ lifetime = {"panels": [
                round(avg(coalesce(finished,started)-started)/60,1) AS avg_minutes
         FROM runs GROUP BY 1 ORDER BY runs DESC""")]},
 
-    {"kind": "series", "title": "Runs finished, by day", "unit": "short",
+    # The numbers the page is opened for, as tiles beside the verdicts. One
+    # row per number: what it is, the number, and the unit it is read in.
+    {"kind": "stats", "title": "All time, in numbers", "label": "All time", "height": 7, "top": True,
+     "about": "Totals over every run there has been. Nothing per day or per run here; those are the charts below.",
+     "queries": [one("SELECT 'runs' AS metric, count(*) AS value, 'runs' AS unit FROM runs UNION ALL SELECT 'spent', round(sum(usd),2), 'currencyUSD' FROM runs UNION ALL SELECT 'runs over the cost cap', sum(coalesce(usd,0) >= (SELECT value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY id DESC LIMIT 1)), 'runs' FROM runs UNION ALL SELECT 'turns', sum(coalesce(turns,0)), 'turns' FROM runs UNION ALL SELECT 'tokens out', sum(coalesce(json_extract(payload,'$.tokens_out'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'cache read', sum(coalesce(json_extract(payload,'$.cache_read'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'cache written', sum(coalesce(json_extract(payload,'$.cache_write'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'agent sessions', count(*), 'sessions' FROM events WHERE kind = 'session_end' UNION ALL SELECT 'gate rounds', count(*), 'rounds' FROM gates UNION ALL SELECT 'heal sessions', count(*), 'sessions' FROM events WHERE kind = 'spend' AND json_extract(payload,'$.agent') LIKE '%heal%' UNION ALL SELECT 'dearest session (' || coalesce((SELECT json_extract(payload,'$.agent') FROM events WHERE kind = 'spend' ORDER BY json_extract(payload,'$.usd') DESC LIMIT 1),'?') || ')', max(json_extract(payload,'$.usd')), 'currencyUSD' FROM events WHERE kind = 'spend' UNION ALL SELECT 'longest run (' || coalesce((SELECT name FROM runs WHERE finished IS NOT NULL ORDER BY finished - started DESC LIMIT 1),'?') || ')', max(finished - started), 's' FROM runs WHERE finished IS NOT NULL")]},
+
+    # One bar per run: the axis is runs, not time, which is why this is not
+    # on the page of one run.
+    {"kind": "bars", "title": "Cost per run against limits.usd_per_run", "unit": "currencyUSD", "height": 8,
+     "about": "Every run there has been, in the order they started: what each cost, against the limit.",
+     "queries": [one("SELECT r.started AS time, 'cost' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r ORDER BY 1"),
+                 one("SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 < $__from)) ORDER BY at")]},
+
+    # One bar per run: the axis is runs, not time, which is why this is not
+    # on the page of one run.
+    {"kind": "bars", "title": "Turns per run against limits.turns_per_run", "unit": "turns", "height": 8,
+     "about": "Every run: how many turns it took, against the limit. One per tool call, which is what the pipeline reports as a turn.",
+     "queries": [one("SELECT r.started AS time, 'turns' AS metric, coalesce(r.turns,0) AS value, r.name AS label FROM runs r ORDER BY 1"),
+                 one("SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.turns_per_run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.turns_per_run' AND at*1000 < $__from)) ORDER BY at")]},
+
+    # One bar per run: the axis is runs, not time, which is why this is not
+    # on the page of one run.
+    {"kind": "bars", "title": "How long a run has been going, against timeouts.run", "unit": "s", "height": 8,
+     "about": "Every run: how long it ran. A bar that reaches the dashed mark is a run ammit stopped.",
+     "queries": [one("SELECT r.started AS time, 'elapsed' AS metric, coalesce(r.finished, strftime('%s','now')) - r.started AS value, r.name AS label FROM runs r ORDER BY 1"),
+                 one("SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.run' AND at*1000 < $__from)) ORDER BY at")]},
+
+    {"kind": "columns", "title": "Runs finished, by day", "unit": "runs",
      "about": "One line per verdict. A day with more red than green is a day to "
               "go and read, and the shape over weeks is the only thing that says "
               "whether any of this is improving.",
@@ -663,31 +736,20 @@ lifetime = {"panels": [
                coalesce(nullif(verdict,''),'(none)') AS metric, count(*) AS value
         FROM runs WHERE finished IS NOT NULL GROUP BY 1,2 ORDER BY 1""")]},
 
-    {"kind": "series", "title": "What a run costs, by day", "unit": "currencyUSD",
-     "about": "Total and average. The average is the one that answers whether a "
-              "change made runs cheaper; the total is the one that answers "
-              "whether it mattered.",
-     "queries": [one("""
-        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time,
-               'spent that day' AS metric, round(sum(usd),2) AS value
-        FROM runs GROUP BY 1
-        UNION ALL
-        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000,
-               'average per run', round(avg(usd),2) FROM runs GROUP BY 1
-        ORDER BY 1""")]},
+    # A sum is one number a day: a column.
+    {"kind": "columns", "title": "Spent, by day", "unit": "currencyUSD", "height": 7,
+     "about": "What every run started that day cost, added up. The bar that answers whether it mattered.",
+     "queries": [one("SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, 'spent' AS metric, round(sum(usd),2) AS value FROM runs GROUP BY 1 ORDER BY 1")]},
 
-    {"kind": "series", "title": "Turns a run takes, by day", "unit": "short",
-     "about": "Counted from what the model actually returned, not from tool "
-              "calls: a tool call was reported as a turn for a while and the "
-              "number ran two to three times over.",
-     "queries": [one("""
-        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time,
-               'average per run' AS metric, round(avg(turns),0) AS value
-        FROM runs WHERE turns > 0 GROUP BY 1
-        UNION ALL
-        SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000,
-               'the longest that day', max(turns) FROM runs WHERE turns > 0
-        GROUP BY 1 ORDER BY 1""")]},
+    # One row per run; the page draws the day's spread as a candle.
+    {"kind": "candles", "title": "What a run costs, by day", "unit": "currencyUSD", "height": 7,
+     "about": "Every run of the day as one candle: the cheapest to the dearest, the middle half, and the average. The candle that answers whether a change made runs cheaper.",
+     "queries": [one("SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, name AS metric, coalesce(usd,0) AS value FROM runs ORDER BY 1")]},
+
+    # One row per run; the page draws the day's spread as a candle.
+    {"kind": "candles", "title": "Turns a run takes, by day", "unit": "turns", "height": 7,
+     "about": "Every run of the day as one candle, in turns: the shortest to the longest, the middle half, and the average.",
+     "queries": [one("SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, name AS metric, turns AS value FROM runs WHERE turns > 0 ORDER BY 1")]},
 
     {"kind": "table", "title": "Where the money goes, over all runs", "height": 9,
      "about": "Every agent that has ever cost anything, dearest first, with what "
@@ -723,7 +785,7 @@ lifetime = {"panels": [
                sum(findings) AS findings, round(avg(seconds)/60,1) AS avg_minutes
         FROM gates GROUP BY phase ORDER BY rounds DESC LIMIT 40""")]},
 
-    {"kind": "table", "title": "What every run did twice", "height": 8,
+    {"kind": "table", "title": "Repeated calls, by kind", "height": 8,
      "about": "The same call, across every run there has been. Counted rather "
               "than remembered: a branch read one step module twenty times and "
               "ran the same search eleven, and nobody knew until somebody "
@@ -733,6 +795,10 @@ lifetime = {"panels": [
                count(*) - count(DISTINCT signature) AS repeats
         FROM calls GROUP BY kind ORDER BY calls DESC""")]},
 ]}
+
+for p in lifetime["panels"]:
+    if p["title"] in LABEL:
+        p["label"] = LABEL[p["title"]]
 
 out3 = pathlib.Path(__file__).with_name("lifetime.json")
 out3.write_text(json.dumps(lifetime, indent=1, ensure_ascii=False) + "\n")
