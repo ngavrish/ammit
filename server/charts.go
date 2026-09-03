@@ -121,13 +121,8 @@ func readsOnly(q string) bool {
 // per run, no window; the heal loop and the model, about every run at once).
 func merged(page string) chartSpec {
 	base := panelsOf()
-	switch page {
-	case "lifetime":
-		base = lifetimeOf()
-	case "heal":
-		base = healOf()
-	case "model":
-		base = modelOf()
+	if p := pageOf(page); p != nil && p.AllTime {
+		base = p.spec()
 	}
 	loc := localOf()
 	away := map[string]bool{}
@@ -173,14 +168,12 @@ func modelOf() chartSpec {
 }
 
 // The pages that are about every run at once rather than a window of one.
-var allTime = map[string]bool{"lifetime": true, "heal": true, "model": true}
-
 // which set a request is about. The lifetime panels carry no window — they are
 // about every run there has been — so the macros are filled with the widest
 // possible range rather than being left in the SQL to fail.
 func specFor(r *http.Request) (chartSpec, string) {
 	page := r.URL.Query().Get("scope")
-	if !allTime[page] {
+	if p := pageOf(page); p == nil || !p.AllTime {
 		page = ""
 	}
 	return merged(page), page
@@ -418,25 +411,18 @@ func serveCharts(mux *http.ServeMux) {
 	// already are.
 	page := func(w http.ResponseWriter, r *http.Request) {
 		active := "runs"
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/ammit/window"):
-			active = "window"
-		case strings.HasPrefix(r.URL.Path, "/ammit/lifetime"):
-			active = "lifetime"
-		case strings.HasPrefix(r.URL.Path, "/ammit/heal"):
-			active = "heal"
-		case strings.HasPrefix(r.URL.Path, "/ammit/model"):
-			active = "model"
+		for _, p := range pages {
+			if strings.HasPrefix(r.URL.Path, p.Path) {
+				active = p.Key
+			}
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, chartsPageHTML(active))
 	}
-	mux.HandleFunc("GET /ammit/runs", page)
+	for _, p := range pages {
+		mux.HandleFunc("GET "+p.Path, page)
+	}
 	mux.HandleFunc("GET /ammit/runs/{id}", page)
-	mux.HandleFunc("GET /ammit/window", page)
-	mux.HandleFunc("GET /ammit/lifetime", page)
-	mux.HandleFunc("GET /ammit/heal", page)
-	mux.HandleFunc("GET /ammit/model", page)
 	mux.HandleFunc("GET /ammit/learning", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ammit/heal", http.StatusFound) })
 
 	// Where the old addresses went, so anything already sent still arrives.

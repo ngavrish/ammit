@@ -201,11 +201,12 @@
   {
    "kind": "timeline",
    "title": "Model waits, by session",
-   "about": "One row per session, one span per wait, from the moment the request went out to the moment its answer arrived: 'model' when only the model's answer was outstanding, 'tool' when the span covers a tool it asked for. The trace, laid on a clock: a wait that stands alone across the width is the one to chase.",
+   "about": "One row per session, one span per wait, from the moment the request went out to the moment its answer arrived: 'model' when only the model's answer was outstanding, 'tool' when the span covers a tool it asked for. Under each session, a second row of the tool calls themselves, by name, laid on the same clock. The trace: a wait that stands alone across the width is the one to chase.",
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT time, metric, value, label FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') || CASE WHEN coalesce(e.branch,'')<>'' THEN '@' || e.branch ELSE '' END AS metric, lead(e.at) OVER (PARTITION BY e.run, e.session ORDER BY e.at) AS value, coalesce(nullif(json_extract(e.payload,'$.wait'),''),'wait') AS label, e.kind AS kind FROM events e WHERE e.kind IN ('request_start','request_end')) WHERE kind='request_start' AND value IS NOT NULL AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
+    "SELECT time, metric, value, label FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') || CASE WHEN coalesce(e.branch,'')<>'' THEN '@' || e.branch ELSE '' END AS metric, lead(e.at) OVER (PARTITION BY e.run, e.session ORDER BY e.at) AS value, coalesce(nullif(json_extract(e.payload,'$.wait'),''),'wait') AS label, e.kind AS kind FROM events e WHERE e.kind IN ('request_start','request_end')) WHERE kind='request_start' AND value IS NOT NULL AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time",
+    "SELECT at AS time, coalesce(nullif(agent,''),'?') || CASE WHEN coalesce(branch,'')<>'' THEN '@' || branch ELSE '' END || ' tools' AS metric, at + max(seconds, 1) AS value, tool AS label FROM calls WHERE at*1000 BETWEEN $__from AND $__to AND seconds > 0 ORDER BY at"
    ]
   },
   {

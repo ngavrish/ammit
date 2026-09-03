@@ -34,6 +34,12 @@ func lift(id int64, at float64, e event) {
 		      VALUES (?,?,?,?,?,?,?,?)`,
 			id, at, e.s("run"), e.s("branch"), e.s("phase"), int64(e.f("lap")), e.opt("cap"),
 			e.s("decision"))
+		// The runner enforces this one; ammit writes it down beside the limits
+		// it enforces itself, so the branch that was given up is in the same
+		// table as the run that was stopped.
+		if e.s("decision") == "gave_up" {
+			judgeLater(e)
+		}
 	}
 }
 
@@ -103,4 +109,17 @@ func liftHistory() {
 	} {
 		execSQL(sql)
 	}
+}
+
+// judgeLater records a heal loop given up, outside the lock store holds.
+func judgeLater(e event) {
+	run, branch, cap, lap := e.s("run"), e.s("branch"), e.f("cap"), e.f("lap")
+	go func() {
+		var name string
+		mu.Lock()
+		db.QueryRow(`SELECT coalesce(name,'') FROM runs WHERE run=?`, run).Scan(&name)
+		mu.Unlock()
+		judge("branch", run, name+" "+branch, "loops.heal_laps_per_branch", cap, lap, "none",
+			"the runner gave the branch up, unconverged")
+	}()
 }

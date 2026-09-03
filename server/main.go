@@ -513,11 +513,11 @@ func store(e event) {
 			ok = 0
 		}
 		db.Exec(`INSERT INTO calls (at, run, phase, branch, agent, session, tool,
-		         kind, target, signature, repeat, on_target, seconds, ok, why)
-		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		         kind, target, signature, repeat, on_target, seconds, ok, why, request)
+		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("agent"),
 			e.s("session"), e.s("tool"), kind, target, signature,
-			repeat+1, onTarget+1, e.f("seconds"), ok, e.s("why"))
+			repeat+1, onTarget+1, e.f("seconds"), ok, e.s("why"), e.s("request"))
 	case "spend":
 		db.Exec(`UPDATE runs SET usd = coalesce(usd,0) + ? WHERE run=?`,
 			e.f("usd"), e.s("run"))
@@ -1809,6 +1809,9 @@ func openDB(dbPath string) error {
 	// second thing to get wrong.
 	for _, add := range []string{
 		`ALTER TABLE calls ADD COLUMN why TEXT DEFAULT ''`,
+		// The wait the call happened in (sid#seq), so a call and the turn that
+		// asked for it are one trace.
+		`ALTER TABLE calls ADD COLUMN request TEXT DEFAULT ''`,
 	} {
 		if _, err := db.Exec(add); err != nil &&
 			!strings.Contains(err.Error(), "duplicate column") {

@@ -43,7 +43,6 @@ escalate:
 limits:
   usd_per_run: 150
   turns_per_run: 1600
-  heal_laps_per_branch: 3    # heal laps one branch may take before the runner gives up on it
   # And one session's turns. The run-wide count cannot see this: a fan-out of
   # twenty-three branches made 1336 turns between them while every session
   # stayed under its own ceiling and the run stayed under its own, so nothing
@@ -146,3 +145,10 @@ context:
   worker: my-pipeline-worker-1
   starter: http://orchestrator:8081/run
   control: http://agent-runner:9099/cancel
+
+# Loops the runner drives. Ammit does not enforce these - the runner reads them
+# and stops the loop itself - but ammit holds the number, draws it on the
+# chart with its name, and writes a judgement when a branch is given up at it,
+# so the Limit hits table shows it beside everything else.
+loops:
+  heal_laps_per_branch: 3    # heal laps one branch may take before the runner gives up on it

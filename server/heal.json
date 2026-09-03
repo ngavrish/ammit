@@ -19,12 +19,12 @@
   {
    "kind": "bars",
    "title": "Heal laps on one branch, against the cap",
-   "about": "Per run, the most heal laps any one branch took, against the cap the runner gives up at - limits.heal_laps_per_branch, read from ammit at every decision. A bar at the line is a branch that spent its whole budget; over it is a run from before the cap was a limit.",
+   "about": "Per run, the most heal laps any one branch took, against the cap the runner gives up at - loops.heal_laps_per_branch, read from ammit at every decision. A bar at the line is a branch that spent its whole budget; over it is a run from before the cap was a limit.",
    "unit": "laps",
    "height": 8,
    "queries": [
     "SELECT r.started AS time, 'most on one branch' AS metric, coalesce(l.most,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, branch, max(lap) AS laps FROM heal_laps GROUP BY 1,2) GROUP BY run) l ON l.run=r.run ORDER BY 1",
-    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.heal_laps_per_branch' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.heal_laps_per_branch' AND at*1000 < $__from)) ORDER BY at"
+    "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'loops.heal_laps_per_branch' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'loops.heal_laps_per_branch' AND at*1000 < $__from)) ORDER BY at"
    ]
   },
   {

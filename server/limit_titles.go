@@ -17,7 +17,7 @@ var limitTitles = map[string]string{
 	"limits.net_probe_ms":         "Network probe ceiling",
 	"limits.quiet_cpu":            "Quiet CPU threshold",
 	"limits.retry_max":            "Revival cap",
-	"limits.heal_laps_per_branch": "Heal lap cap per branch",
+	"loops.heal_laps_per_branch":  "Heal lap cap per branch",
 	"limits.spin_window":          "Spin window",
 	"limits.spin_requests":        "Spin request cap",
 	"timeouts.run":                "Run timeout",

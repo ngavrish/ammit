@@ -106,6 +106,7 @@ body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 var(--san
 .tl{font:11.5px/1.4 var(--mono);font-variant-numeric:tabular-nums}
 .tl .r{display:grid;grid-template-columns:minmax(90px,auto) 1fr;gap:12px;align-items:center;margin:3px 0}
 .tl .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.tl .unfold{font:inherit;color:var(--mute);background:none;border:1px dashed var(--line);padding:2px 10px;cursor:pointer}
 .tl .t{position:relative;height:22px;background:var(--hair-soft);border-radius:3px}
 .tl .s i{font-style:normal;font-weight:400;opacity:.85;margin-left:6px}
 .tl .s{position:absolute;top:2px;bottom:2px;border-radius:2px;overflow:hidden;white-space:nowrap;
@@ -414,8 +415,10 @@ async function windowForNewest(){
   }catch(e){/* leave the default */}
 }
 let runs=[], scope="runs", chosen="";
-// The pages about every run at once: no window, no run, the widest range.
-const ALLTIME=["lifetime","heal","model"];
+// The pages, as the server registers them; the ones about every run at once
+// have no window and no run.
+const PAGES=` + pagesJSON() + `;
+const ALLTIME=PAGES.filter(p=>p.allTime).map(p=>p.key);
 
 // A verdict is a word this pipeline chose, and there are several for each of the
 // two outcomes. Colour is about which of the two it was. ABANDONED is neither:
@@ -610,7 +613,7 @@ function rowsOf(payload,by){
   if(lo<=hi) rows=rows.filter(r=>{ if(LIMIT.test(String(r[1]))) return true; const t=secs(+r[0]); return t>=lo&&t<=hi; });
   return {cols:cols||[],rows};
 }
-const LIMIT=/^(limits|timeouts)\.|limit|cap|ceiling/i;
+const LIMIT=/^(limits|timeouts|loops)\.|limit|cap|ceiling/i;
 // A verdict wears its own colour, whatever position it holds in the legend:
 // green is green, a refusal is red, an abandoned run is grey, a run with no
 // verdict yet is the warm colour a running tile has. Everything else takes
@@ -1049,7 +1052,11 @@ function drawTimeline(box,payload){
     .filter(x=>x.end>x.start&&x.end>=from&&x.start<=to);
   box.classList.toggle("drawn", spans.length>0);
   if(!spans.length){box.innerHTML='<div class=empty>nothing in this window</div>';return}
-  const rows=[...new Set(spans.map(x=>x.row))];
+  const every=[...new Set(spans.map(x=>x.row))];
+  // Past twelve rows the chart is a page of its own; the rest fold behind a
+  // line that says how many, and one click opens them.
+  const FOLD=12, folded=every.length>FOLD&&!box._unfolded;
+  const rows=folded?every.slice(0,FOLD):every;
   const labels=[...new Set(spans.map(x=>x.label))];
   box.dataset.metrics=rows.concat(labels).join(" ");
   const lo=Math.max(from, Math.min(...spans.map(x=>x.start)));
@@ -1073,8 +1080,10 @@ function drawTimeline(box,payload){
   const keys=labels.length>1||labels[0]!==rows[0] ? '<div class=keys>'+labels.map(l=>'<i style="background:'+colour(l)+'"></i>'+esc(l)).join("")+
     ' <span style="margin-left:14px">'+zone.replace(/_/g," ")+'</span></div>' : '<div class=keys>'+zone.replace(/_/g," ")+'</div>';
   const rowName=payload.panel&&/session/i.test(payload.panel.title)?"agent":/branch/i.test((payload.panel||{}).title)?"run":"phase";
-  box.innerHTML='<div class=tl><div class=r><span class=n><b>'+rowName+'</b></span><span></span></div>'+html+
+  const fold=folded?'<div class=r><span class=n></span><span><button class=unfold>'+(every.length-FOLD)+' more rows</button></span></div>':'';
+  box.innerHTML='<div class=tl><div class=r><span class=n><b>'+rowName+'</b></span><span></span></div>'+html+fold+
     '<div class=ax><span></span><div>'+ticks+'</div></div><div class=ax><span></span><div class=xn>time of day ('+zone.replace(/_/g," ")+')</div></div>'+keys+'</div>';
+  const b=box.querySelector(".unfold"); if(b) b.onclick=()=>{box._unfolded=true; drawTimeline(box,payload)};
 }
 
 // A share, not a history. The query is the same one the line chart reads —
@@ -1495,7 +1504,7 @@ async function render(){
   const parts=location.pathname.split("/").filter(Boolean);   // ammit, view, id?
   const view=parts[1]||"runs";
   chosen = view==="runs" && parts[2] ? parts[2] : "";
-  scope  = ["window","lifetime","heal","model"].includes(view) ? view : "runs";
+  scope  = PAGES.some(p=>p.key===view) ? view : "runs";
   document.querySelectorAll(".tab").forEach(x=>
     x.classList.toggle("on", !chosen && x.dataset.scope===scope));
   await boot();

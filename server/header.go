@@ -53,12 +53,7 @@ func headerHTML(active string) string {
   </span>
 
   <nav id=tabs>` +
-		tab("/ammit/limits", "Limits", "limits") +
-		tab("/ammit/runs", "Runs", "runs") +
-		tab("/ammit/window", "A window", "window") +
-		tab("/ammit/lifetime", "All time", "lifetime") +
-		tab("/ammit/heal", "Heal", "heal") +
-		tab("/ammit/model", "Model", "model") + `
+		tab("/ammit/limits", "Limits", "limits") + pageTabs(tab) + `
   </nav>
 </header>`
 }
@@ -114,3 +109,12 @@ header{position:sticky;top:0;z-index:30;padding:0 24px;height:81px;
 `
 
 var _ = strings.TrimSpace
+
+// pageTabs is one tab per page in the registry, in its order.
+func pageTabs(tab func(path, label, key string) string) string {
+	out := ""
+	for _, p := range pages {
+		out += tab(p.Path, p.Tab, p.Key)
+	}
+	return out
+}
