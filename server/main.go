@@ -472,7 +472,9 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		path := fmt.Sprintf("%s/%s-%d", dir, safeName(in.Kind), time.Now().Unix())
+		// Nanoseconds, not seconds: two branches of a fan-out end in the same
+		// second and the second one used to overwrite the first one's file.
+		path := fmt.Sprintf("%s/%s-%d", dir, safeName(in.Kind), time.Now().UnixNano())
 		if err := os.WriteFile(path, []byte(in.Body), 0o644); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
