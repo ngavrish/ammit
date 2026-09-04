@@ -1,0 +1,39 @@
+# ammit is the watchdog. A break here is not caught by a run failing - it is
+# caught by runs NOT being caught, which is the failure that hides.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [server, clients/go]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+        working-directory: ${{ matrix.module }}
+      - run: go build ./...
+        working-directory: ${{ matrix.module }}
+      - run: go vet ./...
+        working-directory: ${{ matrix.module }}
+      - run: go test ./...
+        working-directory: ${{ matrix.module }}
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.16.6
+      - run: ruff check src tools

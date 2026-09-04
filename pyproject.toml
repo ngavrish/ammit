@@ -15,3 +15,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ammit"]
+
+# Same families as the pipeline repo, for the same reason: a rule earns its
+# place here by naming a way this service can stop answering. ammit going
+# quiet is worse than ammit being wrong - a watchdog nobody hears is a
+# watchdog that is not there.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["ASYNC", "BLE", "B", "S110", "S112", "PLR2004", "F", "E9"]
+ignore = ["TRY003"]

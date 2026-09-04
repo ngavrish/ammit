@@ -34,6 +34,9 @@ __all__ = ["Run", "Phase", "Session", "send", "endpoint"]
 
 _ENDPOINT = os.getenv("AMMIT_URL", "http://ammit:8099")
 _TIMEOUT = float(os.getenv("AMMIT_TIMEOUT", "3"))
+# How often a client that cannot reach ammit says so. Every failure would
+# drown the run's own output; never would hide that nothing is being recorded.
+_COMPLAIN_EVERY_S = 60
 _ENABLED = os.getenv("AMMIT_DISABLE", "0") != "1"
 _last_complaint = [0.0]
 
@@ -67,7 +70,7 @@ def _post(body: bytes) -> None:
         urllib.request.urlopen(req, timeout=_TIMEOUT).read()
     except (urllib.error.URLError, OSError, ValueError) as exc:
         now = time.time()
-        if now - _last_complaint[0] > 60:
+        if now - _last_complaint[0] > _COMPLAIN_EVERY_S:
             _last_complaint[0] = now
             print(f"ammit: not reporting ({exc})", flush=True)
 
