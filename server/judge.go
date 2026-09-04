@@ -554,12 +554,24 @@ func weigh(conf Config) {
 			judge(kind, r.run, item, "timeouts."+kind, against, age, action,
 				act(action, conf, ctx))
 		}
-		if limit, ok := conf.num("timeouts", "phase"); ok {
+		// One number for every phase is one number for phases that are not
+		// alike. Planning ran 4 to 20 minutes across six runs and then took
+		// 37 on the seventh, well inside a 90-minute ceiling that was set for
+		// the implement phase and says nothing about this one. A limit that
+		// no realistic failure can reach is not a limit.
+		//
+		// So `timeouts.phase_<name>` overrides `timeouts.phase` for that
+		// phase, and the judgement says which one it was measured against.
+		if base, ok := conf.num("timeouts", "phase"); ok {
 			for phase, age := range openPhases(r.run) {
-				if age > limit && !recently("timeouts.phase", phase, limit) {
+				limit, named := base, "timeouts.phase"
+				if own, has := conf.num("timeouts", "phase_"+phase); has && own > 0 {
+					limit, named = own, "timeouts.phase_"+phase
+				}
+				if age > limit && !recently(named, phase, limit) {
 					action := conf.str("actions", "on_phase_timeout", "warn")
 					ctx["phase"] = phase
-					judge("phase", r.run, phase, "timeouts.phase", limit, age, action,
+					judge("phase", r.run, phase, named, limit, age, action,
 						act(action, conf, ctx))
 				}
 			}
