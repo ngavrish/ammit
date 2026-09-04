@@ -1,0 +1,8 @@
+{
+ "contextcheck": 2,
+ "errcheck": 19,
+ "gosec": 14,
+ "noctx": 10,
+ "rowserrcheck": 1,
+ "sqlclosecheck": 1
+}

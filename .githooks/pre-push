@@ -21,6 +21,10 @@ for mod in server clients/go; do
   ) || fail=1
 done
 
+# golangci-lint against its baseline: go vet has no rule for db.Query without
+# a context, which is what held this service's global mutex for forty minutes.
+python3 "$root/tools/golint.py" || fail=1
+
 if command -v ruff >/dev/null 2>&1; then
   ruff check "$root/src" "$root/tools" || fail=1
 fi
