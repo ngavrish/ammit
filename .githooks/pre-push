@@ -1,0 +1,32 @@
+#!/bin/sh
+# Nothing leaves this machine that does not build, vet and pass its tests.
+#
+# ammit is the watchdog: a broken build here is not caught by a run failing,
+# it is caught by runs NOT being caught. LINT_SKIP=1 git push says so on
+# purpose.
+[ -n "$LINT_SKIP" ] && { echo "pre-push: skipped by LINT_SKIP" >&2; exit 0; }
+
+root=$(git rev-parse --show-toplevel)
+fail=0
+
+for mod in server clients/go; do
+  [ -f "$root/$mod/go.mod" ] || continue
+  ( cd "$root/$mod" || exit 1
+    if ! gofmt -l . | grep -q . ; then :; else
+      echo "pre-push: gofmt would change:" >&2; gofmt -l . >&2; exit 1
+    fi
+    go build ./... || exit 1
+    go vet ./... || exit 1
+    go test ./... || exit 1
+  ) || fail=1
+done
+
+if command -v ruff >/dev/null 2>&1; then
+  ruff check "$root/src" "$root/tools" || fail=1
+fi
+
+[ "$fail" -eq 0 ] || {
+  echo "" >&2
+  echo "pre-push REFUSED. Fix it, or LINT_SKIP=1 git push on purpose." >&2
+  exit 1
+}
