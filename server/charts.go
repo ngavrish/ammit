@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -239,12 +240,27 @@ func scope(sql, run string) string {
 	return "WITH " + strings.Join(parts, ",\n     ") + "\n" + sql
 }
 
+// The longest any one question may hold this service.
+//
+// mu below is taken for the whole of db.Query, and SQLite computes an
+// aggregate or a join before it returns its first row - so a single expensive
+// query holds the lock the judge loop, the event ingest and every other panel
+// need. One did: a self-join on json_extract(payload, '$.request'), a join on
+// a computed value that SQLite cannot index, pinned this service at 100% CPU
+// for forty minutes with a twelve-branch fan-out running unwatched behind it.
+// Closing the HTTP connection did nothing; nothing was cancelling the query.
+//
+// A question that cannot be answered in a minute is a question asked wrong.
+const _QUERY_DEADLINE = 60 * time.Second
+
 // rows runs one query and returns its columns and rows, whatever shape it has.
 // Reporting the error as data rather than as a status: a panel that cannot run
 // says so in its own box, and the other forty-two still draw.
 func rows(sql string) map[string]any {
+	ctx, cancel := context.WithTimeout(context.Background(), _QUERY_DEADLINE)
+	defer cancel()
 	mu.Lock()
-	rs, err := db.Query(sql)
+	rs, err := db.QueryContext(ctx, sql)
 	mu.Unlock()
 	if err != nil {
 		return map[string]any{"error": err.Error()}
