@@ -30,10 +30,15 @@ ROOT = os.path.dirname(HERE)
 MODULE = os.path.join(ROOT, "server")
 BASELINE = os.path.join("deploy", "go-lint-baseline.json")
 _RUN_TIMEOUT_S = 600
+_PINNED = "2.6.2"
 
 
 def _counts() -> tuple:
     """Findings per linter, or None with a reason when the tool is absent."""
+    # The version matters: a baseline taken with one release and checked with
+    # another differs by rules that came and went, and the ratchet then reds on
+    # a change nobody made. This baseline was taken with 2.6.2, which is what
+    # CI installs; a mismatch says so rather than counting it as debt.
     exe = shutil.which("golangci-lint") or os.path.expanduser(
         "~/go/bin/golangci-lint")
     if not os.path.exists(exe):
@@ -52,6 +57,11 @@ def _counts() -> tuple:
             data = json.load(fh)
     except (OSError, ValueError) as exc:
         return None, f"golangci-lint wrote no report: {exc}"
+    ver = subprocess.run([exe, "version"], capture_output=True, text=True,
+                         timeout=60).stdout
+    if _PINNED not in ver:
+        print(f"  note    golangci-lint is not {_PINNED}; the baseline was "
+              f"taken with that version and the counts will not line up")
     counts: dict = {}
     for issue in data.get("Issues") or []:
         name = issue.get("FromLinter") or "?"

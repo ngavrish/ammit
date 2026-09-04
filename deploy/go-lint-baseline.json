@@ -1,8 +1,9 @@
 {
  "contextcheck": 2,
  "errcheck": 19,
- "gosec": 14,
+ "gosec": 13,
  "noctx": 10,
- "rowserrcheck": 1,
+ "prealloc": 2,
+ "rowserrcheck": 2,
  "sqlclosecheck": 1
 }
