@@ -9,8 +9,8 @@ function humanize(text){
 }
 // Twenty, told apart: seventeen containers on a palette of ten put the two
 // that mattered in the same orange.
-const COLORS=["#CD7F32","#0EA5E9","#22C55E","#EF4444","#8B5CF6","#0891B2","#CA8A04","#2563EB","#DB2777","#059669",
-  "#F97316","#6366F1","#14B8A6","#A16207","#7C3AED","#DC2626","#0284C7","#65A30D","#BE185D","#4B5563"];
+const COLORS=["#CD7F32","#38BDF8","#34D399","#F87171","#A78BFA","#22D3EE","#FBBF24","#60A5FA","#F472B6","#2DD4BF",
+  "#FB923C","#818CF8","#4ADE80","#E5B25D","#C084FC","#FB7185","#0EA5E9","#A3E635","#F0ABFC","#94A3B8"];
 const main=document.getElementById("main");
 let panels=[], spec={};
 let local=null;
@@ -301,7 +301,7 @@ function colourFor(name,i){
   if(/RED|FAIL|BLOCK|ERROR|REFUSE/.test(v)) return "#EF4444";
   if(/STOP|CUT|KILL|TIMEOUT/.test(v)) return "#FB923C";   // ammit's hand, not the work's verdict
   if(/NONE|RUNNING/.test(v)) return "#0EA5E9";
-  if(/UNKNOWN|\?/.test(v)) return "#4A5568";
+  if(/UNKNOWN|\?/.test(v)) return "#A0AEC0";
   return COLORS[i%COLORS.length];
 }
 const FONT='"Plus Jakarta Sans","Inter",system-ui,sans-serif';
@@ -428,12 +428,12 @@ function drawSeries(box,payload,kind){
       if(alongX) u.setScale("x",{min:Z.x[0],max:Z.x[1]});
       if(alongY) u.setScale("y",{min:Z.y[0],max:Z.y[1]});
     }]},
-    axes:[{stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},size:44,
+    axes:[{stroke:"#A0AEC0",grid:{stroke:"rgba(247,250,252,.06)"},ticks:{stroke:"rgba(247,250,252,.12)"},size:44,
            values:tzFmt(),
            // Which clock the times are read in, said on the axis itself rather
            // than only in a dropdown at the top of the page.
            label:"time ("+zone.replace(/_/g," ")+")",labelSize:26,labelFont:LABEL_FONT,labelGap:10},
-          {stroke:"#4A5568",grid:{stroke:"#F1F3F6"},ticks:{stroke:"#E5E7EB"},
+          {stroke:"#A0AEC0",grid:{stroke:"rgba(247,250,252,.06)"},ticks:{stroke:"rgba(247,250,252,.12)"},
            size:axisWidth,
            ...(incrsOf(U)?{incrs:incrsOf(U)}:{}),
            values:(u,vs)=>vs.map(v=>v==null?"":U.tick(v)),
@@ -529,8 +529,8 @@ function drawBars(box,payload){
   const y=v=>T+ph-(v/ymax)*ph;
   const slot=pw/gs.length, per=metrics.length, bw=Math.max(2,Math.min(36,(slot*0.72)/per));
   let g='';
-  for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"#E5E7EB":"#A0AEC0")+'"/>'+
-    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#4A5568">'+esc(U.tick(v))+'</text>';
+  for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"rgba(247,250,252,.07)":"rgba(247,250,252,.3)")+'"/>'+
+    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#A0AEC0">'+esc(U.tick(v))+'</text>';
   const every=Math.ceil(gs.length/Math.max(4,Math.floor(pw/(byName?60:92))));
   const showVal=gs.length*per<=24;
   const share=v=>limit?Math.round(100*v/limit.value)+"%":"";
@@ -541,11 +541,11 @@ function drawBars(box,payload){
       const tip=gr.title+(per>1?" - "+x.name:"")+": "+U.val(x.value)+(limit?" ("+share(x.value)+" of the "+limitTitle(limit.name).toLowerCase()+")":"");
       return '<g data-tip="'+esc(tip)+'"><rect x="'+bx.toFixed(1)+'" y="'+y(x.value).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0.5,y(0)-y(x.value)).toFixed(1)+
         '" fill="'+(hot?"#EF4444":colour(x.name))+'" rx="1.5"/>'+
-        (showVal?'<text x="'+(bx+bw/2).toFixed(1)+'" y="'+(y(x.value)-4).toFixed(1)+'" text-anchor="middle" font-size="10.5" fill="#0F1520">'+esc(U.val(x.value))+(limit?'<tspan fill="#4A5568"> '+share(x.value)+'</tspan>':'')+'</text>':'')+'</g>';
+        (showVal?'<text x="'+(bx+bw/2).toFixed(1)+'" y="'+(y(x.value)-4).toFixed(1)+'" text-anchor="middle" font-size="10.5" fill="#F7FAFC">'+esc(U.val(x.value))+(limit?'<tspan fill="#A0AEC0"> '+share(x.value)+'</tspan>':'')+'</text>':'')+'</g>';
     }).join("");
     const lab=i%every===0 ? (byName
-      ? '<text x="'+(L+slot*(i+0.5)).toFixed(1)+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#4A5568">'+esc(gr.title)+'</text>'
-      : '<text transform="translate('+(L+slot*(i+0.5)).toFixed(1)+','+(H-B+12)+') rotate(35)" font-size="10.5" fill="#4A5568">'+esc(gr.label!=null&&seen[gr.label]===1?gr.title:(gr.label||"")+" "+short.format(new Date(gr.t*1000)))+'</text>') : '';
+      ? '<text x="'+(L+slot*(i+0.5)).toFixed(1)+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#A0AEC0">'+esc(gr.title)+'</text>'
+      : '<text transform="translate('+(L+slot*(i+0.5)).toFixed(1)+','+(H-B+12)+') rotate(35)" font-size="10.5" fill="#A0AEC0">'+esc(gr.label!=null&&seen[gr.label]===1?gr.title:(gr.label||"")+" "+short.format(new Date(gr.t*1000)))+'</text>') : '';
     return bars+lab;
   }).join("");
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
@@ -575,8 +575,8 @@ function drawBars(box,payload){
 // along the bottom. Every chart says what its axes are; none is left to be
 // guessed from the title.
 function axisNames(W,H,L,B,yName,xName){
-  return '<text transform="translate(13,'+((H-B)/2+8).toFixed(0)+') rotate(-90)" text-anchor="middle" font-size="12" font-weight="600" fill="#0F1520">'+yName+'</text>'+
-    '<text x="'+(L+(W-L)/2).toFixed(0)+'" y="'+(H-4)+'" text-anchor="middle" font-size="12" font-weight="600" fill="#0F1520">'+xName+'</text>';
+  return '<text transform="translate(13,'+((H-B)/2+8).toFixed(0)+') rotate(-90)" text-anchor="middle" font-size="12" font-weight="600" fill="#F7FAFC">'+yName+'</text>'+
+    '<text x="'+(L+(W-L)/2).toFixed(0)+'" y="'+(H-4)+'" text-anchor="middle" font-size="12" font-weight="600" fill="#F7FAFC">'+xName+'</text>';
 }
 
 // The number under the pointer, at once. A browser's own tooltip on an SVG
@@ -662,8 +662,8 @@ function drawCandles(box,payload){
   const esc=t=>String(t).replace(/[<&"]/g,x=>x==="<"?"&lt;":x==="&"?"&amp;":"&quot;");
   let g='';
   const ticks=log?gridAt:(()=>{const o=[]; for(let v=0;v<=ymax+1e-9;v+=nice) o.push(v); return o})();
-  for(const v of ticks) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"#E5E7EB":"#A0AEC0")+'"/>'+
-    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#4A5568">'+esc(U.tick(v))+'</text>';
+  for(const v of ticks) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"rgba(247,250,252,.07)":"rgba(247,250,252,.3)")+'"/>'+
+    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#A0AEC0">'+esc(U.tick(v))+'</text>';
   const every=Math.ceil(stat.length/12);
   // A bucket shorter than a day is named by its clock, a day by its date.
   const clock=new Intl.DateTimeFormat("en-GB",{timeZone:zone,hour:"2-digit",minute:"2-digit",hour12:false});
@@ -672,10 +672,10 @@ function drawCandles(box,payload){
   const c=stat.map((s,i)=>{const x=L+slot*(i+0.5);
     const tip=nameOf(s)+': '+s.n+' '+noun+(s.n===1?'':'s')+', min '+U.val(s.min)+', average '+U.val(s.avg)+', max '+U.val(s.max);
     return '<g data-tip="'+esc(tip)+'">'+
-      '<line x1="'+x+'" x2="'+x+'" y1="'+y(s.max)+'" y2="'+y(s.min)+'" stroke="#4A5568" stroke-width="1.5"/>'+
+      '<line x1="'+x+'" x2="'+x+'" y1="'+y(s.max)+'" y2="'+y(s.min)+'" stroke="#A0AEC0" stroke-width="1.5"/>'+
       (s.n>1?'<rect x="'+(x-bw/2)+'" y="'+y(s.q3)+'" width="'+bw+'" height="'+Math.max(1,y(s.q1)-y(s.q3))+'" fill="#CD7F32" fill-opacity=".55" stroke="#CD7F32" rx="2"/>':'')+
-      '<line x1="'+(x-bw/2-3)+'" x2="'+(x+bw/2+3)+'" y1="'+y(s.avg)+'" y2="'+y(s.avg)+'" stroke="#001F3F" stroke-width="2"/>'+
-      (i%every===0?'<text x="'+x+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#4A5568">'+esc(nameOf(s))+'</text>':'')+
+      '<line x1="'+(x-bw/2-3)+'" x2="'+(x+bw/2+3)+'" y1="'+y(s.avg)+'" y2="'+y(s.avg)+'" stroke="#F7FAFC" stroke-width="2"/>'+
+      (i%every===0?'<text x="'+x+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#A0AEC0">'+esc(nameOf(s))+'</text>':'')+
       '</g>'});
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
     '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+U.val(limit.value))+'</text>':'';
@@ -713,7 +713,16 @@ function drawStats(box,payload){
   };
   box.dataset.metrics=rows.map(r=>r[mi]).join(" ");
   box.innerHTML='<div class=stats>'+rows.map(r=>'<div class=stat><b>'+esc(show(r[vi],ui<0?"":r[ui]))+'</b><span>'+esc(r[mi])+'</span></div>').join("")+'</div>';
-  const panel=box.closest(".panel"); if(panel&&box.closest(".grid")) panel.style.gridColumn="span 4";
+  // The numbers count up to where they are: a tile that appears at its
+  // value reads as static; one that arrives there reads as measured.
+  const tiles=[...box.querySelectorAll(".stat b")];
+  if(!matchMedia("(prefers-reduced-motion: reduce)").matches) rows.forEach((r,i)=>{
+    const u=ui<0?"":r[ui]; if(u==="moment"||isNaN(+r[vi])) return;
+    const el=tiles[i], target=+r[vi], t0=performance.now(), T=700;
+    const step=now=>{const k=Math.min(1,(now-t0)/T), e=1-Math.pow(1-k,3);
+      el.textContent=show(target*e,u); if(k<1) requestAnimationFrame(step);};
+    requestAnimationFrame(step);
+  });
 }
 
 // Spans on a clock: when each phase or session began and ended, one row per
@@ -797,18 +806,18 @@ function drawPie(box,payload){
       ctx.beginPath(); ctx.moveTo(cx+ox+hole*Math.cos(a),cy+oy+hole*Math.sin(a));
       ctx.arc(cx+ox,cy+oy,r,a,b); ctx.arc(cx+ox,cy+oy,hole,b,a,true); ctx.closePath();
       ctx.fillStyle=COLORS[i%COLORS.length]; ctx.globalAlpha=hot>=0&&i!==hot?0.55:1; ctx.fill(); ctx.globalAlpha=1;
-      ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();
+      ctx.strokeStyle="#001F3F"; ctx.lineWidth=2; ctx.stroke();
       arcs.push({i,a,b}); a=b;
     });
     ctx.textAlign="center"; ctx.textBaseline="middle";
     if(hot>=0&&!off.has(hot)){
       const x=parts[hot];
       ctx.fillStyle=COLORS[hot%COLORS.length]; ctx.font='700 13px '+FONT; ctx.fillText(x.name,cx,cy-20);
-      ctx.fillStyle="#0F1520"; ctx.font='700 18px '+FONT; ctx.fillText(U.val(x.value),cx,cy+2);
-      ctx.fillStyle="#4A5568"; ctx.font='500 11px '+FONT; ctx.fillText((100*x.value/total).toFixed(1)+"%",cx,cy+22);
+      ctx.fillStyle="#F7FAFC"; ctx.font='700 18px '+FONT; ctx.fillText(U.val(x.value),cx,cy+2);
+      ctx.fillStyle="#A0AEC0"; ctx.font='500 11px '+FONT; ctx.fillText((100*x.value/total).toFixed(1)+"%",cx,cy+22);
     }else{
-      ctx.fillStyle="#0F1520"; ctx.font='700 18px '+FONT; ctx.fillText(U.val(total),cx,cy-8);
-      ctx.fillStyle="#4A5568"; ctx.font='500 11px '+FONT; ctx.fillText(off.size?"of what is on":"in all",cx,cy+12);
+      ctx.fillStyle="#F7FAFC"; ctx.font='700 18px '+FONT; ctx.fillText(U.val(total),cx,cy-8);
+      ctx.fillStyle="#A0AEC0"; ctx.font='500 11px '+FONT; ctx.fillText(off.size?"of what is on":"in all",cx,cy+12);
     }
     box.querySelectorAll(".slices tr").forEach((tr,i)=>{
       tr.classList.toggle("off",off.has(i)); tr.classList.toggle("hot",i===hot);
@@ -865,10 +874,10 @@ function drawTable(box,payload){
   const th=cols.map(c=>'<th>'+esc(c)+'</th>').join("");
   const tr=s.rows.slice(0,300).map(r=>'<tr>'+r.map((v,i)=>cell(cols[i],v)).join("")+'</tr>').join("");
   box.innerHTML='<table style="width:max-content"><thead><tr>'+th+'</tr></thead><tbody>'+tr+'</tbody></table>';
-  const table=box.firstChild, grid=box.closest(".grid");
+  const table=box.firstChild, grid=box.closest(".grid,.cards");
   if(grid){
-    const unit=grid.getBoundingClientRect().width/6;
-    const span=Math.min(6,Math.max(2,Math.ceil((table.offsetWidth+8)/unit)));
+    const unit=grid.getBoundingClientRect().width/12;
+    const span=Math.min(12,Math.max(4,Math.ceil((table.offsetWidth+8)/unit)));
     box.closest(".panel").style.gridColumn="span "+span;
   }
   table.style.width="100%";
@@ -895,6 +904,7 @@ async function load(){
       box._draw(box,payload,p.kind);
       drawn++;
     }catch(e){ box.innerHTML='<div class=err>'+e+'</div>' }
+    box.classList.remove("loading");
   }));
   const withData=[...document.querySelectorAll(".plot")]
     .filter(b=>b.classList.contains("drawn")||b.querySelector("table")).length;
@@ -930,14 +940,14 @@ function drawTiles(){
   main.innerHTML='<div class=tiles>'+runs.map(r=>
     '<div class="tile '+shade(r)+'" data-run="'+r.run+'">'+
       '<b>'+(r.name||r.run)+'</b>'+
-      '<span class=verdict>'+(r.finished?(r.verdict||"no verdict"):"running")+'</span>'+
+      '<span class=verdict>'+(r.finished?(r.verdict||"no verdict"):'<i class=dot></i>running')+'</span>'+
       '<dl>'+
         '<dt>started</dt><dd>'+when(r.started)+'</dd>'+
         '<dt>took</dt><dd>'+(r.finished?ago(r.finished-r.started):ago(Date.now()/1000-r.started))+'</dd>'+
         '<dt>turns</dt><dd>'+(r.turns||0)+'</dd>'+
         '<dt>cost</dt><dd>$'+(r.usd||0).toFixed(2)+'</dd>'+
       '</dl></div>').join("")+'</div>';
-  main.querySelectorAll(".tile").forEach(t=>t.onclick=()=>go("/ammit/runs/"+t.dataset.run));
+  main.querySelectorAll(".tile").forEach((t,i)=>{t.style.setProperty("--i",Math.min(i,20));t.onclick=()=>go("/ammit/runs/"+t.dataset.run)});
 }
 
 // Panels with nothing in them go to the bottom, together, under a line. Left
@@ -1016,22 +1026,33 @@ async function boot(){
   document.getElementById("seek").style.display=picking?"none":"flex";
   document.getElementById("range").style.display=scope==="window"?"flex":"none";
   if(scope==="window") await windowForNewest();
-  if(picking){ await fillRuns(); drawTiles(); return; }
-  if(scope==="runs") await fillRuns();
+  if(picking) await fillRuns();
+  else if(scope==="runs") await fillRuns();
+  // The strip says which page this is: the tab's word, or the run's name.
+  {
+    const page=PAGES.find(p=>p.key===scope)||{};
+    const r0=runs.find(x=>x.run===chosen);
+    document.getElementById("pagename").textContent=chosen?(r0&&r0.name||chosen):(page.tab||"Charts");
+    document.getElementById("pagesub").textContent=chosen?"one run, "+(r0?when(r0.started):""):
+      ({runs:"every run there has been",window:"one window of time",lifetime:"every run at once",
+        heal:"the heal loop",model:"the model"})[scope]||"";
+  }
+  if(picking){ drawTiles(); return; }
   spec=await (await fetch("/charts/panels"+(ALLTIME.includes(scope)?"?scope="+scope:""))).json(); panels=spec.panels;
   const r=runs.find(x=>x.run===chosen);
-  const head=r?'<div class=back id=back>← every run</div><div class=row>'+
+  const head=r?'<div class=back id=back>every run</div><div class="row head">'+
     (r.name||r.run)+" — "+when(r.started)+" — "+(r.verdict||"running")+
     " — "+(r.turns||0)+" turns — $"+(r.usd||0).toFixed(2)+'</div>':"";
   await fetchLocal();
   const section=(i,colour)=>{const p=panels[i];
-    return '<section class=panel style="--g:'+colour+'" title="'+p.title.replace(/"/g,"&quot;")+'"><h2>'+(p.label||humanize(p.title))+
+    const wide=/^(table|timeline|bars|stats)$/.test(p.kind)?" wide":"";
+    return '<section class="panel'+wide+'" style="--g:'+colour+'" title="'+p.title.replace(/"/g,"&quot;")+'"><h2>'+(p.label||humanize(p.title))+
       ((p.by||[]).length>1?'<span class=by>by '+p.by.map((b,k)=>'<button data-i='+i+' data-by="'+b+'" class="'+(k?'':'on')+'">'+b+'</button>').join("")+'</span>':'')+
       '<span class=pact data-i='+i+' data-act=hide>hide</span>'+
       (p.custom?'<span class="pact danger" data-i='+i+' data-act=del>delete</span>':'')+
       '</h2>'+
       (p.about?'<p>'+p.about.replace(/[<&]/g,x=>x==="<"?"&lt;":"&amp;")+'</p>':'')+
-      '<div class=plot id=plot-'+i+'></div></section>'};
+      '<div class="plot loading" id=plot-'+i+'></div></section>'};
   // What the page is opened for goes first, above every group.
   const tops=panels.map((p,i)=>p.top&&!p.hidden&&p.kind!=="row"?i:-1).filter(i=>i>=0);
   main.innerHTML=head+'<div class=how>drag along the time axis or the value axis to zoom that axis, '+
@@ -1041,7 +1062,8 @@ async function boot(){
       '<small>'+g.items.length+'</small></div>'+
       (g.blurb?'<p class=blurb style="--g:'+g.colour+'">'+g.blurb+'</p>':'')+
       // Tables share the width: a three-column table does not need a screen.
-      (g.key==="table"?'<div class=grid>':'')+g.items.map(i=>section(i,g.colour)).join("")+(g.key==="table"?'</div>':'')).join("");
+      '<div class=cards>'+g.items.map(i=>section(i,g.colour)).join("")+'</div>').join("");
+  main.querySelectorAll(".panel").forEach((sec,i)=>sec.style.setProperty("--i",Math.min(i,14)));
   const away=panels.filter(p=>p.kind!=="row"&&p.hidden);
   if(away.length)
     main.innerHTML+='<div class=row>Hidden ('+away.length+')</div><div class=chips>'+
@@ -1130,7 +1152,8 @@ addEventListener("resize",()=>{clearTimeout(window._t);window._t=setTimeout(load
 function go(path){
   if(location.pathname === path){ render(); return; }
   history.pushState(null,"",path);
-  render();
+  if(document.startViewTransition) document.startViewTransition(()=>render());
+  else render();
 }
 
 // Grouped by what the value axis measures rather than by what the query is
@@ -1181,8 +1204,7 @@ async function render(){
   const view=parts[1]||"runs";
   chosen = view==="runs" && parts[2] ? parts[2] : "";
   scope  = PAGES.some(p=>p.key===view) ? view : "runs";
-  document.querySelectorAll(".tab").forEach(x=>
-    x.classList.toggle("on", !chosen && x.dataset.scope===scope));
+  shell.mark(scope);   // a run's page is still under Runs
   await boot();
 }
 
