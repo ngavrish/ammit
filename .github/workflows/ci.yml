@@ -27,6 +27,12 @@ jobs:
         working-directory: ${{ matrix.module }}
       - run: go test ./...
         working-directory: ${{ matrix.module }}
+      - name: golangci-lint against the baseline
+        if: matrix.module == 'server'
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2
+          PATH="$(go env GOPATH)/bin:$PATH" python3 tools/golint.py --require
+        working-directory: .
 
   python:
     runs-on: ubuntu-latest

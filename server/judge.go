@@ -236,7 +236,22 @@ func finish(run, verdict, summary string) {
 	closeSpansOf(run, now, "the run ended")
 }
 
+// When this process started. An age measured across our own absence is
+// evidence about us, not about the run.
+//
+// The sleep guard in main.go covers a tick that arrives late; it cannot cover
+// a restart, because a restart resets that clock to now. Run e3d2c550 died to
+// exactly that: this service hung on one expensive query for nineteen minutes,
+// took no heartbeats while it was down, and on coming back read a pulse aged
+// 1163s against a limit of 120 - so its first act was to fire restart_worker
+// at a run that had been alive and fine the whole time, breaking the stream
+// and ending it.
+//
+// Nothing older than our own uptime is ours to judge.
+var _upSince = time.Now()
+
 func weigh(conf Config) {
+	up := time.Since(_upSince).Seconds()
 	for _, r := range openRuns() {
 		age := float64(time.Now().UnixNano())/1e9 - r.started
 		// The fast pulse check, ahead of the slow work-silence one. The runner
@@ -248,7 +263,7 @@ func weigh(conf Config) {
 		// that stopped, and the worker_gone/orphan path below still catches
 		// the run that died before its first beat.
 		if hb, ok := conf.num("timeouts", "heartbeat"); ok && hb > 0 {
-			if pulse := heartbeatAge(r.run); pulse >= 0 && pulse > hb {
+			if pulse := heartbeatAge(r.run); pulse >= 0 && pulse > hb && pulse < up {
 				action := conf.str("actions", "on_heartbeat_gone", "restart_worker")
 				ctx := map[string]string{"run": r.run, "name": r.name,
 					"branch": lastBranch(r.run)}

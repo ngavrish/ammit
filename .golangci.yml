@@ -1,0 +1,43 @@
+# Every linter that names a way this service can hang, corrupt or lie.
+#
+# go vet alone was what we had, and go vet has no rule for the defect that
+# cost run e3d2c550: db.Query without a context, holding the global mutex for
+# forty minutes. noctx below has exactly that rule.
+version: "2"
+
+linters:
+  enable:
+    - noctx          # db.Query / http.NewRequest with no context - the one
+                     # that would have caught the forty-minute lock
+    - contextcheck   # a context dropped between calls
+    - rowserrcheck   # rows.Err() never read: a truncated result reads as short
+    - sqlclosecheck  # rows/stmt left open
+    - bodyclose      # response body left open
+    - errcheck       # an error nobody looked at
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - errorlint      # %v on an error, comparisons that break on wrapping
+    - nilerr         # return nil after checking err != nil
+    - durationcheck  # a duration multiplied by a duration
+    - makezero       # append to a make([]T, n) slice
+    - copyloopvar
+    - gosec
+    - misspell
+    - unconvert
+    - wastedassign
+    - prealloc
+
+  settings:
+    gosec:
+      excludes:
+        - G104  # errcheck covers it, and better
+    errcheck:
+      check-type-assertions: true
+
+  exclusions:
+    rules:
+      # A test may ignore what production must not.
+      - path: _test\.go
+        linters: [errcheck, gosec, noctx]
