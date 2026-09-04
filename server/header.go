@@ -57,6 +57,7 @@ func headerHTML(active string) string {
   </nav>
 
   <div class=side-foot>
+    <!-- Two left arrows sat side by side here - the way back and the fold - and read as one control twice. The way back keeps its glyph only while the sidebar is folded and its name is hidden. -->
     <a class=home href="https://dokimos.chiron.systems" title="back to dokimos"><i class=ico>` + icon("back") + `</i><span>dokimos</span></a>
     <button id=fold title="fold the sidebar" aria-label="fold the sidebar"><i class=ico>` + icon("fold") + `</i></button>
   </div>
@@ -151,7 +152,8 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   color:var(--mute);text-decoration:none;white-space:nowrap;overflow:hidden;
   font:500 12.5px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;
   transition:color var(--quick),background var(--quick)}
-.home .ico{flex:none;width:20px;height:20px;display:grid;place-items:center}
+.home .ico{flex:none;width:20px;height:20px;display:none;place-items:center}
+.folded .home .ico{display:grid}
 .home .ico svg{width:18px;height:18px;display:block;transition:transform .25s var(--ease)}
 .home:hover{color:var(--ink);background:var(--hair-soft)}
 .home:hover .ico svg{transform:translateX(-3px)}
