@@ -383,7 +383,33 @@ func main() {
 	}()
 
 	go func() {
+		// Every limit here is measured against the wall clock, and the wall
+		// clock keeps running while this process does not. The host slept for
+		// 15m39s in the middle of run 774914fa - Docker's VM went down with
+		// it, so the runner's event loop, this loop, and the metrics sampler
+		// all stopped together, leaving a hole of exactly that size in the
+		// samples. On the far side of it every age was suddenly enormous: the
+		// heartbeat read 965s against a limit of 120 and earned a
+		// restart_worker, which broke the run's gRPC stream and ended a run
+		// that had been alive and fine the instant before the machine dozed.
+		//
+		// A tick that arrives far later than it was scheduled is not evidence
+		// about any run - it is evidence about this process. Skip the round,
+		// say so, and let the next one judge ages that were measured while
+		// everyone was awake. One free round costs a tick of lateness on a
+		// genuinely dead worker and saves every live run from being shot for
+		// its host's sleep.
+		last := time.Now()
 		for {
+			if late := time.Since(last); late > time.Duration(tick)*3*time.Second {
+				log.Printf("ammit: %.0fs since the last round against a %ds "+
+					"tick - this process was suspended, not the runs; "+
+					"skipping one round of judgement", late.Seconds(), tick)
+				last = time.Now()
+				time.Sleep(time.Duration(tick) * time.Second)
+				continue
+			}
+			last = time.Now()
 			conf := loadConfig(confPath)
 			if len(conf) > 0 {
 				recordLimits(conf)
