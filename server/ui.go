@@ -208,7 +208,8 @@ const HINT = {
   "actions.enforce": "on: limits act. off: limits still judge and write it down, but stop, retry and restart nothing - for a debug run on the subscription. start_run and warn still go.",
   "queue.parallel": "runs allowed to be going at once",
   "timeouts.run": "the whole run, start to verdict",
-  "timeouts.phase": "one phase",
+  "timeouts.phase": "one phase — any phase without a ceiling of its own",
+  "timeouts.phase_planning": "the planning phase alone. It ran 4 to 20 minutes across six runs and 37+ on the seventh, under a 90-minute ceiling meant for implement.",
   "timeouts.session": "one agent session",
   "timeouts.turn": "silence inside one turn — the hang nothing inside the run catches",
   "limits.usd_per_run": "spend on one run",
@@ -260,7 +261,19 @@ function field(section, key, value) {
     "<span class='field'>" + control +
     (secs ? "<span class='as' data-as='" + name + "'>" + human(value) + "</span>" : "") +
     "</span>" +
-    (HINT[name] ? "<span class='hint'>" + esc(HINT[name]) + "</span>" : "") + "</label>";
+    (hintFor(name) ? "<span class='hint'>" + esc(hintFor(name)) + "</span>" : "") + "</label>";
+}
+
+// A per-phase ceiling is named after its phase, so there is no fixed list of
+// them to write hints for: timeouts.phase_planning, timeouts.phase_implementing
+// and whatever the next flow adds all mean the same thing about a different
+// phase. Say that, rather than leaving the field the only one on the page with
+// nothing next to it.
+function hintFor(name) {
+  if (HINT[name]) return HINT[name];
+  const m = /^timeouts\.phase_(.+)$/.exec(name);
+  if (m) return "the " + m[1] + " phase alone, instead of timeouts.phase";
+  return "";
 }
 
 function draw() {
