@@ -35,5 +35,5 @@ func chartsPageHTML(active string) string {
 	script := strings.NewReplacer("/*@LIMIT_TITLES@*/", limitTitlesJS(), "/*@PAGES@*/", pagesJSON(),
 		"/*@TIME_WORDS@*/", timeWordsJS()).Replace(chartsJS)
 	return strings.NewReplacer("/*@STYLES@*/", uplotCSS+styles, "/*@HEADER_HTML@*/", headerHTML(active), "/*@FOOTER_HTML@*/", footerHTML(),
-		"/*@UPLOT@*/", uplotJS, "/*@SCRIPT@*/", script).Replace(chartsHTML)
+		"/*@UPLOT@*/", uplotJS, "/*@SHELL@*/", headerJS, "/*@SCRIPT@*/", script).Replace(chartsHTML)
 }

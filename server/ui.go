@@ -37,62 +37,23 @@ func pageHTML() string {
    machine already has when there is not — a page about a pipeline that is down
    should not itself depend on being online. */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-:root{
-  /* Light, on the same palette the rest of Chiron uses. The names keep their
-     jobs — navy is the ground the eye rests against, ink is what is written on
-     it — so every rule below goes on meaning what it meant. */
-  --navy:#FFFFFF; --deep:#FAFBFC; --deeper:#F1F3F6; --panel:#FFFFFF;
-  --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 13 9'%3E%3Cpath d='M4.8.7 1 4.5l3.8 3.8M1 4.5h11' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  --bronze:#CD7F32; --bronze-dim:#E5E7EB; --bronze-wash:rgba(205,127,50,.09);
-  --ink:#0F1520; --mute:#4A5568; --dim:#A0AEC0;
-  --ok:#22C55E; --bad:#EF4444;
-  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
-  --sans:'Plus Jakarta Sans','Inter',ui-sans-serif,system-ui,-apple-system,sans-serif;
-}
 *{box-sizing:border-box}
 ` + headerCSS + `
-body{margin:0;background:var(--navy);color:var(--ink);font:15px/1.65 var(--sans)}
-/* The bar stays navy on a light page: it is the house style, the same one
-   dokimos.chiron.systems wears, and the mark is drawn for that ground. */
-/* Back to the project this belongs to. A grey word with an arrow read as a
-   footnote; it is the only way out of here, and it is one of two products
-   rather than a link in prose — so it looks like something to press. */
-
-
-
-
-
-.title{display:flex;flex-direction:column;gap:3px;line-height:1}
-.title b{font:800 22px/1 var(--sans);letter-spacing:-.02em;color:#F7FAFC}
-.title em{font:400 11px/1 var(--sans);font-style:normal;color:#A0AEC0}
-/* Three columns, so the mark is centred against the bar rather than against
-   whatever sits beside it: back on the left, the company in the middle, where
-   you are on the right. */
-header{position:relative;display:grid;grid-template-columns:1fr auto 1fr;
-       align-items:center;gap:1rem;padding:0 24px;height:81px;
-       border-bottom:1px solid rgba(255,255,255,.08);background:rgba(0,31,63,.9);
-       backdrop-filter:saturate(140%) blur(10px);
-       --ink:#F7FAFC; --mute:#A0AEC0; --dim:#A0AEC0; color:#F7FAFC}
-/* Centered independent of how wide the title or the tabs are, positioned
-   rather than a flex child that would shove its neighbours. Full strength,
-   not dimmed — the reference never fades this mark, and doing it here read
-   as washed out next to the real thing. */
-
+/* The page's own names, on the shell's palette: deep is a card, deeper is a
+   field, bronze-dim is the line round either. */
+:root{--deep:var(--navy); --panel:var(--navy); --bronze-dim:var(--hair); --ok:var(--good)}
 ` + footerCSS + `
-
-/* Block children, not <b><br><small> — a bare <br> takes the browser's
-   default line-height, which the reference component never touches (it
-   stacks two block elements in a flex column instead), and that inherited
-   leading was inflating this line's box past its own font-size. */
-
-
 
 h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
    color:var(--bronze)}
-header .sub{color:var(--dim);font-size:13px;letter-spacing:.04em}
-main{max-width:82rem;margin:0 auto;padding:2.5rem;display:grid;gap:1.5rem}
-section{background:var(--deep);border:1px solid var(--bronze-dim);border-radius:2px;
-        padding:1.5rem 1.75rem;box-shadow:0 1px 3px rgba(15,21,32,.06)}
+main{max-width:82rem;width:100%;margin:0 auto;padding:1.5rem 1.5rem 3rem;display:grid;gap:1.25rem}
+section{background:var(--deep);border:1px solid var(--bronze-dim);border-radius:12px;
+        padding:1.4rem 1.6rem;box-shadow:0 1px 0 rgba(0,0,0,.25);
+        animation:rise .55s var(--ease) both;
+        transition:border-color .25s var(--ease),box-shadow .25s var(--ease)}
+section:nth-child(2){animation-delay:60ms} section:nth-child(3){animation-delay:120ms} section:nth-child(4){animation-delay:180ms}
+section:hover{border-color:var(--hair-strong)}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 h2{margin:0 0 1.25rem;font:600 .8rem/1 var(--mono);letter-spacing:.16em;
    text-transform:uppercase;color:var(--bronze);display:flex;align-items:baseline;gap:.75rem}
 h2 small{color:var(--dim);font:400 12px/1.4 var(--sans);letter-spacing:.02em;
@@ -107,60 +68,52 @@ label{display:grid;gap:.3rem}
 label .t{font:600 12.5px/1.3 var(--sans);color:var(--ink)}
 label .k{font:500 12px/1.4 var(--mono);color:var(--mute);letter-spacing:.04em}
 .field{display:flex;align-items:center;gap:.6rem}
-input,select,textarea{background:var(--deeper);color:var(--ink);
-      border:1px solid var(--bronze-dim);border-radius:2px;padding:.5rem .7rem;
-      font:400 13px/1.5 var(--mono);width:100%}
-input:focus,select:focus,textarea:focus{outline:0;border-color:var(--bronze);
-      box-shadow:0 0 0 1px var(--bronze-dim)}
-input.changed,select.changed,textarea.changed{border-color:var(--bronze);
-      background:var(--bronze-wash)}
+main input,main select,main textarea{background:var(--deeper);color:var(--ink);
+      border:1px solid var(--bronze-dim);border-radius:6px;padding:.5rem .7rem;
+      font:400 13px/1.5 var(--mono);width:100%;
+      transition:border-color var(--quick),box-shadow var(--quick),background var(--quick)}
+main input:focus,main select:focus,main textarea:focus{outline:0;border-color:var(--bronze);
+      box-shadow:0 0 0 2px var(--bronze-wash)}
+main input.changed,main select.changed,main textarea.changed{border-color:var(--bronze);
+      background:var(--bronze-wash);animation:touched .5s var(--ease)}
+@keyframes touched{0%{box-shadow:0 0 0 0 var(--bronze-glow)}100%{box-shadow:0 0 0 8px rgba(205,127,50,0)}}
 .as{color:var(--dim);font:400 12px/1 var(--mono);white-space:nowrap;min-width:5.5rem}
 textarea{min-height:24rem;line-height:1.7;resize:vertical}
-button{background:transparent;color:var(--bronze);border:1px solid rgba(205,127,50,.4);
-       border-radius:2px;padding:.55rem 1.4rem;cursor:pointer;
+main button{background:transparent;color:var(--bronze);border:1px solid rgba(205,127,50,.45);
+       border-radius:8px;padding:.55rem 1.4rem;cursor:pointer;
        font:700 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
-       transition:background .15s,color .15s}
-button:hover{background:var(--bronze);color:var(--navy)}
-button.ghost{color:var(--mute);border-color:rgba(160,174,192,.22)}
-button.ghost:hover{background:rgba(160,174,192,.12);color:var(--ink)}
-button:disabled{opacity:.4;cursor:default}
+       transition:background var(--quick),color var(--quick),transform var(--quick)}
+main button:hover{background:var(--bronze);color:var(--navy)}
+main button:active{transform:scale(.97)}
+main button.ghost{color:var(--mute);border-color:var(--hair-strong)}
+main button.ghost:hover{background:var(--hair-soft);color:var(--ink)}
+main button:disabled{opacity:.4;cursor:default}
 .row{display:flex;gap:.9rem;align-items:center;flex-wrap:wrap}
 .bar{margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--bronze-dim)}
-.msg{color:var(--mute);font-size:12px;font-family:var(--mono)}
-.msg.bad{color:var(--bad)} .msg.ok{color:var(--ok)}
+.msg{color:var(--mute);font-size:12px;font-family:var(--mono);transition:color var(--quick)}
+.msg.bad{color:var(--bad)} .msg.ok{color:var(--ok);animation:pop .4s var(--ease)}
+@keyframes pop{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
 table{width:100%;border-collapse:collapse;font:400 13px/1.5 var(--mono)}
 th{text-align:left;color:var(--bronze);font-weight:500;font-size:11px;
    letter-spacing:.14em;text-transform:uppercase;padding:.5rem .75rem;
    border-bottom:1px solid var(--bronze-dim)}
-td{padding:.45rem .75rem;border-bottom:1px solid #F1F3F6;
-   vertical-align:top;color:var(--mute)}
-tr:hover td{background:rgba(205,127,50,.04);color:var(--ink)}
+td{padding:.45rem .75rem;border-bottom:1px solid var(--hair);
+   vertical-align:top;color:var(--mute);transition:background var(--quick),color var(--quick)}
+tr:hover td{background:var(--bronze-wash);color:var(--ink)}
 td.n{text-align:right;font-variant-numeric:tabular-nums}
 .tag{padding:.15rem .55rem;border-radius:2px;font-size:11px;letter-spacing:.08em;
      text-transform:uppercase;border:1px solid}
-.live{color:var(--bronze);border-color:var(--bronze-dim);background:var(--bronze-wash)}
+.live{color:var(--bronze);border-color:var(--bronze-glow);background:var(--bronze-wash)}
 .ok{color:var(--ok);border-color:rgba(79,169,124,.35);background:rgba(79,169,124,.08)}
 .bad{color:var(--bad);border-color:rgba(224,108,90,.35);background:rgba(224,108,90,.08)}
-a{color:var(--bronze);text-decoration:none;border-bottom:1px solid var(--bronze-dim);
+main a{color:var(--bronze);text-decoration:none;border-bottom:1px solid var(--bronze-dim);
   font:500 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase}
-a:hover{border-bottom-color:var(--bronze)}
+main a:hover{border-bottom-color:var(--bronze)}
 [hidden]{display:none!important}
-/* One page, two tabs. The charts are not a different product and should not
-   look like one: same bar, same bronze, no second logo to explain. */
-/* The same control as on the charts page. This one had drifted into plain
-   uppercase links, so the two pages disagreed about what a tab looks like while
-   sharing the tabs. */
-/* The menu from dokimos.chiron.systems, measured off the live site rather than
-   guessed: JetBrains Mono at fourteen over twenty in #A0AEC0 with no tracking,
-   and the one you are on at seven hundred — navy on bronze, thirty-six tall,
-   twenty-four either side, square corners. */
-
-
-
-
-#charts{max-width:none;padding:0;display:block;height:calc(100vh - 5.4rem)}
 </style></head><body>
 ` + headerHTML("limits") + `
+<div class=page>
+<div id=bar><div class=title><b>Limits</b><em>the file, as fields; in force on the next tick</em></div></div>
 <main id="scales">
   <section>
     <h2>Limits <small id="where"></small></h2>
@@ -307,7 +260,7 @@ async function load() {
   dirty = {};
   draw();
   document.getElementById("rawtext").value = await fetch("/limits.yml").then(r => r.text());
-  document.getElementById("where").textContent = "in force on the next tick, no restart";
+  document.getElementById("where").textContent = "no restart needed";
   say("");
 }
 
@@ -371,7 +324,10 @@ async function refresh() {
 }
 
 load(); refresh(); setInterval(refresh, 10000);
-</script>` + footerHTML() + `</body></html>`
+</script>` + footerHTML() + `
+</div>
+<script>` + headerJS + `</script>
+</body></html>`
 }
 
 // serveUI wires the page and the routes it edits the config through.
