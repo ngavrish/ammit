@@ -432,6 +432,32 @@ func weigh(conf Config) {
 				}
 			}
 		}
+		// The wait the model never saw: the CLI retrying its own requests
+		// with back-off, on 429 and 529, and saying so in api_retry system
+		// messages. Run 16922dd7 spent most of a twenty-minute fan-out there
+		// and was read as a slow model, then as an API ceiling; a probe put
+		// the ceiling at twenty times what the run got. Seconds per session
+		// inside limits.spin_window; the answer is warn, because a throttled
+		// account is a fact to record and nobody to kill.
+		if limit, ok := conf.num("limits", "retry_wait"); ok && limit > 0 {
+			window, _ := conf.num("limits", "spin_window")
+			if window <= 0 {
+				window = 600
+			}
+			for session, secs := range retryWaits(r.run, window) {
+				if secs <= limit || recently("limits.retry_wait", r.run+session, window) {
+					continue
+				}
+				action := conf.str("actions", "on_retry_wait", "warn")
+				ctx["session"] = session
+				ctx["agent"], ctx["branch"] = session, ""
+				if at := strings.Index(session, "@"); at >= 0 {
+					ctx["branch"] = session[at+1:]
+				}
+				judge("session", r.run, session, "limits.retry_wait", limit, secs,
+					action, act(action, conf, ctx))
+			}
+		}
 		if limit, ok := conf.num("limits", "turns_per_run"); ok && float64(r.turns) > limit {
 			action := conf.str("actions", "on_turns", "warn")
 			action, over := escalated(conf, "limits.turns_per_run", limit,

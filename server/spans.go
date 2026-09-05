@@ -481,3 +481,34 @@ func openSpans(run, startKind, endKind, column string) map[string]float64 {
 	}
 	return live
 }
+
+// retryWaits: seconds each open session of a run has spent, inside the last
+// `window` seconds, waiting behind the CLI's own API retries - request_end
+// rows whose detail names api_retry. The wait is the back-off before the
+// retry the row announces, which the runner records as the time the message
+// took to arrive. Sessions with nothing to say are absent.
+func retryWaits(run string, window float64) map[string]float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	since := float64(time.Now().UnixNano())/1e9 - window
+	rows, err := db.Query(`
+		SELECT coalesce(agent,'') || CASE WHEN coalesce(branch,'')<>'' THEN '@'||branch ELSE '' END,
+		       sum(coalesce(json_extract(payload,'$.seconds'),0))
+		FROM events
+		WHERE run=? AND kind='request_end' AND at>=?
+		  AND coalesce(json_extract(payload,'$.detail'),'') LIKE '%api_retry%'
+		GROUP BY 1`, run, since)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var session string
+		var secs float64
+		if rows.Scan(&session, &secs) == nil && session != "" {
+			out[session] = secs
+		}
+	}
+	return out
+}
