@@ -488,6 +488,21 @@ func main() {
 		writeJSON(w, http.StatusCreated, map[string]any{"path": path, "bytes": len(in.Body)})
 	})
 	mux.HandleFunc("GET /documents", func(w http.ResponseWriter, r *http.Request) {
+		if id := r.URL.Query().Get("id"); id != "" {
+			// One document, by its row: what a run restores its directory from
+			// when the volume lost it. The newest-of-a-kind form below cannot
+			// walk a run's phases; this can.
+			var path string
+			mu.Lock()
+			err := db.QueryRow(`SELECT path FROM documents WHERE id=?`, id).Scan(&path)
+			mu.Unlock()
+			if err != nil {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such document"})
+				return
+			}
+			http.ServeFile(w, r, path)
+			return
+		}
 		if run := r.URL.Query().Get("run"); run != "" && r.URL.Query().Get("kind") != "" {
 			// The newest of that kind, as the file itself.
 			var path string
