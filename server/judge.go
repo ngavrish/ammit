@@ -595,6 +595,31 @@ func weigh(conf Config) {
 				}
 			}
 		}
+		// The silence limit below cannot see a session that never stops
+		// talking: a funcreq branch made fifty turns in twenty minutes on
+		// run 16922dd7 and was quiet for no more than four minutes at a
+		// stretch. `timeouts.session_age_<agent>` is measured against the
+		// session's AGE, from session_start, for that agent's sessions only;
+		// actions.on_session_age_<agent> answers it, stop_run by default,
+		// because a session that old has lost the run, not the branch.
+		for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
+			agent := session
+			if at := strings.Index(session, "@"); at >= 0 {
+				agent = session[:at]
+			}
+			limit, has := conf.num("timeouts", "session_age_"+agent)
+			if !has || limit <= 0 || age <= limit || recently("timeouts.session_age_"+agent, session, limit) {
+				continue
+			}
+			action := conf.str("actions", "on_session_age_"+agent, "stop_run")
+			ctx["session"] = session
+			ctx["agent"], ctx["branch"] = session, ""
+			if at := strings.Index(session, "@"); at >= 0 {
+				ctx["branch"] = session[at+1:]
+			}
+			judge("session", r.run, session, "timeouts.session_age_"+agent, limit, age,
+				action, act(action, conf, ctx))
+		}
 		if limit, ok := conf.num("timeouts", "session"); ok {
 			for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
 				// Judged by silence, not by age. An implement session did two
