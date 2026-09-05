@@ -584,7 +584,11 @@ func weigh(conf Config) {
 					limit, named = own, "timeouts.phase_"+phase
 				}
 				if age > limit && !recently(named, phase, limit) {
-					action := conf.str("actions", "on_phase_timeout", "warn")
+					// actions.on_phase_timeout_<name> overrides the general
+					// action: a phase whose overrun means the run is lost
+					// (funcreqs at twenty minutes) ends the run, not the phase.
+					action := conf.str("actions", "on_phase_timeout_"+phase,
+						conf.str("actions", "on_phase_timeout", "warn"))
 					ctx["phase"] = phase
 					judge("phase", r.run, phase, named, limit, age, action,
 						act(action, conf, ctx))
