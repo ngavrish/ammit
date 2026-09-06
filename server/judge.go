@@ -646,6 +646,29 @@ func weigh(conf Config) {
 			judge("session", r.run, session, "timeouts.session_age_"+agent, limit, age,
 				action, act(action, conf, ctx))
 		}
+		// The other edge of a phase. Every ceiling above says when a phase
+		// has taken too long; nothing said when it took too little, and an
+		// agent phase that closes in seconds is the louder fault: the agent
+		// answered without doing the work, and the next phase starts on
+		// nothing. timeouts.phase_min is a floor for phases that ran a
+		// session; actions.on_phase_min answers it, stop_run by default.
+		if floor, ok := conf.num("timeouts", "phase_min"); ok && floor > 0 {
+			for phase, secs := range shortPhases(r.run, floor) {
+				if recently("timeouts.phase_min", r.run+phase, 86400) {
+					continue
+				}
+				action := conf.str("actions", "on_phase_min", "stop_run")
+				ctx["phase"] = phase
+				judge("phase", r.run, phase, "timeouts.phase_min", floor, secs,
+					action, act(action, conf, ctx))
+				if endsRun(conf, action) {
+					finish(r.run, "BLOCKED", fmt.Sprintf(
+						"ammit: phase %s ran its agents and closed in %.0fs, "+
+							"under the %.0fs floor", phase, secs, floor))
+					break
+				}
+			}
+		}
 		if limit, ok := conf.num("timeouts", "session"); ok {
 			for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
 				// Judged by silence, not by age. An implement session did two

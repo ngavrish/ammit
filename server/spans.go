@@ -512,3 +512,38 @@ func retryWaits(run string, window float64) map[string]float64 {
 	}
 	return out
 }
+
+// shortPhases: phases of a run that CLOSED in under `floor` seconds having
+// run at least one agent session - phase_end rows whose `seconds` is under
+// the floor, for phases with a session_start. Shell phases are not here on
+// purpose: a branch checkout, a fold or a rule gate is meant to take a
+// second. An agent phase that took less than a minute is a phase in which
+// no agent did the work, and that is a run to stop and read, not to let
+// through to the next phase at full price.
+func shortPhases(run string, floor float64) map[string]float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	rows, err := db.Query(`
+		SELECT coalesce(e.phase,''), coalesce(json_extract(e.payload,'$.seconds'), 0)
+		FROM events e
+		WHERE e.run=? AND e.kind='phase_end' AND ifnull(e.phase,'') <> ''
+		  AND coalesce(json_extract(e.payload,'$.seconds'), 0) < ?
+		  AND EXISTS (SELECT 1 FROM events s WHERE s.run=e.run
+		              AND s.kind='session_start' AND coalesce(s.phase,'')=coalesce(e.phase,''))`,
+		run, floor)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var phase string
+		var secs float64
+		if rows.Scan(&phase, &secs) == nil {
+			if prev, seen := out[phase]; !seen || secs < prev {
+				out[phase] = secs
+			}
+		}
+	}
+	return out
+}
