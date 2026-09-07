@@ -281,7 +281,8 @@ was wrong, because it was done over two terminal windows of scrollback.
 `search` is the record asked for a word. An `AttributeError` in one log line of
 one branch used to be findable by knowing which run, which phase and which
 endpoint to page through, which is another way of saying it was findable by
-already knowing where it was.
+already knowing where it was. It is not free: the index is about the size of
+the events it mirrors, and [RECORD.md](RECORD.md) names the measured numbers.
 
 ## The page
 

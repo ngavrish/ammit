@@ -168,6 +168,22 @@ A document is indexed from its body, up to the first megabyte. The whole of it
 stays on disk and `GET /documents?id=` still serves all of it; what is over a
 megabyte in is findable by the words before it.
 
+## What search costs
+
+Indexing as the event lands is cheap and the disk is not. Ten thousand prose
+events, timed and then measured on the same database: 10k posts of a heartbeat,
+which indexes nothing, took 1.49s and 10k posts of a log line with 200
+characters of text took 3.09s, so an indexed event costs about 0.16 ms and a
+50k-event run pays eight seconds of indexing spread across its life. The space
+is the number to watch. Those same events were 4.4 MB of `events` against 3.6 MB
+of `search_text`, 1.4 MB of the FTS data and half a megabyte of indexes over the
+two: the search structures are the size of the table they mirror, so a database
+with search in it is about twice the database. The words are held once, not
+twice, and it still costs that, because a row of them carries the run, the kind,
+the phase and the session that make a hit worth reading. `archive` takes the
+index rows out with the events they mirror, which is what stops the larger half
+from being the permanent half.
+
 ## Adding a field
 
 One commit, two lines: the field in `server/record.go` and the field on this
