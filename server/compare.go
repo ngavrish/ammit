@@ -19,8 +19,9 @@ import (
 // the conclusion was wrong, because the flows differed and nothing put them in
 // the same table.
 //
-// So: calls by kind, turns, tokens, dollars, wall time and idle time, per
-// phase or per agent, for both runs, with the difference already worked out.
+// So: calls by kind, turns, tokens, dollars, wall time and idle time, plus the
+// calls the guard refused counted by the rule that refused them, per phase or
+// per agent, for both runs, with the difference already worked out.
 // Nothing here is a new measurement - every number comes out of calls, turns,
 // the event spans and runs, which have held them all along. What was missing
 // was the subtraction.
@@ -38,10 +39,25 @@ type cmpRow struct {
 	USD                                        float64
 	Wall, Idle                                 float64
 
+	// Refused is how many calls the guard turned away, by the rule that did
+	// it, with "" for a refusal that carried no rule. Not a metric column:
+	// the set of rules is open, so it is a map rather than fourteen more
+	// headings, and it is not subtracted - a rule that fired twice in a and
+	// not at all in b is read off the two lines.
+	Refused map[string]int64
+
 	// firstAt and lastAt back the wall-time fallback for a group whose span
 	// never closed, and are not reported themselves.
 	firstAt, lastAt float64
 	sawSpan         bool
+}
+
+// refuse counts one rule's refusals on this row.
+func (r *cmpRow) refuse(rule string, n int64) {
+	if r.Refused == nil {
+		r.Refused = map[string]int64{}
+	}
+	r.Refused[rule] += n
 }
 
 type metricDef struct {
@@ -168,6 +184,25 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 			total.addCall(kind, n)
 		}
 	})
+
+	// Refusals, by the rule that decided them. Read off the events rather
+	// than off calls, because the rule is the guard's own word for what it
+	// did and the calls table holds only what this service works out from a
+	// tool and its input. A refused call with no rule on it is counted under
+	// "": a guard that refuses without naming a rule is a thing worth seeing
+	// in the total rather than dropping.
+	scan(`SELECT coalesce(`+col+`,''),
+	      coalesce(json_extract(payload,'$.rule'),''), count(*)
+	      FROM events WHERE run=? AND kind='call'
+	      AND json_extract(payload,'$.ok')=0 GROUP BY 1,2`, []any{run},
+		func(get func(...any) bool) {
+			var key, rule string
+			var n int64
+			if get(&key, &rule, &n) {
+				at(key).refuse(rule, n)
+				total.refuse(rule, n)
+			}
+		})
 
 	// Turns and what a turn was sent and returned. tokens_out is the SDK's
 	// count and out_est the runner's measure of the same message; the larger
@@ -323,7 +358,7 @@ func published(m metricDef, r *cmpRow) float64 {
 }
 
 func metricsJSON(r *cmpRow) map[string]any {
-	out := map[string]any{}
+	out := map[string]any{"refused_by_rule": refusedJSON(r)}
 	for _, m := range cmpMetrics {
 		v := published(m, r)
 		if m.unit == "usd" || m.unit == "seconds" {
@@ -333,6 +368,45 @@ func metricsJSON(r *cmpRow) map[string]any {
 		out[m.key] = int64(v)
 	}
 	return out
+}
+
+// refusedJSON is the refusal counts as an object, always present and empty
+// where nothing was refused. A row that reports null for its refusals is a row
+// a reader has to ask a second question about.
+func refusedJSON(r *cmpRow) map[string]int64 {
+	out := map[string]int64{}
+	for rule, n := range r.Refused {
+		out[rule] = n
+	}
+	return out
+}
+
+// refusedLine is the refusals of one side, sorted by count and then by rule,
+// as "rule=count rule=count". The empty rule prints as (none), because a bare
+// =1 in a terminal reads as a fault in the table.
+func refusedLine(r *cmpRow) string {
+	if len(r.Refused) == 0 {
+		return ""
+	}
+	rules := make([]string, 0, len(r.Refused))
+	for rule := range r.Refused {
+		rules = append(rules, rule)
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if r.Refused[rules[i]] != r.Refused[rules[j]] {
+			return r.Refused[rules[i]] > r.Refused[rules[j]]
+		}
+		return rules[i] < rules[j]
+	})
+	parts := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		name := rule
+		if name == "" {
+			name = "(none)"
+		}
+		parts = append(parts, fmt.Sprintf("%s=%d", name, r.Refused[rule]))
+	}
+	return strings.Join(parts, " ")
 }
 
 // deltaJSON is b minus a, and the same as a share of a. A percentage against
@@ -441,7 +515,8 @@ func serveCompare(mux *http.ServeMux) {
 
 // compareTable is the same answer for a terminal: one block per phase or
 // agent, four lines - a, b, the difference and the difference as a share -
-// under one set of headings.
+// under one set of headings, and under those a refused: line for each side
+// that had a call turned away.
 func compareTable(by string, a, b runRef, keys []string,
 	rowsA, rowsB map[string]*cmpRow, totalA, totalB *cmpRow) string {
 	var s strings.Builder
@@ -497,6 +572,18 @@ func compareTable(by string, a, b runRef, keys []string,
 				row += fmt.Sprintf("%9s", line.get(m))
 			}
 			s.WriteString(row + "\n")
+		}
+		// One line per side that had a call refused, under the numbers it
+		// belongs to. Left out where nothing was refused, so a table of a
+		// clean pair of runs is the table it was before.
+		for _, side := range []struct {
+			tag string
+			row *cmpRow
+		}{{"a", ra}, {"b", rb}} {
+			if listed := refusedLine(side.row); listed != "" {
+				s.WriteString(fmt.Sprintf("%-*s %-2s refused: %s\n",
+					label, "", side.tag, listed))
+			}
 		}
 	}
 	for _, key := range keys {

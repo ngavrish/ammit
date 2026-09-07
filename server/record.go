@@ -55,7 +55,11 @@ var perKind = map[string][]string{
 	"item_start": {"item", "itemkind"},
 	"item_end":   {"item", "itemkind", "ok", "seconds", "failed", "error"},
 	"gate":       {"verdict", "findings", "seconds"},
-	"call":       {"tool", "input", "ok", "seconds", "why", "request"},
+	// rule is which guard rule decided the call: empty when nothing
+	// refused it, and a stable id like map.search-refused when something
+	// did. It is the field that makes "how often was the map asked for
+	// twice" a count rather than a grep over prose.
+	"call":       {"tool", "input", "ok", "seconds", "why", "request", "rule"},
 	"suite":      {"verdict", "total", "passed", "failed", "reason"},
 	"heal_lap":   {"lap", "cap", "decision"},
 	"adhoc":      {"reason", "allowed", "head"},

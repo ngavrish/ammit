@@ -112,7 +112,15 @@ only one of those is a count.
 
 | kind | fields |
 |---|---|
-| `call` | `tool`, `input`, `ok`, `seconds`, `why`, `request` |
+| `call` | `tool`, `input`, `ok`, `seconds`, `why`, `request`, `rule` the guard rule that decided the call, empty when nothing refused it |
+
+`rule` is a stable id such as `map.search-refused`, written by the guard that
+turned the call away rather than worked out here, and it is the one thing about
+a refusal that is not prose. A refusal was findable only by the sentence it was
+explained with, so counting them meant matching wording that is free to change;
+with the id on the event, `/search?q=map.search-refused&kind=call` finds them
+and `/compare` counts them per rule on every row. It is indexed with the rest of
+a call's words, so the id is a search term as well as a column.
 
 `kind`, `target`, `signature`, `repeat` and `on_target` in the `calls` table are
 worked out here from `tool` and `input`, and are not accepted from the caller
@@ -159,10 +167,13 @@ would rather this service did not hold is a thing that has to not be sent.
 ## What search reads
 
 `GET /search` indexes the prose and nothing else: the `text`, `note`, `summary`,
-`error`, `reason`, `why` and `detail` of an event, plus a `call`'s tool name and
-the strings it was given. Fields holding a number or an id are left out, because
-a search for `3600` that returns a timeout, a token count and a session id in
-one list is an answer nobody can use.
+`error`, `reason`, `why` and `detail` of an event, plus a `call`'s tool name,
+the strings it was given and the `rule` that decided it. Other fields holding a
+number or an id are left out, because a search for `3600` that returns a
+timeout, a token count and a session id in one list is an answer nobody can
+use. A rule id is the exception the guard needs: it is the name of a decision
+rather than the name of a row, and it is the word somebody searching for
+refusals has.
 
 A document is indexed from its body, up to the first megabyte. The whole of it
 stays on disk and `GET /documents?id=` still serves all of it; what is over a

@@ -107,6 +107,30 @@ want "this build publishes /record" '"page":"RECORD.md"' "$work/probe-record.jso
 echo "== two runs, through the Python client"
 AMMIT_URL="$base" PYTHONPATH="$root/src" python3 "$root/tools/live_fixture.py"
 
+echo "== three calls the guard turned away, two of them by a named rule"
+# The rule is what makes a refusal countable. Posted into a phase of their own
+# so the numbers the block above checks by hand stay the numbers they were, and
+# posted as three separate calls because the question is how many, per rule.
+for cmd in "grep -rn weigh server" "rg feather server"; do
+  curl -sS -o "$work/refused.json" -X POST "$base/events" \
+    -H 'Content-Type: application/json' \
+    -d "{\"kind\":\"call\",\"run\":\"live-a-1\",\"phase\":\"guarding\",
+         \"agent\":\"guard\",\"tool\":\"Bash\",\"input\":{\"command\":\"$cmd\"},
+         \"ok\":false,\"seconds\":0.01,\"rule\":\"map.search-refused\"}"
+  cat "$work/refused.json"; echo
+  deny "a rule on a call is kept"          '"dropped"' "$work/refused.json"
+done
+curl -sS -o "$work/refused-none.json" -X POST "$base/events" \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"call","run":"live-a-1","phase":"guarding","agent":"guard",
+       "tool":"Bash","input":{"command":"python3 -c print(1)"},
+       "ok":false,"seconds":0.01}'
+deny "and a refusal with no rule lands too" '"dropped"' "$work/refused-none.json"
+
+curl -sS -o "$work/search-rule.json" "$base/search?q=map.search-refused&kind=call"
+want "the rule id is a search term"       '"kind":"call"' "$work/search-rule.json"
+want "and it found both refusals"         '"count":2' "$work/search-rule.json"
+
 echo "== GET /compare, as a table"
 curl -sS -H 'Accept: text/plain' -o "$work/compare.txt" \
   "$base/compare?a=live-a-1&b=live-b-1"
@@ -120,6 +144,10 @@ want "the difference, absolute"           '^ +. +\+1 +-1 +0 ' "$work/compare.txt
 want "the difference, as a share"         '\+50\.0 +-33\.3 ' "$work/compare.txt"
 want "a totals row"                       '^TOTAL +a ' "$work/compare.txt"
 want "the table says what new means"      'new. where a was zero' "$work/compare.txt"
+# Sorted by count and then by rule, with the refusal that named none under
+# (none), so the line reads as an answer rather than as a column of ids.
+want "the refusals are listed by rule"    'refused: map\.search-refused=2 \(none\)=1' \
+  "$work/compare.txt"
 
 echo "== GET /compare, as JSON"
 curl -sS -o "$work/compare.json" "$base/compare?a=live-a-1&b=live-b-1"
@@ -128,6 +156,8 @@ want "json carries the totals row"        '"key":"TOTAL"' "$work/compare.json"
 want "\$0.40 against \$0.60 is +\$0.20"     '"usd":\{"abs":0.2,"pct":50\}' "$work/compare.json"
 want "run a's tokens, from the bill"      '"tokens_in":100000' "$work/compare.json"
 want "the idle gap was measured"          '"idle_seconds":[1-9]' "$work/compare.json"
+want "refusals are counted per rule"      '"refused_by_rule":\{"":1,"map.search-refused":2\}' \
+  "$work/compare.json"
 # The delta is the subtraction of the two numbers on the page. It was worked
 # out from the unrounded seconds, so 300 against 0 published -299.9985.
 want "300 seconds against none is -300"   '"idle_seconds":\{"abs":-300,"pct":-100\}' \

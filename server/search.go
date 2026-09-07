@@ -121,6 +121,12 @@ func searchable(e event) string {
 		if tool := e.s("tool"); tool != "" {
 			parts = append(parts, tool)
 		}
+		// The guard rule that decided the call, so "show me every refusal by
+		// map.search-refused" is one query rather than a guess at the wording
+		// the refusal was explained with.
+		if rule := e.s("rule"); rule != "" {
+			parts = append(parts, rule)
+		}
 		if input, ok := e["input"].(map[string]any); ok {
 			for _, v := range input {
 				if s, is := v.(string); is && strings.TrimSpace(s) != "" {
