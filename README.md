@@ -247,6 +247,9 @@ button first.
 | `POST /events` | what the client reports |
 | `POST /queue` | queue an item |
 | `GET /runs` | runs with cost, turns, verdicts |
+| `GET /compare` | two runs side by side, by phase or by agent, with the deltas |
+| `GET /search` | one question asked of every event and every document |
+| `GET /record` | [what is stored](RECORD.md), and what has been turned away |
 | `GET /gates` | what each check decided, and how many rounds it took |
 | `GET /judgements` | every limit crossed, what was observed, what was done |
 | `GET /queue` | what is waiting |
@@ -254,6 +257,31 @@ button first.
 | `GET /` | the page: limits, queue, runs, judgements |
 | `GET /limits.yml` | the config file itself |
 | `PUT /limits.yml` | replace it — refused if it does not parse |
+
+**[RECORD.md](RECORD.md) is the whole of what this service keeps**: every field
+of every event kind, and the documents. If a field is not on that page it is not
+stored, which is enforced rather than promised: `POST /events` drops what is
+not listed and the reply names it back, so a client learns on its next send that
+a field it has been reporting for a month goes nowhere.
+
+Two of these are questions rather than tables, and the client asks them from a
+terminal:
+
+```bash
+ammit compare APF-1934 APF-2531            # or --by agent, or --json
+ammit search "AttributeError" --run APF-1934
+```
+
+`compare` is the four numbers a change to the pipeline has to move to have been
+worth making (tool calls, turns, tokens and money), plus the time and the idle
+time, per phase or per agent, for both runs, with the subtraction already done.
+Two runs of one ticket were once compared on turns and money and the conclusion
+was wrong, because it was done over two terminal windows of scrollback.
+
+`search` is the record asked for a word. An `AttributeError` in one log line of
+one branch used to be findable by knowing which run, which phase and which
+endpoint to page through, which is another way of saying it was findable by
+already knowing where it was.
 
 ## The page
 

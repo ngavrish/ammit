@@ -29,6 +29,11 @@ func (e event) f(key string) float64 {
 func store(e event) {
 	mu.Lock()
 	defer mu.Unlock()
+	// Once more here rather than only at the door: sweeps and samples make
+	// events of their own, and "if a field is not on RECORD.md it is not
+	// stored" has to be true of this service's own events too, or the page is
+	// a rule for other people.
+	e, _ = recordOf(e)
 	at := e.f("at")
 	if at == 0 {
 		at = float64(time.Now().UnixNano()) / 1e9

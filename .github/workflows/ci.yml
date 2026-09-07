@@ -43,3 +43,21 @@ jobs:
           python-version: "3.12"
       - run: pip install ruff==0.16.6
       - run: ruff check src tools
+
+  # The server, alive. Every job above proves the code compiles and that the
+  # panels' SQL parses; none of them proves the service answers, and the three
+  # things checked here - the comparison, the search and the record - each pass
+  # in isolation while being wrong in the wiring. So: build the binary, start it
+  # against a scratch sqlite, post two runs through the Python client, and ask.
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: bash tools/live_check.sh

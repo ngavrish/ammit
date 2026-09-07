@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -435,8 +436,17 @@ func main() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
 			return
 		}
-		store(e)
-		writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+		// What is kept is what RECORD.md lists, and the sender is told the
+		// rest went nowhere. A client that has been reporting a field for a
+		// month into a column that does not exist finds out on its first
+		// send rather than on the day somebody goes looking for the number.
+		kept, dropped := recordOf(e)
+		store(kept)
+		reply := map[string]any{"ok": true}
+		if len(dropped) > 0 {
+			reply["dropped"] = dropped
+		}
+		writeJSON(w, http.StatusAccepted, reply)
 	})
 	mux.HandleFunc("POST /queue", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -459,16 +469,43 @@ func main() {
 		// body goes to a file and the row keeps the path: a run's map is over a
 		// megabyte, and a database that swallows those is a database nobody
 		// wants to keep for a year.
+		var raw map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
+			return
+		}
 		var in struct {
 			Run   string `json:"run"`
 			Kind  string `json:"kind"`
 			Phase string `json:"phase"`
 			Body  string `json:"body"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Kind == "" {
+		text := func(key string) string {
+			if v, ok := raw[key].(string); ok {
+				return v
+			}
+			return ""
+		}
+		in.Run, in.Kind, in.Phase, in.Body =
+			text("run"), text("kind"), text("phase"), text("body")
+		if in.Kind == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind and body are required"})
 			return
 		}
+		// The same closed list as an event's: a document is a run, a kind, a
+		// phase and a body, and anything else sent alongside is named back
+		// rather than kept.
+		var dropped []string
+		for key := range raw {
+			known := false
+			for _, f := range documentFields {
+				known = known || f == key
+			}
+			if !known {
+				dropped = append(dropped, key)
+			}
+		}
+		sort.Strings(dropped)
 		dir := docsDir + "/" + safeName(in.Run)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -496,7 +533,11 @@ func main() {
 			}
 		}
 		mu.Unlock()
-		writeJSON(w, http.StatusCreated, map[string]any{"path": path, "bytes": len(in.Body)})
+		reply := map[string]any{"path": path, "bytes": len(in.Body)}
+		if len(dropped) > 0 {
+			reply["dropped"] = dropped
+		}
+		writeJSON(w, http.StatusCreated, reply)
 	})
 	mux.HandleFunc("GET /documents", func(w http.ResponseWriter, r *http.Request) {
 		if id := r.URL.Query().Get("id"); id != "" {
@@ -821,6 +862,12 @@ func main() {
 
 	serveCompare(mux)
 	serveSearch(mux)
+	// The contract as data: what the envelope carries, what each kind adds,
+	// and what has been turned away since this process started.
+	mux.HandleFunc("GET /record", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, recordPage())
+	})
+
 	serveCharts(mux)
 	// The charts are this service's own page now, on its own port. The variable
 	// stays so a deployment that still points at a Grafana can, but the default
