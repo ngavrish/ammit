@@ -184,6 +184,13 @@ the phase and the session that make a hit worth reading. `archive` takes the
 index rows out with the events they mirror, which is what stops the larger half
 from being the permanent half.
 
+The index is rebuilt rather than topped up in two places: a start that found
+anything to file, and every archive. A rebuild is linear and cheap by the row,
+0.030s over 10k rows and 0.78s over 318k, about 2.4 microseconds each, so a
+year of runs at a million rows adds some two and a half seconds to a start and
+about that again to the daily archive. It is the whole index either time, not
+the part that changed, which is worth knowing before the number matters.
+
 ## Adding a field
 
 One commit, two lines: the field in `server/record.go` and the field on this

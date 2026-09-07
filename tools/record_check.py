@@ -198,15 +198,23 @@ def main() -> int:
         if extra:
             print(f"  run_end's **extra, from the runner's own finish() calls: {sorted(extra)}")
     else:
-        print(f"== the runner: {RUNSDB} is not here, so that half is not checked")
-        print("   (set RUNSDB to check it; the clients below are checked either way)")
+        # Loudly, and still green. The clients under clients/ were never the
+        # half this check was written for, and a run that says "ok" without
+        # having read the runner would be the same silence the allowlist was
+        # dropping fields in.
+        print("WARN  the runner is not here, so the half this check exists for")
+        print(f"WARN  was not checked: {RUNSDB}")
+        print("WARN  set RUNSDB to a runsdb.py to check it.")
 
     print("\n== the shipped clients under clients/")
     for name, keys in client_sends().items():
         unknown = sorted(k for k in keys if k not in known_any and k not in docs and k not in per)
         print(f"  {name:<30} unknown-to-the-allowlist: {unknown or 'none'}")
 
-    print(f"\n{bad} kind(s) the runner sends lose fields.")
+    if RUNSDB.exists():
+        print(f"\n{bad} kind(s) the runner sends lose fields.")
+    else:
+        print("\nchecked: the clients only. WARN above says what was skipped.")
     return 1 if bad else 0
 
 

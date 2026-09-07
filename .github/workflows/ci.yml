@@ -60,4 +60,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # The allowlist is a promise about a sender that lives in another
+      # repository, and tools/record_check.py can only keep it if it can read
+      # that sender. Fetched here when this workflow is allowed to reach it,
+      # by token or by the file being public. When it cannot, the checker
+      # prints WARN lines and the job goes on: a watchdog whose CI cannot see
+      # the runner is still worth running against the clients, as long as
+      # nobody reads its green as having checked the runner.
+      - name: the runner's runsdb.py, when this workflow can reach it
+        env:
+          RUNNER_REPO_TOKEN: ${{ secrets.AGENTIC_V_MODEL_TOKEN }}
+        run: |
+          url=https://raw.githubusercontent.com/ngavrish/agentic-v-model/main/services/agent-runner/runsdb.py
+          out="$RUNNER_TEMP/runsdb.py"
+          auth=()
+          if [ -n "$RUNNER_REPO_TOKEN" ]; then
+            auth=(-H "Authorization: Bearer $RUNNER_REPO_TOKEN")
+          fi
+          if curl -fsSL "${auth[@]}" "$url" -o "$out"; then
+            echo "RUNSDB=$out" >>"$GITHUB_ENV"
+            echo "the runner's runsdb.py is here; record_check.py checks it"
+          else
+            echo "could not fetch runsdb.py; record_check.py will WARN and check the clients"
+          fi
       - run: bash tools/live_check.sh
