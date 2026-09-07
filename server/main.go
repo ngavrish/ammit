@@ -933,6 +933,14 @@ func archive(conf Config, dbPath string) {
 		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
 		`INSERT INTO archive.judgements SELECT * FROM judgements WHERE run IN
 		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
+		// The index goes with the events it mirrors, and goes first, while
+		// their ids are still here to join on. A hit whose event has been
+		// archived is a row /search hands back with a link that fetches
+		// nothing, and on ten thousand prose events the search structures are
+		// the larger half of what archiving is supposed to be shrinking.
+		`DELETE FROM search_text WHERE source='event' AND ref IN
+		 (SELECT id FROM events WHERE run IN
+		   (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?))`,
 		`DELETE FROM events WHERE run IN
 		 (SELECT run FROM runs WHERE finished IS NOT NULL AND finished < ?)`,
 		`DELETE FROM judgements WHERE run IN
@@ -951,6 +959,11 @@ func archive(conf Config, dbPath string) {
 			return
 		}
 	}
+	// An external-content FTS5 table does not notice rows leaving the table it
+	// points at, and the alternative to rebuilding is one 'delete' command per
+	// row with the body it was indexed under, which means keeping the bodies
+	// that were just thrown away.
+	rebuildFTS()
 	db.Exec(`VACUUM`)
 	log.Printf("ammit: archived %d run(s) older than %.0f days into %s", due, days, name)
 }

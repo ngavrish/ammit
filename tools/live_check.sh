@@ -215,5 +215,62 @@ else
   exit 1
 fi
 
+echo "== a run archived out of the record leaves the index with it"
+# archive() moves finished runs into a file of their own and its stated job is
+# to leave the live database small. The index it did not touch outlived the
+# events it mirrors: /search went on answering with rows whose event was gone,
+# each with a fetch link that resolves to nothing.
+kill "$pid"
+wait "$pid" 2>/dev/null || true
+pid=""
+cat >"$work/limits.yml" <<YML
+retention:
+  days: 0.00001
+  dir: $work/archive
+YML
+
+AMMIT_DB="$work/data/ammit.db" \
+AMMIT_DOCS="$work/data/documents" \
+AMMIT_CONFIG="$work/limits.yml" \
+AMMIT_PORT="$port" \
+AMMIT_TICK=1 \
+  "$work/ammit" >"$work/server3.log" 2>&1 &
+pid=$!
+curl -sS --retry 40 --retry-delay 1 --retry-connrefused -o "$work/health3.json" \
+  "$base/health"
+want "the server answers a third time"    '"ok":true' "$work/health3.json"
+
+curl -sS -o /dev/null -X POST "$base/events" -H 'Content-Type: application/json' \
+  -d '{"kind":"log","run":"live-c-1","phase":"testing","level":"text",
+       "text":"a line nobody will read again: zzzghost"}'
+curl -sS -o /dev/null -X POST "$base/events" -H 'Content-Type: application/json' \
+  -d '{"kind":"run_end","run":"live-c-1","verdict":"PASS",
+       "summary":"the run that gets archived"}'
+curl -sS -o "$work/ghost-live.json" "$base/search?q=zzzghost"
+want "the word is findable while it is here" '"count":1' "$work/ghost-live.json"
+
+# retention.days is a fraction of a day here, so the tick archives the run
+# about a second after it ends. Waiting for the record rather than for a
+# sleep: the assertion is about what archiving did, not about how fast.
+for _ in $(seq 1 60); do
+  curl -sS -o "$work/ghost-events.json" --get "$base/query" \
+    --data-urlencode "sql=SELECT count(*) FROM events WHERE run='live-c-1'"
+  if grep -q '\[\[0\]\]' "$work/ghost-events.json"; then
+    break
+  fi
+  sleep 1
+done
+cat "$work/ghost-events.json"; echo
+want "the run's events are archived"      'rows.:..0..' "$work/ghost-events.json"
+
+curl -sS -o "$work/ghost-rows.json" --get "$base/query" \
+  --data-urlencode "sql=SELECT count(*) FROM search_text WHERE run='live-c-1'"
+cat "$work/ghost-rows.json"; echo
+want "and its rows left search_text"      'rows.:..0..' "$work/ghost-rows.json"
+
+curl -sS -o "$work/ghost-search.json" "$base/search?q=zzzghost"
+cat "$work/ghost-search.json"; echo
+want "and /search has nothing to hand back" '"count":0' "$work/ghost-search.json"
+
 echo
 echo "live check: everything above passed"
