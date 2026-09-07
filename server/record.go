@@ -52,7 +52,10 @@ var perKind = map[string][]string{
 	"request_start": {"wait", "model", "request"},
 	"request_end": {"seconds", "out", "ok", "error", "detail", "wait", "model",
 		"request", "msg"},
-	"item_start": {"item", "itemkind"},
+	// budget: the seconds the client will kill this item at, when it grows
+	// the deadline with the work selected (a feature run by tag). Judged
+	// against instead of timeouts.<kind> when larger - see itemBudget.
+	"item_start": {"item", "itemkind", "budget"},
 	"item_end":   {"item", "itemkind", "ok", "seconds", "failed", "error"},
 	"gate":       {"verdict", "findings", "seconds"},
 	// rule is which guard rule decided the call: empty when nothing
