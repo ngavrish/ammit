@@ -50,6 +50,13 @@ deny() {
   echo "  ok   $1"
 }
 
+echo "== every field every client sends, against RECORD.md"
+# Before anything is built: the allowlist is a promise about senders that live
+# outside this repository, and the only way to keep it is to read them. The
+# runner is not always here (CI has the clients and nothing else), and the
+# checker says so and passes rather than pretending it looked.
+python3 "$root/tools/record_check.py"
+
 echo "== building"
 ( cd "$root/server" && go build -o "$work/ammit" . )
 
@@ -143,6 +150,16 @@ deny "and the extra field is not in it"   'weight_of_a_feather|heart' "$work/row
 curl -sS -o "$work/record.json" "$base/record"
 want "/record publishes the envelope"     '"envelope":\["kind","at","run"' "$work/record.json"
 want "/record counts what it turned away" '"log.weight_of_a_feather":1' "$work/record.json"
+want "/record lists the runner's adhoc"   '"adhoc":\["allowed","head","reason"\]' \
+  "$work/record.json"
+
+echo "== POST /events with a phase body, which the runner sends on every phase"
+curl -sS -o "$work/phase-end.json" -X POST "$base/events" \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"phase_end","run":"live-a-1","phase":"planning","seconds":1.5,
+       "text":"the planning phase said sarcophagus"}'
+cat "$work/phase-end.json"; echo
+deny "a phase body is not dropped"        '"dropped"' "$work/phase-end.json"
 
 echo
 echo "live check: everything above passed"

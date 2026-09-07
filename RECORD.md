@@ -48,26 +48,33 @@ nobody.
 | kind | fields |
 |---|---|
 | `run_start` | `name` the ticket, `tags` a free map |
-| `run_end` | `verdict`, `summary`, `seconds` |
+| `run_end` | `verdict`, `summary`, `seconds`, `usd` what the run cost in total, `steps` how many steps the flow took |
 | `flow` | `mode`, `phases` the sequence this run actually executed |
+
+The runner closes a run with `finish(**extra)`, and `usd` and `steps` are what
+its call sites pass into that: two named fields rather than a hole in the page.
+A third one arrives the way every field arrives, by being added here first.
 
 ### A phase
 
 | kind | fields |
 |---|---|
 | `phase_start` | nothing beyond the envelope |
-| `phase_end` | `seconds`, `failed`, `ok`, `error` |
+| `phase_end` | `seconds`, `failed`, `ok`, `error`, `text` what the phase said, as prose, to its first 8000 characters |
+
+`phase_end.text` is the phase's own body, which is why a phase is findable by a
+word in it: `text` is one of the fields `GET /search` reads.
 
 ### An agent session
 
 | kind | fields |
 |---|---|
-| `session_start` | `model` |
-| `session_end` | `seconds`, `turns`, `usd`, `failed`, `error`, `ok`, `stopped`, `model` |
+| `session_start` | `model`, `prefix` the byte size of each part the session opened with: the rules, the system append, each slot of the prompt |
+| `session_end` | `seconds`, `turns`, `usd`, `failed`, `error`, `ok`, `stopped`, `model`, `tokens_in`, `tokens_out`, `cache_read`, `cache_write` the session's own four counts, `denied` how many times it was refused a tool |
 | `turn` | `n`, `note`, `model`, `request`, `context`, `tokens_in`, `tokens_out`, `out_est`, `cache_read`, `cache_write`, `cache_write_1h`, `geo` |
 | `spend` | `usd`, `tokens_in`, `tokens_out`, `cache_read`, `cache_write` |
-| `log` | `level`, `text` |
-| `note` | `text` |
+| `log` | `level`, `text`, `seq` where this line came in the session's transcript |
+| `note` | `text`, `tags` a free map |
 
 `turn` carries two counts of one thing on purpose. `tokens_out` is exactly what
 the SDK reported and `out_est` is the runner's own measure of the message. They
@@ -79,10 +86,12 @@ takes the larger of the two and knows that it did.
 
 | kind | fields |
 |---|---|
-| `request_start` | `wait` (`tool` or `model`), `model` |
-| `request_end` | `seconds`, `out`, `ok`, `error`, `detail`, `wait`, `model` |
+| `request_start` | `wait` (`tool` or `model`), `model`, `request` the wait's own id |
+| `request_end` | `seconds`, `out`, `ok`, `error`, `detail`, `wait`, `model`, `request`, `msg` the class of SDK message that ended the wait |
 
-The request's own id travels in `session`, not in a field of its own.
+The request's own id travels in `session` and again in `request`, which is the
+field a `turn` and a `call` carry to name the wait they happened in. One name
+on three kinds is what makes a wait, its turn and its tool calls one trace.
 
 ### A test, a check, a repair
 
@@ -93,6 +102,7 @@ The request's own id travels in `session`, not in a field of its own.
 | `gate` | `verdict`, `findings`, `seconds` |
 | `suite` | `verdict`, `total`, `passed`, `failed`, `reason` |
 | `heal_lap` | `lap`, `cap`, `decision` |
+| `adhoc` | `reason` what the caller said the script was for, `allowed` whether the guardrail let it run, `head` its first 160 characters |
 
 A gate's `round` is not on this list because it is not accepted: the pipeline
 knows what it found and this service knows how many times it has been told, and
@@ -108,6 +118,13 @@ only one of those is a count.
 worked out here from `tool` and `input`, and are not accepted from the caller
 for the same reason a gate's round is not. Two pipelines counting repeats their
 own way produce two numbers for one idea.
+
+### What the CLI did to a session
+
+| kind | fields |
+|---|---|
+| `compaction` | `trigger` what asked for the fold, `fold` which fold of this session it is, `pending` the rule ledger's unfilled slots at that moment, `rules` its total |
+| `compression` | `comp_in`, `comp_out` characters of tool output into and out of the hook, `dedup` results served as a stub, `markers` truncation marks seen downstream, `errors` results the hook could not read, `results` how many tool results the session saw |
 
 ### Everything else
 

@@ -27,31 +27,42 @@ var envelope = []string{"kind", "at", "run", "phase", "session", "agent", "branc
 // field some handler, chart or judgement actually reads - the list was taken
 // from the code that reads it, not from the code that sends it.
 var perKind = map[string][]string{
-	"run_start":     {"name", "tags"},
-	"run_end":       {"verdict", "summary", "seconds"},
+	"run_start": {"name", "tags"},
+	// usd and steps are what the runner's finish() passes as **extra at its
+	// call sites: the bill and the number of steps the flow took. Named here
+	// rather than waved through, because "whatever the caller happens to
+	// know" is not a list.
+	"run_end":       {"verdict", "summary", "seconds", "usd", "steps"},
 	"flow":          {"mode", "phases"},
 	"phase_start":   {},
-	"phase_end":     {"seconds", "failed", "ok", "error"},
-	"session_start": {"model"},
+	"phase_end":     {"seconds", "failed", "ok", "error", "text"},
+	"session_start": {"model", "prefix"},
 	"session_end": {"seconds", "turns", "usd", "failed", "error", "ok",
-		"stopped", "model"},
+		"stopped", "model", "tokens_in", "tokens_out", "cache_read",
+		"cache_write", "denied"},
 	"turn": {"n", "note", "model", "request", "context", "tokens_in",
 		"tokens_out", "out_est", "cache_read", "cache_write",
 		"cache_write_1h", "geo"},
 	"spend": {"usd", "tokens_in", "tokens_out", "cache_read", "cache_write"},
-	"log":   {"level", "text"},
-	"note":  {"text"},
-	// A wait for the model. The request id travels in `session` (sid#seq),
-	// which is why it is not repeated here.
-	"request_start": {"wait", "model"},
-	"request_end":   {"seconds", "out", "ok", "error", "detail", "wait", "model"},
-	"item_start":    {"item", "itemkind"},
-	"item_end":      {"item", "itemkind", "ok", "seconds", "failed", "error"},
-	"gate":          {"verdict", "findings", "seconds"},
-	"call":          {"tool", "input", "ok", "seconds", "why", "request"},
-	"suite":         {"verdict", "total", "passed", "failed", "reason"},
-	"heal_lap":      {"lap", "cap", "decision"},
-	"service_log":   {"service", "level", "logger", "text"},
+	"log":   {"level", "text", "seq"},
+	"note":  {"text", "tags"},
+	// A wait for the model. The request id is the session (sid#seq) and is
+	// also sent as `request`, which is what a call carries to name the wait it
+	// happened in, so the two join on one name.
+	"request_start": {"wait", "model", "request"},
+	"request_end": {"seconds", "out", "ok", "error", "detail", "wait", "model",
+		"request", "msg"},
+	"item_start": {"item", "itemkind"},
+	"item_end":   {"item", "itemkind", "ok", "seconds", "failed", "error"},
+	"gate":       {"verdict", "findings", "seconds"},
+	"call":       {"tool", "input", "ok", "seconds", "why", "request"},
+	"suite":      {"verdict", "total", "passed", "failed", "reason"},
+	"heal_lap":   {"lap", "cap", "decision"},
+	"adhoc":      {"reason", "allowed", "head"},
+	"compaction": {"trigger", "fold", "pending", "rules"},
+	"compression": {"comp_in", "comp_out", "dedup", "markers", "errors",
+		"results"},
+	"service_log": {"service", "level", "logger", "text"},
 	"learning": {"item", "model", "base", "samples", "epochs", "loss",
 		"minutes", "pairs", "local_rate", "sonnet_rate", "total", "fresh",
 		"confirmed", "kb", "ticket", "transcripts", "funcreq"},
