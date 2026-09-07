@@ -161,5 +161,59 @@ curl -sS -o "$work/phase-end.json" -X POST "$base/events" \
 cat "$work/phase-end.json"; echo
 deny "a phase body is not dropped"        '"dropped"' "$work/phase-end.json"
 
+echo "== the same database, restarted, with the search index thrown away"
+# What a live check is for. Every /search above ran against an index built row
+# by row as the events landed, which is the one case the backfill is not in:
+# a database that predates this index, or one whose index was lost, is
+# searchable only if the backfill on start actually reaches the FTS table.
+before="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["count"])' \
+  "$work/search-kind.json")"
+kill "$pid"
+wait "$pid" 2>/dev/null || true
+pid=""
+python3 - "$work/data/ammit.db" <<'DROPSEARCH'
+import sqlite3
+import sys
+
+db = sqlite3.connect(sys.argv[1])
+db.execute("DROP TABLE IF EXISTS search_fts")
+db.execute("DROP TABLE IF EXISTS search_text")
+db.commit()
+kept = db.execute("select count(*) from events").fetchone()[0]
+print(f"  dropped search_text and search_fts; {kept} events still in the record")
+DROPSEARCH
+
+AMMIT_DB="$work/data/ammit.db" \
+AMMIT_DOCS="$work/data/documents" \
+AMMIT_CONFIG="$work/no-such-limits.yml" \
+AMMIT_PORT="$port" \
+AMMIT_TICK=3600 \
+  "$work/ammit" >"$work/server2.log" 2>&1 &
+pid=$!
+curl -sS --retry 40 --retry-delay 1 --retry-connrefused -o "$work/health2.json" \
+  "$base/health"
+want "the server answers again"           '"ok":true' "$work/health2.json"
+
+curl -sS -o "$work/backfill-event.json" "$base/search?q=AttributeError"
+want "the backfill reaches an event"      '"source":"event"' "$work/backfill-event.json"
+curl -sS -o "$work/backfill-phase.json" "$base/search?q=sarcophagus"
+want "and a phase body with it"           '"kind":"phase_end"' "$work/backfill-phase.json"
+curl -sS -o "$work/backfill-doc.json" "$base/search?q=chartreuse"
+want "and a document off the disk"        '"source":"document"' "$work/backfill-doc.json"
+
+# What is searchable is one definition or it is two answers: a call's tool and
+# the strings it was given were indexed as the event landed and left out of the
+# backfill, so this query answered 3 on a live database and 0 on one built from
+# the same events.
+curl -sS -o "$work/backfill-call.json" "$base/search?q=pytest&kind=call"
+after="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["count"])' \
+  "$work/backfill-call.json")"
+if [ "$before" = "$after" ]; then
+  echo "  ok   a call's command, the same $after hit(s) before and after the restart"
+else
+  echo "  FAIL a call's command: $before hit(s) live, $after after the restart"
+  exit 1
+fi
+
 echo
 echo "live check: everything above passed"

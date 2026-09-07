@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -65,7 +66,23 @@ CREATE TABLE IF NOT EXISTS search_text (
     body    TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS search_text_ref ON search_text (source, ref);
-CREATE INDEX IF NOT EXISTS search_text_run ON search_text (run, kind);`
+CREATE INDEX IF NOT EXISTS search_text_run ON search_text (run, kind);
+
+-- What the FTS index was last built from, kept outside it. An
+-- external-content FTS5 table has no rowids of its own: max(rowid) over it
+-- resolves through search_text and answers max(search_text.id) whatever the
+-- index actually holds, so the index cannot be asked how far it has got.
+CREATE TABLE IF NOT EXISTS search_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);`
+
+// indexGeneration is what a database's marker has to say for its FTS index to
+// be believed. The first version of this index filed events into search_text
+// and, under FTS5, into nothing else, and a restart did not heal it: the bulk
+// load's own guard had already moved past those rows. A database whose marker
+// is missing or older is rebuilt once, on start.
+const indexGeneration = "2"
 
 // openSearch makes the index and finds out whether this build can rank. The
 // FTS5 table carries no copy of the text - it points at search_text - so the
@@ -138,21 +155,37 @@ func indexDocument(id int64, at float64, run, kind, phase, body string) {
 	indexRow("document", id, run, kind, at, phase, "", body)
 }
 
-func indexRow(source string, ref int64, run, kind string, at float64,
-	phase, session, body string) {
+// insertSearchText keeps one row of searchable text and returns its rowid, or
+// false when the row was already there. Whether the insert happened is read
+// from RowsAffected rather than from the new rowid: an INSERT OR IGNORE that
+// ignores leaves the connection's last rowid where the previous insert left
+// it, so a conflict would otherwise report the wrong row as new and file its
+// body into the index a second time.
+func insertSearchText(source string, ref int64, run, kind string, at float64,
+	phase, session, body string) (int64, bool) {
 	res, err := db.Exec(`INSERT OR IGNORE INTO search_text
 	                     (source, ref, run, kind, at, phase, session, body)
 	                     VALUES (?,?,?,?,?,?,?,?)`,
 		source, ref, run, kind, at, phase, session, body)
 	if err != nil {
 		log.Printf("ammit: could not index a %s: %v", source, err)
-		return
+		return 0, false
 	}
-	if !searchFTS {
-		return
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return 0, false
 	}
 	rowid, err := res.LastInsertId()
 	if err != nil || rowid == 0 {
+		return 0, false
+	}
+	return rowid, true
+}
+
+func indexRow(source string, ref int64, run, kind string, at float64,
+	phase, session, body string) {
+	rowid, fresh := insertSearchText(source, ref, run, kind, at, phase, session, body)
+	if !fresh || !searchFTS {
 		return
 	}
 	if _, err := db.Exec(`INSERT INTO search_fts (rowid, body) VALUES (?,?)`,
@@ -161,34 +194,100 @@ func indexRow(source string, ref int64, run, kind string, at float64,
 	}
 }
 
+// backfillBatch is how many kept events are read at a time. A page rather than
+// the whole table: a year of runs is millions of rows and the start of a
+// watchdog is not the place to hold them all in memory.
+const backfillBatch = 2000
+
 // indexHistory files everything already kept that has no row yet: the events
-// in one statement, the documents by reading the files back off the disk. Runs
-// once on start, and picks up where it stopped, so a database that predates
-// this index becomes searchable without anybody replaying anything.
+// through the same searchable() the write path uses, the documents by reading
+// the files back off the disk. Runs once on start, and picks up where it
+// stopped, so a database that predates this index becomes searchable without
+// anybody replaying anything.
 func indexHistory() {
 	mu.Lock()
 	defer mu.Unlock()
-	joined := make([]string, 0, len(searchedFields))
-	for _, f := range searchedFields {
-		joined = append(joined, `coalesce(json_extract(payload,'$.`+f+`'),'')`)
+	events := backfillEvents()
+	documents := backfillDocuments()
+	if events > 0 || documents > 0 {
+		log.Printf("ammit: indexed %d event(s) and %d document(s) for search",
+			events, documents)
 	}
-	body := strings.Join(joined, ` || ' ' || `)
-	if _, err := db.Exec(`INSERT OR IGNORE INTO search_text
-		(source, ref, run, kind, at, phase, session, body)
-		SELECT 'event', id, run, kind, at, coalesce(phase,''), coalesce(session,''),
-		       trim(` + body + `)
-		FROM events
-		WHERE id > (SELECT coalesce(max(ref),0) FROM search_text WHERE source='event')
-		  AND trim(` + body + `) <> ''`); err != nil {
-		log.Printf("ammit: could not index the events already kept: %v", err)
+	// The rebuild is what puts any of it in reach of a query, and it also
+	// heals a database indexed by the version that could not: nothing new to
+	// file there, and an index that answers nothing either way.
+	if events > 0 || documents > 0 || indexMark() != indexGeneration {
+		rebuildFTS()
 	}
+}
 
+// backfillEvents indexes every kept event above the high-water mark, one page
+// at a time, through searchable() rather than through a second definition of
+// it in SQL. There was a second one, joining the seven prose fields and
+// nothing else, so a call's tool name and the strings it was given were
+// searchable on a live database and absent from one built out of history: the
+// same question answered two ways by the same endpoint.
+func backfillEvents() int {
+	var last int64
+	if err := db.QueryRow(`SELECT coalesce(max(ref),0) FROM search_text
+	                       WHERE source='event'`).Scan(&last); err != nil {
+		log.Printf("ammit: could not read what is already indexed: %v", err)
+		return 0
+	}
+	type kept struct {
+		id                                 int64
+		at                                 float64
+		run, kind, phase, session, payload string
+	}
+	indexed := 0
+	for {
+		rows, err := db.Query(`SELECT id, at, coalesce(run,''), kind,
+		                       coalesce(phase,''), coalesce(session,''), payload
+		                       FROM events WHERE id > ? ORDER BY id LIMIT ?`,
+			last, backfillBatch)
+		if err != nil {
+			log.Printf("ammit: could not read the events already kept: %v", err)
+			return indexed
+		}
+		var page []kept
+		for rows.Next() {
+			var k kept
+			if rows.Scan(&k.id, &k.at, &k.run, &k.kind, &k.phase, &k.session,
+				&k.payload) == nil {
+				page = append(page, k)
+			}
+		}
+		rows.Close()
+		if len(page) == 0 {
+			return indexed
+		}
+		for _, k := range page {
+			last = k.id
+			var e event
+			if json.Unmarshal([]byte(k.payload), &e) != nil {
+				continue
+			}
+			body := searchable(e)
+			if body == "" {
+				continue // it said nothing in words; a heartbeat is not a hit
+			}
+			if _, fresh := insertSearchText("event", k.id, k.run, k.kind, k.at,
+				k.phase, k.session, body); fresh {
+				indexed++
+			}
+		}
+	}
+}
+
+// backfillDocuments indexes the bodies off the disk, since the row keeps the
+// path and not the words.
+func backfillDocuments() int {
 	rows, err := db.Query(`SELECT d.id, d.at, coalesce(d.run,''), d.kind,
 	                       coalesce(d.phase,''), d.path FROM documents d
 	                       WHERE NOT EXISTS (SELECT 1 FROM search_text s
 	                         WHERE s.source='document' AND s.ref=d.id)`)
 	if err != nil {
-		return
+		return 0
 	}
 	type doc struct {
 		id                     int64
@@ -210,21 +309,37 @@ func indexHistory() {
 		}
 		indexDocument(d.id, d.at, d.run, d.kind, d.phase, string(raw))
 	}
-	if len(todo) > 0 {
-		log.Printf("ammit: indexed %d document(s) for search", len(todo))
-	}
-	syncFTS()
+	return len(todo)
 }
 
-// syncFTS brings the index up to the table after a bulk insert.
-func syncFTS() {
+// indexMark is what the database says its FTS index was last built from.
+func indexMark() string {
+	var mark string
+	if err := db.QueryRow(`SELECT value FROM search_meta
+	                       WHERE key='fts_generation'`).Scan(&mark); err != nil {
+		return ""
+	}
+	return mark
+}
+
+// rebuildFTS builds the index from the table it points at, and writes down
+// that it did. FTS5's own command for exactly this, and the only thing that is
+// right after a bulk load into an external-content table: such a table has no
+// rowids of its own to compare against, so "insert what the index has not got"
+// cannot be written as a query.
+func rebuildFTS() {
 	if !searchFTS {
 		return
 	}
-	if _, err := db.Exec(`INSERT INTO search_fts (rowid, body)
-	                      SELECT id, body FROM search_text
-	                      WHERE id > (SELECT coalesce(max(rowid),0) FROM search_fts)`); err != nil {
-		log.Printf("ammit: could not bring the search index up to date: %v", err)
+	if _, err := db.Exec(`INSERT INTO search_fts(search_fts) VALUES('rebuild')`); err != nil {
+		log.Printf("ammit: could not rebuild the search index: %v", err)
+		return
+	}
+	if _, err := db.Exec(`INSERT INTO search_meta (key, value)
+	                      VALUES ('fts_generation', ?)
+	                      ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		indexGeneration); err != nil {
+		log.Printf("ammit: could not mark the search index: %v", err)
 	}
 }
 
