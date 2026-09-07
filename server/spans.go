@@ -181,6 +181,22 @@ func itemFacts(run, item string) (string, string) {
 	return kind, agent
 }
 
+// itemBudget is the deadline the client said it would kill this item at, in
+// seconds, or 0 when it said none. A suite runner that grows a feature's
+// deadline with the scenarios selected (forty-six at forty seconds is not one
+// module's twenty minutes) sends it as `budget` on item_start; judged against
+// timeouts.module alone, the run warned and retried a feature that was inside
+// the deadline it was actually given.
+func itemBudget(run, item string) float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	var budget float64
+	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.budget'),0)
+	             FROM events WHERE run=? AND kind='item_start' AND session=?
+	             ORDER BY id DESC LIMIT 1`, run, item).Scan(&budget)
+	return budget
+}
+
 // turnsPerSession is how many turns each agent has taken in the session it has
 // open now — not across the run, which is a different question with a different
 // answer when an agent runs once per branch.

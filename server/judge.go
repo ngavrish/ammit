@@ -583,6 +583,12 @@ func weigh(conf Config) {
 				continue
 			}
 			against, ok := conf.num("timeouts", kind)
+			// The client's own deadline for this item, when it sent one and it
+			// is the larger: the judgement is against the number the item is
+			// actually killed at, not a limit set for the typical item.
+			if budget := itemBudget(r.run, item); budget > against {
+				against, ok = budget, true
+			}
 			if !ok || against <= 0 || age <= against || recently("timeouts."+kind, item, against) {
 				continue
 			}
