@@ -80,9 +80,11 @@ CREATE TABLE IF NOT EXISTS search_meta (
 // indexGeneration is what a database's marker has to say for its FTS index to
 // be believed. The first version of this index filed events into search_text
 // and, under FTS5, into nothing else, and a restart did not heal it: the bulk
-// load's own guard had already moved past those rows. A database whose marker
-// is missing or older is rebuilt once, on start.
-const indexGeneration = "2"
+// load's own guard had already moved past those rows. The second read every
+// event through searchable() but only above that same mark, so a call the
+// first version had skipped stayed skipped. A database whose marker is missing
+// or older is read again from the first event and rebuilt, once.
+const indexGeneration = "3"
 
 // openSearch makes the index and finds out whether this build can rank. The
 // FTS5 table carries no copy of the text - it points at search_text - so the
@@ -207,7 +209,12 @@ const backfillBatch = 2000
 func indexHistory() {
 	mu.Lock()
 	defer mu.Unlock()
-	events := backfillEvents()
+	stale := indexMark() != indexGeneration
+	if stale {
+		log.Printf("ammit: the search index was built by an older version; " +
+			"reading every event again")
+	}
+	events := backfillEvents(stale)
 	documents := backfillDocuments()
 	if events > 0 || documents > 0 {
 		log.Printf("ammit: indexed %d event(s) and %d document(s) for search",
@@ -216,9 +223,36 @@ func indexHistory() {
 	// The rebuild is what puts any of it in reach of a query, and it also
 	// heals a database indexed by the version that could not: nothing new to
 	// file there, and an index that answers nothing either way.
-	if events > 0 || documents > 0 || indexMark() != indexGeneration {
+	if events > 0 || documents > 0 || stale || ftsLost() {
 		rebuildFTS()
 	}
+}
+
+// ftsLost is the index saying it holds nothing while the table it points at is
+// full. It happens when somebody drops the FTS table, which is what repairing
+// a corrupt one amounts to: the marker still says the index was built, so
+// nothing would ever rebuild it and every search would answer zero for ever,
+// which is the failure the marker was added to end, reached by another door.
+// Counted on the index's own docsize rather than on search_fts, because a
+// count over an external-content table resolves through the content table and
+// answers the number of rows the index does not have.
+func ftsLost() bool {
+	if !searchFTS {
+		return false
+	}
+	var indexed, kept int64
+	if err := db.QueryRow(`SELECT count(*) FROM search_fts_docsize`).Scan(&indexed); err != nil {
+		return false
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM search_text`).Scan(&kept); err != nil {
+		return false
+	}
+	if indexed == 0 && kept > 0 {
+		log.Printf("ammit: the search index holds nothing against %d row(s) of "+
+			"text; rebuilding it", kept)
+		return true
+	}
+	return false
 }
 
 // backfillEvents indexes every kept event above the high-water mark, one page
@@ -227,12 +261,22 @@ func indexHistory() {
 // nothing else, so a call's tool name and the strings it was given were
 // searchable on a live database and absent from one built out of history: the
 // same question answered two ways by the same endpoint.
-func backfillEvents() int {
+// It reads from the high-water mark, except when the marker says the index was
+// built by a version whose idea of a searchable event was not this one: then it
+// reads every event from the first. That older version filed a row only when
+// the prose fields joined to something, so a call with no `why` got no row
+// while a later log line did, and the mark moved past both - which leaves the
+// call unfindable by its tool or its command through every restart after. The
+// re-read is idempotent: search_text is unique on (source, ref), so a row
+// already there is ignored.
+func backfillEvents(fromTheStart bool) int {
 	var last int64
-	if err := db.QueryRow(`SELECT coalesce(max(ref),0) FROM search_text
-	                       WHERE source='event'`).Scan(&last); err != nil {
-		log.Printf("ammit: could not read what is already indexed: %v", err)
-		return 0
+	if !fromTheStart {
+		if err := db.QueryRow(`SELECT coalesce(max(ref),0) FROM search_text
+		                       WHERE source='event'`).Scan(&last); err != nil {
+			log.Printf("ammit: could not read what is already indexed: %v", err)
+			return 0
+		}
 	}
 	type kept struct {
 		id                                 int64

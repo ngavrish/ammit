@@ -50,6 +50,27 @@ deny() {
   echo "  ok   $1"
 }
 
+# restart NAME CONFIG TICK LOG - the same binary on the same database again.
+# A server that has already run is the only place some of these faults live: an
+# index built by an older build, a marker over an index that is gone.
+restart() {
+  if [ -n "$pid" ]; then
+    kill "$pid"
+    wait "$pid" 2>/dev/null || true
+    pid=""
+  fi
+  AMMIT_DB="$work/data/ammit.db" \
+  AMMIT_DOCS="$work/data/documents" \
+  AMMIT_CONFIG="$2" \
+  AMMIT_PORT="$port" \
+  AMMIT_TICK="$3" \
+    "$work/ammit" >"$work/$4" 2>&1 &
+  pid=$!
+  curl -sS --retry 40 --retry-delay 1 --retry-connrefused -o "$work/$4.health" \
+    "$base/health"
+  want "$1" '"ok":true' "$work/$4.health"
+}
+
 echo "== every field every client sends, against RECORD.md"
 # Before anything is built: the allowlist is a promise about senders that live
 # outside this repository, and the only way to keep it is to read them. The
@@ -194,16 +215,7 @@ kept = db.execute("select count(*) from events").fetchone()[0]
 print(f"  dropped search_text and search_fts; {kept} events still in the record")
 DROPSEARCH
 
-AMMIT_DB="$work/data/ammit.db" \
-AMMIT_DOCS="$work/data/documents" \
-AMMIT_CONFIG="$work/no-such-limits.yml" \
-AMMIT_PORT="$port" \
-AMMIT_TICK=3600 \
-  "$work/ammit" >"$work/server2.log" 2>&1 &
-pid=$!
-curl -sS --retry 40 --retry-delay 1 --retry-connrefused -o "$work/health2.json" \
-  "$base/health"
-want "the server answers again"           '"ok":true' "$work/health2.json"
+restart "the server answers again" "$work/no-such-limits.yml" 3600 server2.log
 
 curl -sS -o "$work/backfill-event.json" "$base/search?q=AttributeError"
 want "the backfill reaches an event"      '"source":"event"' "$work/backfill-event.json"
@@ -226,6 +238,70 @@ else
   exit 1
 fi
 
+echo "== an index built by the version that could not index a call"
+# The state a deployment is actually in, rather than the one a dropped table
+# leaves: the first version of this index filed a row only when the prose
+# fields joined to something, so a call with no `why` got no row while a later
+# log line did, and the high-water mark moved past both. Rebuilding the FTS
+# side of that heals the prose and leaves the call unfindable for ever, which
+# is what dropping search_text hides - it resets the mark to zero.
+kill "$pid"
+wait "$pid" 2>/dev/null || true
+pid=""
+python3 - "$work/data/ammit.db" <<'OLDINDEX'
+import sqlite3
+import sys
+
+db = sqlite3.connect(sys.argv[1])
+db.execute("DELETE FROM search_text WHERE source='event' AND kind='call'")
+db.execute("DROP TABLE IF EXISTS search_fts")
+db.execute("UPDATE search_meta SET value='1' WHERE key='fts_generation'")
+db.commit()
+calls = db.execute("select count(*) from events where kind='call'").fetchone()[0]
+mark = db.execute("select coalesce(max(ref),0) from search_text "
+                  "where source='event'").fetchone()[0]
+print(f"  {calls} call events with no index row, and the mark already at {mark}")
+OLDINDEX
+
+restart "the server answers a third time" "$work/no-such-limits.yml" 3600 server3.log
+curl -sS -o "$work/old-index-call.json" "$base/search?q=pytest&kind=call"
+again="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["count"])' \
+  "$work/old-index-call.json")"
+if [ "$before" = "$again" ]; then
+  echo "  ok   the calls it skipped are read again ($again)"
+else
+  echo "  FAIL the calls it skipped: $before live, $again after the older index"
+  exit 1
+fi
+curl -sS -o "$work/old-index-tool.json" "$base/search?q=Bash&kind=call"
+want "and by the tool's name as well"     '"kind":"call"' "$work/old-index-tool.json"
+want "the log says why it read them again" 'built by an older version' \
+  "$work/server3.log"
+
+echo "== a marker saying built, over an index that is gone"
+# Dropping the FTS table is what repairing a corrupt one amounts to. The marker
+# still says the index was built, so nothing would rebuild it and every search
+# would answer zero for ever, silently.
+kill "$pid"
+wait "$pid" 2>/dev/null || true
+pid=""
+python3 - "$work/data/ammit.db" <<'DROPFTS'
+import sqlite3
+import sys
+
+db = sqlite3.connect(sys.argv[1])
+db.execute("DROP TABLE IF EXISTS search_fts")
+db.commit()
+mark = db.execute("select value from search_meta where key='fts_generation'").fetchone()
+kept = db.execute("select count(*) from search_text").fetchone()[0]
+print(f"  search_fts dropped; the marker still says {mark[0]} over {kept} rows of text")
+DROPFTS
+
+restart "the server answers a fourth time" "$work/no-such-limits.yml" 3600 server4.log
+curl -sS -o "$work/lost-index.json" "$base/search?q=AttributeError"
+want "a lost index is rebuilt anyway"     '"source":"event"' "$work/lost-index.json"
+want "and says so in one line"            'holds nothing against' "$work/server4.log"
+
 echo "== a run archived out of the record leaves the index with it"
 # archive() moves finished runs into a file of their own and its stated job is
 # to leave the live database small. The index it did not touch outlived the
@@ -240,16 +316,7 @@ retention:
   dir: $work/archive
 YML
 
-AMMIT_DB="$work/data/ammit.db" \
-AMMIT_DOCS="$work/data/documents" \
-AMMIT_CONFIG="$work/limits.yml" \
-AMMIT_PORT="$port" \
-AMMIT_TICK=1 \
-  "$work/ammit" >"$work/server3.log" 2>&1 &
-pid=$!
-curl -sS --retry 40 --retry-delay 1 --retry-connrefused -o "$work/health3.json" \
-  "$base/health"
-want "the server answers a third time"    '"ok":true' "$work/health3.json"
+restart "the server answers a fifth time" "$work/limits.yml" 1 server5.log
 
 curl -sS -o /dev/null -X POST "$base/events" -H 'Content-Type: application/json' \
   -d '{"kind":"log","run":"live-c-1","phase":"testing","level":"text",
