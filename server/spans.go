@@ -187,12 +187,26 @@ func itemFacts(run, item string) (string, string) {
 func turnsPerSession(run string) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
+	// One session is one agent on one branch, and only while it is open.
+	// Keyed on the agent alone this summed every funcreq branch of a
+	// fan-out into one number (314 "turns in one session" on run 6843c553)
+	// and went on warning about it every fifteen minutes for an hour after
+	// the last of those sessions had ended.
 	rows, err := db.Query(`
-		SELECT coalesce(t.agent,''), count(*) FROM events t
+		SELECT coalesce(t.agent,'') || CASE WHEN coalesce(t.branch,'')<>'' THEN '@'||t.branch ELSE '' END,
+		       count(*) FROM events t
 		WHERE t.run=? AND t.kind='turn' AND ifnull(t.agent,'') <> ''
 		  AND t.at >= coalesce((SELECT max(s.at) FROM events s
 		      WHERE s.run=t.run AND s.kind='session_start'
-		        AND coalesce(s.agent,'')=coalesce(t.agent,'')), 0)
+		        AND coalesce(s.agent,'')=coalesce(t.agent,'')
+		        AND coalesce(s.branch,'')=coalesce(t.branch,'')), 0)
+		  AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run=t.run AND e.kind='session_end'
+		        AND coalesce(e.agent,'')=coalesce(t.agent,'')
+		        AND coalesce(e.branch,'')=coalesce(t.branch,'')
+		        AND e.at >= coalesce((SELECT max(s2.at) FROM events s2
+		            WHERE s2.run=t.run AND s2.kind='session_start'
+		              AND coalesce(s2.agent,'')=coalesce(t.agent,'')
+		              AND coalesce(s2.branch,'')=coalesce(t.branch,'')), 0))
 		GROUP BY 1`, run)
 	if err != nil {
 		return nil
