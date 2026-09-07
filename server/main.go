@@ -292,7 +292,10 @@ func rows2json(w http.ResponseWriter, query string, args ...any) {
 	}
 	defer rows.Close()
 	cols, _ := rows.Columns()
-	var out []map[string]any
+	// An empty answer is [], never null: a nil slice marshals to null, and
+	// a client iterating "the rows" over null dies - the runner's first
+	// repair lap of run 3774a812 did, before any call of that run existed.
+	out := []map[string]any{}
 	for rows.Next() {
 		cells := make([]any, len(cols))
 		holders := make([]any, len(cols))
