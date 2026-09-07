@@ -45,6 +45,7 @@ func store(e event) {
 	}
 	if id, err := res.LastInsertId(); err == nil {
 		lift(id, at, e)
+		indexEvent(id, at, e)
 	}
 	// A run this store has never heard of gets a row on its first event.
 	//

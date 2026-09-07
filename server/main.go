@@ -354,6 +354,8 @@ func openDB(dbPath string) error {
 	}
 	seedPrices()
 	liftHistory()
+	openSearch()
+	indexHistory()
 	return nil
 }
 
@@ -479,11 +481,20 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		at := float64(time.Now().UnixNano()) / 1e9
 		mu.Lock()
-		db.Exec(`INSERT INTO documents (at, run, kind, phase, bytes, path)
+		res, err := db.Exec(`INSERT INTO documents (at, run, kind, phase, bytes, path)
 		         VALUES (?,?,?,?,?,?)`,
-			float64(time.Now().UnixNano())/1e9, in.Run, in.Kind, in.Phase,
-			len(in.Body), path)
+			at, in.Run, in.Kind, in.Phase, len(in.Body), path)
+		if err == nil {
+			// Searchable the moment it lands, from the body in hand: the file
+			// is on a disk this process may not be able to read back after a
+			// volume is remounted, and an artefact nobody can find is an
+			// artefact nobody has.
+			if id, idErr := res.LastInsertId(); idErr == nil {
+				indexDocument(id, at, in.Run, in.Kind, in.Phase, in.Body)
+			}
+		}
 		mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]any{"path": path, "bytes": len(in.Body)})
 	})
@@ -808,6 +819,8 @@ func main() {
 		writeJSON(w, http.StatusOK, loadConfig(confPath))
 	})
 
+	serveCompare(mux)
+	serveSearch(mux)
 	serveCharts(mux)
 	// The charts are this service's own page now, on its own port. The variable
 	// stays so a deployment that still points at a Grafana can, but the default

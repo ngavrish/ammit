@@ -9,6 +9,12 @@ authors = [{name = "BoberIT"}]
 keywords = ["agents", "watchdog", "limits", "observability", "pipeline"]
 dependencies = []
 
+# Two questions a terminal is the right place for: what changed between two
+# runs, and where a word appears in the record. `python -m ammit` is the same
+# entry, for anybody who has the package but not the script on their path.
+[project.scripts]
+ammit = "ammit.__main__:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
