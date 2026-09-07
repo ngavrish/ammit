@@ -442,12 +442,20 @@ func openPhases(run string) map[string]float64 {
 	// phantom phase open for a whole run: the deploy finished in fourteen
 	// seconds, the "phase" aged past its limit twice, and stop_phase went out
 	// against a phase no worker had, twice, as a no-op.
+	//
+	// Keyed by phase AND branch. A fan-out runs the same phase on every
+	// branch at once, and keyed by the name alone the first branch to finish
+	// closed the phase for all of them: on run 5d7ab949 claim-9's implementing
+	// ended at 30 minutes and ui's went on to 126 against a 90-minute limit,
+	// unjudged. The key is phase@branch for a branch's phase, the bare phase
+	// otherwise - the same spelling sessions use for agent@branch.
 	rows, err := db.Query(`
-		SELECT coalesce(phase,''), min(at) FROM events
+		SELECT coalesce(phase,''), coalesce(branch,''), min(at) FROM events
 		WHERE run=? AND kind='phase_start' AND ifnull(phase,'') <> ''
-		  AND coalesce(phase,'') NOT IN (
-		      SELECT coalesce(phase,'') FROM events WHERE run=? AND kind='phase_end')
-		GROUP BY 1`, run, run)
+		  AND coalesce(phase,'') || '@' || coalesce(branch,'') NOT IN (
+		      SELECT coalesce(phase,'') || '@' || coalesce(branch,'')
+		      FROM events WHERE run=? AND kind='phase_end')
+		GROUP BY 1, 2`, run, run)
 	if err != nil {
 		return nil
 	}
@@ -455,13 +463,29 @@ func openPhases(run string) map[string]float64 {
 	now := float64(time.Now().UnixNano()) / 1e9
 	live := map[string]float64{}
 	for rows.Next() {
-		var phase string
+		var phase, branch string
 		var at float64
-		if err := rows.Scan(&phase, &at); err == nil {
-			live[phase] = now - at
+		if err := rows.Scan(&phase, &branch, &at); err == nil {
+			live[phaseKey(phase, branch)] = now - at
 		}
 	}
 	return live
+}
+
+// phaseKey is how an open phase is named: phase@branch inside a fan-out, the
+// phase alone outside one. splitPhaseKey is its inverse.
+func phaseKey(phase, branch string) string {
+	if branch == "" {
+		return phase
+	}
+	return phase + "@" + branch
+}
+
+func splitPhaseKey(key string) (string, string) {
+	if i := strings.Index(key, "@"); i >= 0 {
+		return key[:i], key[i+1:]
+	}
+	return key, ""
 }
 
 // sessionQuiet is how long a session has said nothing: seconds since its last

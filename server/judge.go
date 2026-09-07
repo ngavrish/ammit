@@ -610,19 +610,24 @@ func weigh(conf Config) {
 		// So `timeouts.phase_<name>` overrides `timeouts.phase` for that
 		// phase, and the judgement says which one it was measured against.
 		if base, ok := conf.num("timeouts", "phase"); ok {
-			for phase, age := range openPhases(r.run) {
+			for key, age := range openPhases(r.run) {
+				phase, branch := splitPhaseKey(key)
 				limit, named := base, "timeouts.phase"
 				if own, has := conf.num("timeouts", "phase_"+phase); has && own > 0 {
 					limit, named = own, "timeouts.phase_"+phase
 				}
-				if age > limit && !recently(named, phase, limit) {
+				if age > limit && !recently(named, key, limit) {
 					// actions.on_phase_timeout_<name> overrides the general
 					// action: a phase whose overrun means the run is lost
 					// (funcreqs at twenty minutes) ends the run, not the phase.
 					action := conf.str("actions", "on_phase_timeout_"+phase,
 						conf.str("actions", "on_phase_timeout", "warn"))
-					ctx["phase"] = phase
-					judge("phase", r.run, phase, named, limit, age, action,
+					// The command's {phase} is the key: a branch's phase is
+					// stopped as phase@branch, so the sibling branches still
+					// in that phase are not stopped with it.
+					ctx["phase"] = key
+					ctx["branch"] = branch
+					judge("phase", r.run, key, named, limit, age, action,
 						act(action, conf, ctx))
 				}
 			}
