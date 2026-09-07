@@ -94,9 +94,16 @@ func store(e event) {
 		         summary='superseded: a newer run of this ticket started'
 		         WHERE name=? AND run<>? AND finished IS NULL`,
 			at, e.s("name"), e.s("run"))
-		// REPLACE, not IGNORE: if an earlier event created the row, this is
-		// where it learns the ticket's name and its real start.
-		db.Exec(`INSERT OR REPLACE INTO runs (run, name, started) VALUES (?,?,?)`,
+		// An upsert of the two fields this event knows, not a REPLACE of the
+		// row: any event may create a run's row and the money and the turns
+		// start piling into it at once, so a run_start that put the row back
+		// with its defaults erased whatever had already landed. A client sends
+		// off the caller's thread, which makes the order a race nobody
+		// controls, and the fixture in this repository lost it about half the
+		// time - the same run reported $0.50 and $0.40 on two identical builds.
+		db.Exec(`INSERT INTO runs (run, name, started) VALUES (?,?,?)
+		         ON CONFLICT(run) DO UPDATE SET name=excluded.name,
+		                                        started=excluded.started`,
 			e.s("run"), e.s("name"), at)
 	case "flow":
 		phases, _ := json.Marshal(e["phases"])

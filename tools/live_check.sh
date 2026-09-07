@@ -193,6 +193,24 @@ curl -sS -o "$work/phase-end.json" -X POST "$base/events" \
 cat "$work/phase-end.json"; echo
 deny "a phase body is not dropped"        '"dropped"' "$work/phase-end.json"
 
+echo "== a spend that arrives before run_start stays in the run"
+# The client sends off the caller's thread, so which of run_start and the first
+# spend reaches the server first is not the caller's to decide. run_start put
+# the row back with its defaults, and the money that had already landed went
+# with it: the fixture in this repository reported $0.50 and $0.40 for the same
+# run on two identical builds.
+curl -sS -o /dev/null -X POST "$base/events" -H 'Content-Type: application/json' \
+  -d '{"kind":"spend","run":"live-d-1","usd":3.25}'
+curl -sS -o /dev/null -X POST "$base/events" -H 'Content-Type: application/json' \
+  -d '{"kind":"turn","run":"live-d-1","n":1}'
+curl -sS -o /dev/null -X POST "$base/events" -H 'Content-Type: application/json' \
+  -d '{"kind":"run_start","run":"live-d-1","name":"LIVE-D"}'
+curl -sS -o "$work/wiped.json" --get "$base/query" \
+  --data-urlencode "sql=SELECT run,name,usd,turns FROM runs WHERE run='live-d-1'"
+cat "$work/wiped.json"; echo
+want "run_start keeps the bill"           '\[\["live-d-1","LIVE-D",3.25,1\]\]' \
+  "$work/wiped.json"
+
 echo "== the same database, restarted, with the search index thrown away"
 # What a live check is for. Every /search above ran against an index built row
 # by row as the events landed, which is the one case the backfill is not in:
