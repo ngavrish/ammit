@@ -34,6 +34,17 @@ var (
 	// spelled with. Forty-nine of one phase's commands were this shape, pulling
 	// rows out of files this pipeline had written itself.
 	inlineOpen = regexp.MustCompile(`open\(\s*['"]([^'"]+)['"]`)
+	// A shell command that writes a file, three ways the agents actually
+	// do it: the engine's own writers take the path after --into
+	// (put_rows.py for a run's rows, write_block.py for a feature), a
+	// redirect puts stdout into it, tee puts it into it and onto stdout.
+	// These were "cli" and "other", so a branch's features were not among
+	// its writes: on run bd66a7d8 the ui branch's four feature files were
+	// written with write_block.py and the gate, narrowing to what the
+	// branch wrote, could not see them - nor the faults in them.
+	intoPath = regexp.MustCompile(`--into\s+([^\s<>|;&]+)`)
+	redirect = regexp.MustCompile(`(?:^|[^<>0-9&])>{1,2}\s*([^\s<>|;&]+)`)
+	teePath  = regexp.MustCompile(`(?:^|[\s|;&])tee\s+(?:-a\s+)?([^\s<>|;&]+)`)
 )
 
 // classify turns one tool call into (kind, target, signature).
@@ -84,8 +95,17 @@ func bashKind(cmd string) (kind, target, signature string) {
 	if len(sig) > 400 {
 		sig = sig[:400]
 	}
+	if m := intoPath.FindStringSubmatch(cmd); m != nil && ourTool.MatchString(cmd) {
+		return "write", m[1], sig
+	}
 	if m := ourTool.FindStringSubmatch(cmd); m != nil {
 		return "cli", m[1], sig
+	}
+	if m := redirect.FindStringSubmatch(cmd); m != nil && !devNull.MatchString(m[1]) {
+		return "write", m[1], sig
+	}
+	if m := teePath.FindStringSubmatch(cmd); m != nil && !devNull.MatchString(m[1]) {
+		return "write", m[1], sig
 	}
 	if strings.Contains(cmd, "where-are-we") {
 		return "map", "where-are-we", sig
