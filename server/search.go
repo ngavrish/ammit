@@ -436,6 +436,14 @@ func serveSearch(mux *http.ServeMux) {
 		engine := "like"
 		if searchFTS {
 			engine = "fts5"
+			// A query of nothing but punctuation leaves no term at all, and
+			// the engine's answer to an empty MATCH is a syntax error about
+			// a query language the person asking never agreed to learn.
+			if ftsQuery(q) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error": "there is no word in that query to look for"})
+				return
+			}
 			query = `SELECT s.source, s.ref, coalesce(s.run,''), s.kind, s.at,
 			         coalesce(s.phase,''), coalesce(s.session,''), s.body
 			         FROM search_fts f JOIN search_text s ON s.id = f.rowid

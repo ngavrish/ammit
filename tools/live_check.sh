@@ -98,6 +98,7 @@ want "run b's implementing calls"         '^ +b +3 +2 +1 ' "$work/compare.txt"
 want "the difference, absolute"           '^ +. +\+1 +-1 +0 ' "$work/compare.txt"
 want "the difference, as a share"         '\+50\.0 +-33\.3 ' "$work/compare.txt"
 want "a totals row"                       '^TOTAL +a ' "$work/compare.txt"
+want "the table says what new means"      'new. where a was zero' "$work/compare.txt"
 
 echo "== GET /compare, as JSON"
 curl -sS -o "$work/compare.json" "$base/compare?a=live-a-1&b=live-b-1"
@@ -106,6 +107,10 @@ want "json carries the totals row"        '"key":"TOTAL"' "$work/compare.json"
 want "\$0.40 against \$0.60 is +\$0.20"     '"usd":\{"abs":0.2,"pct":50\}' "$work/compare.json"
 want "run a's tokens, from the bill"      '"tokens_in":100000' "$work/compare.json"
 want "the idle gap was measured"          '"idle_seconds":[1-9]' "$work/compare.json"
+# The delta is the subtraction of the two numbers on the page. It was worked
+# out from the unrounded seconds, so 300 against 0 published -299.9985.
+want "300 seconds against none is -300"   '"idle_seconds":\{"abs":-300,"pct":-100\}' \
+  "$work/compare.json"
 
 echo "== GET /compare?by=agent"
 curl -sS -H 'Accept: text/plain' -o "$work/compare-agent.txt" \
@@ -131,6 +136,12 @@ deny "the run filter excludes the other"  'live-b-1' "$work/search-filtered.json
 
 curl -sS -o "$work/search-kind.json" "$base/search?q=pytest&kind=call"
 want "a command an agent ran"             '"kind":"call"' "$work/search-kind.json"
+
+# A query with no word in it is a question, not a fault in the engine.
+curl -sS -o "$work/search-quotes.json" --get "$base/search" --data-urlencode 'q="""'
+cat "$work/search-quotes.json"; echo
+want "a query of quotes gets a sentence"  'no word in that query' "$work/search-quotes.json"
+deny "and not the engine's own error"     'fts5: syntax error' "$work/search-quotes.json"
 
 echo "== POST /events with a field that is not on the page"
 curl -sS -o "$work/dropped.json" -X POST "$base/events" \

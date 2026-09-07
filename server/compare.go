@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -232,7 +233,11 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 		func(get func(...any) bool) {
 			var key string
 			var secs float64
-			if get(&key, &secs) {
+			// Only a span that said how long it took counts as one. A
+			// phase_end with no seconds on it used to set the flag anyway,
+			// which suppressed the first-to-last fallback below and published
+			// a phase of length zero.
+			if get(&key, &secs) && secs > 0 {
 				r := at(key)
 				r.Wall, r.sawSpan = secs, true
 			}
@@ -302,16 +307,27 @@ func scan(query string, args []any, fn func(get func(...any) bool)) {
 	}
 }
 
+// published is the number this metric is shown as: money to four places,
+// seconds to one, a count whole. One rule, used by the rows, by the deltas and
+// by the table, because a delta worked out from unrounded numbers does not
+// subtract the numbers on the page - 300 seconds against 0 published a
+// difference of -299.9985.
+func published(m metricDef, r *cmpRow) float64 {
+	switch m.unit {
+	case "usd":
+		return round(m.get(r), 4)
+	case "seconds":
+		return round(m.get(r), 1)
+	}
+	return float64(int64(m.get(r)))
+}
+
 func metricsJSON(r *cmpRow) map[string]any {
 	out := map[string]any{}
 	for _, m := range cmpMetrics {
-		v := m.get(r)
-		if m.unit == "usd" {
-			out[m.key] = round(v, 4)
-			continue
-		}
-		if m.unit == "seconds" {
-			out[m.key] = round(v, 1)
+		v := published(m, r)
+		if m.unit == "usd" || m.unit == "seconds" {
+			out[m.key] = v
 			continue
 		}
 		out[m.key] = int64(v)
@@ -322,13 +338,16 @@ func metricsJSON(r *cmpRow) map[string]any {
 // deltaJSON is b minus a, and the same as a share of a. A percentage against
 // nothing is not a large percentage, it is not a percentage: a row that was
 // zero and is now eleven reports null and lets the reader see the eleven.
+// Both numbers are the published ones, so the subtraction is the one a reader
+// can do by hand off the same page.
 func deltaJSON(a, b *cmpRow) map[string]any {
 	out := map[string]any{}
 	for _, m := range cmpMetrics {
-		av, bv := m.get(a), m.get(b)
-		cell := map[string]any{"abs": round(bv-av, 4), "pct": nil}
+		av, bv := published(m, a), published(m, b)
+		abs := round(bv-av, 4)
+		cell := map[string]any{"abs": abs, "pct": nil}
 		if av != 0 {
-			cell["pct"] = round((bv-av)/av*100, 1)
+			cell["pct"] = round(abs/av*100, 1)
 		}
 		out[m.key] = cell
 	}
@@ -426,8 +445,11 @@ func serveCompare(mux *http.ServeMux) {
 func compareTable(by string, a, b runRef, keys []string,
 	rowsA, rowsB map[string]*cmpRow, totalA, totalB *cmpRow) string {
 	var s strings.Builder
-	fmt.Fprintf(&s, "by %s   a=%s (%s)   b=%s (%s)\n\n", by,
+	fmt.Fprintf(&s, "by %s   a=%s (%s)   b=%s (%s)\n", by,
 		a.Run, orNone(a.Name), b.Run, orNone(b.Name))
+	// The one word in this table that is not a number, said before it appears.
+	s.WriteString("% is b against a: \"new\" where a was zero, " +
+		"which the JSON reports as a null pct\n\n")
 
 	const label = 18
 	head := strings.Repeat(" ", label) + "   "
@@ -447,8 +469,10 @@ func compareTable(by string, a, b runRef, keys []string,
 		if name == "" {
 			name = "(none)"
 		}
-		if len(name) > label {
-			name = name[:label]
+		// On runes: a phase named in any alphabet but this one is otherwise cut
+		// through the middle of a character and prints as a question mark.
+		if utf8.RuneCountInString(name) > label {
+			name = string([]rune(name)[:label])
 		}
 		lines := []struct {
 			tag string
@@ -456,8 +480,12 @@ func compareTable(by string, a, b runRef, keys []string,
 		}{
 			{"a", func(m metricDef) string { return cell(m, m.get(ra)) }},
 			{"b", func(m metricDef) string { return cell(m, m.get(rb)) }},
-			{"Δ", func(m metricDef) string { return signed(m, m.get(rb)-m.get(ra)) }},
-			{"%", func(m metricDef) string { return pctCell(m.get(ra), m.get(rb)) }},
+			{"Δ", func(m metricDef) string {
+				return signed(m, published(m, rb)-published(m, ra))
+			}},
+			{"%", func(m metricDef) string {
+				return pctCell(published(m, ra), published(m, rb))
+			}},
 		}
 		for i, line := range lines {
 			shown := ""
@@ -521,6 +549,11 @@ func allZero(s string) bool {
 	return true
 }
 
+// pctCell is the % line of the table, worked out from the published numbers so
+// that two wall times both shown as 0.0 report no change rather than the
+// percentage between the digits underneath them. "new" is this table's word
+// for what the JSON calls a null pct: a row that was zero and is now
+// something, which has no percentage. The header line says so.
 func pctCell(a, b float64) string {
 	if a == 0 {
 		if b == 0 {
