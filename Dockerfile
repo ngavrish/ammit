@@ -6,14 +6,14 @@
 # megabytes — a plugin process, a provisioning tree, a second port and a
 # dashboard file that existed in two repositories at once. To draw forty-three
 # panels from one sqlite file onto a page this service already served.
-FROM golang:1.23-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /ammit .
 
-FROM alpine:3.20
+FROM alpine:3.22
 RUN apk add --no-cache docker-cli curl ca-certificates
 COPY --from=build /ammit /usr/local/bin/ammit
 ENV AMMIT_DB=/data/ammit.db AMMIT_CONFIG=/config/limits.yml
