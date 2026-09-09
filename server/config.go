@@ -96,6 +96,27 @@ func (c Config) num(section, key string) (float64, bool) {
 	return f, true
 }
 
+// numFor is num with a scope tried first: `run.adhoc` before `run`.
+//
+// One number for every run was right while every run was the same shape. It
+// stopped being right the day a second shape arrived: an ad-hoc question is one
+// phase and one session, and the four hours the conveyor is given is not a
+// limit on it at all — it would have to hang for most of a working day before
+// anything here had an opinion.
+//
+// Scoping rather than a second config: the limit keeps its name, keeps its row
+// in the record, and keeps being edited in the one place limits are edited. A
+// scope nobody set falls back to the unscoped number, so every limit that has
+// not been given a per-mode value behaves exactly as it did.
+func (c Config) numFor(section, key, scope string) (float64, bool) {
+	if scope != "" {
+		if v, ok := c.num(section, key+"."+scope); ok {
+			return v, true
+		}
+	}
+	return c.num(section, key)
+}
+
 // handsOff is actions.enforce read as a switch: anything but on, yes, true
 // or 1 means the watchdog watches and writes and touches nothing.
 func handsOff(c Config) bool {

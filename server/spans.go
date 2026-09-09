@@ -103,6 +103,25 @@ func lastBranch(run string) string {
 	return branch
 }
 
+// runMode is the flow a run is executing, from the tag its opening event
+// carried. Empty when the run never said — an older run, or a pipeline that
+// does not tag — and an empty scope is what makes every limit fall back to its
+// unscoped value, so a run that cannot say which shape it is keeps the numbers
+// it has always been judged by.
+//
+// Read from run_start first and note second: the runner opens a run it did not
+// start with a note carrying the same tags, and both are the same fact.
+func runMode(run string) string {
+	mu.Lock()
+	defer mu.Unlock()
+	var mode string
+	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.mode'),'') FROM events
+	             WHERE run=? AND kind IN ('run_start','note')
+	               AND ifnull(json_extract(payload,'$.tags.mode'),'') <> ''
+	             ORDER BY id ASC LIMIT 1`, run).Scan(&mode)
+	return mode
+}
+
 // afterTool says whether this wait is one the agent caused by asking for a
 // tool. The session logs the tool call, then waits for it to finish, so the
 // newest thing said by this session before the wait began settles it.

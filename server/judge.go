@@ -325,11 +325,15 @@ func weigh(conf Config) {
 			// Which fan-out branch the run was last heard from, so a command can
 			// name one branch instead of taking the whole run down with it.
 			"branch": lastBranch(r.run)}
+		// What shape of run this is, so the two limits that bound a whole run can
+		// be given a per-mode value. Empty for a run that never said, and an
+		// empty scope keeps every unscoped number exactly as it was.
+		mode := runMode(r.run)
 		for k, v := range conf["context"] {
 			ctx[k] = v
 		}
 
-		if limit, ok := conf.num("timeouts", "run"); ok && age > limit {
+		if limit, ok := conf.numFor("timeouts", "run", mode); ok && age > limit {
 			action := conf.str("actions", "on_run_timeout", "stop_run")
 			judge("run", r.run, r.name, "timeouts.run", limit, age, action,
 				act(action, conf, ctx))
@@ -342,7 +346,7 @@ func weigh(conf Config) {
 		// two is the run's spend: the bill where it has come, the count where
 		// it has not. Judged on the bill alone, eighteen stopped sessions of
 		// run f4a30b19 cost nothing.
-		if limit, ok := conf.num("limits", "usd_per_run"); ok {
+		if limit, ok := conf.numFor("limits", "usd_per_run", mode); ok {
 			if usd := spentUSD(r); usd > limit {
 				action := conf.str("actions", "on_usd", "stop_run")
 				judge("run", r.run, r.name, "limits.usd_per_run", limit, usd, action,
