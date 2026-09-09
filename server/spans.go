@@ -587,22 +587,12 @@ func retryWaits(run string, window float64) map[string]float64 {
 }
 
 // shortPhases: phases of a run that CLOSED in under `floor` seconds having
-// run at least one agent session and taken no turns - phase_end rows whose
-// `seconds` is under the floor, for phases with a session_start of their own
-// branch and no turn of it. Shell phases are not here on purpose: a branch
-// checkout, a fold or a rule gate is meant to take a second. An agent phase
-// that took less than a minute is a phase in which no agent did the work, and
-// that is a run to stop and read, not to let through to the next phase at full
-// price.
-//
-// Both extra conditions are about a fan-out. The session and the turns are
-// matched to the phase's OWN branch, because a phase name in a fan-out is one
-// instance per branch and they finish at different times. And no turn is what
-// "no agent did the work" actually means: on 2026-09-09 claim-3's branchheal
-// closed in 32s because the runner had already given that branch up after its
-// fourth heal lap, having taken 97 turns getting there. The floor read the
-// closing second, matched the phase by name across every branch, and stopped
-// a run 1292 turns and $55 in.
+// run at least one agent session - phase_end rows whose `seconds` is under
+// the floor, for phases with a session_start. Shell phases are not here on
+// purpose: a branch checkout, a fold or a rule gate is meant to take a
+// second. An agent phase that took less than a minute is a phase in which
+// no agent did the work, and that is a run to stop and read, not to let
+// through to the next phase at full price.
 func shortPhases(run string, floor float64) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
@@ -612,11 +602,7 @@ func shortPhases(run string, floor float64) map[string]float64 {
 		WHERE e.run=? AND e.kind='phase_end' AND ifnull(e.phase,'') <> ''
 		  AND coalesce(json_extract(e.payload,'$.seconds'), 0) < ?
 		  AND EXISTS (SELECT 1 FROM events s WHERE s.run=e.run
-		              AND s.kind='session_start' AND coalesce(s.phase,'')=coalesce(e.phase,'')
-		              AND coalesce(s.branch,'')=coalesce(e.branch,''))
-		  AND NOT EXISTS (SELECT 1 FROM events t WHERE t.run=e.run
-		              AND t.kind='turn' AND coalesce(t.phase,'')=coalesce(e.phase,'')
-		              AND coalesce(t.branch,'')=coalesce(e.branch,''))`,
+		              AND s.kind='session_start' AND coalesce(s.phase,'')=coalesce(e.phase,''))`,
 		run, floor)
 	if err != nil {
 		return nil
