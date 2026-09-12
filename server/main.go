@@ -646,8 +646,15 @@ func main() {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "db": dbPath})
 	})
+	// `usd` here is the run's spend by the one arithmetic, not the bill alone.
+	// The stored column holds what the SDK billed, and a session that was ended
+	// from outside -- stopped by a limit, cut at the context line, killed with
+	// its container -- never bills. On run 0ad6a8c6 that was $29.25 of $69.27,
+	// and the row said $40.02: not the number anybody was charged, and the one
+	// every dashboard and every summary read.
 	mux.HandleFunc("GET /runs", func(w http.ResponseWriter, r *http.Request) {
-		rows2json(w, `SELECT * FROM runs ORDER BY started DESC LIMIT 50`)
+		rows2json(w, `SELECT r.*, `+spentExpr+` AS usd
+		              FROM runs r ORDER BY r.started DESC LIMIT 50`)
 	})
 	mux.HandleFunc("GET /gates", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT * FROM gates ORDER BY id DESC LIMIT 500`)

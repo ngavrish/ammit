@@ -4,7 +4,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"log"
-	"math"
 	"net/http"
 )
 
@@ -82,32 +81,82 @@ func seedPrices() {
 
 // The SDK's formula, in SQL, over the lifted turns: what a run's turns come
 // to at the catalog. The one expression every chart and the judge read.
-const countedSQL = `SELECT coalesce(sum(
-	(coalesce(t.tokens_in,0)*p.input
-	 + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output
-	 + coalesce(t.cache_read,0)*p.cache_read
-	 + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write
-	 + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6
-	* CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END), 0)
-	FROM turns t JOIN prices p ON p.model = t.model
-	WHERE t.run = ? AND t.tokens_in IS NOT NULL`
+// One arithmetic, not two.
+//
+// The SDK bills a session when it ends, and this service prices turns as they
+// arrive. Taking the larger of the two over a whole run mixed them: on run
+// 0ad6a8c6 the bill was $40.02 and the estimate $70.11, and the estimate won
+// because output is priced from a four-characters-a-token guess and output
+// costs five times input. The run was stopped over a number nobody was charged.
+//
+// So the two are added rather than compared, and each is used where it is the
+// only one there is: a session that billed contributes its bill, a session that
+// did not -- one this service stopped, one still running -- contributes the
+// price of its own turns. Matched by (agent, phase, branch), which is what a
+// session is here.
+const spentSQL = `
+WITH billed AS (
+	SELECT coalesce(agent,'') a, coalesce(phase,'') ph, coalesce(branch,'') br,
+	       sum(coalesce(json_extract(payload,'$.usd'), 0)) usd
+	FROM events
+	WHERE run = ? AND kind = 'session_end'
+	  AND coalesce(json_extract(payload,'$.usd'), 0) > 0
+	GROUP BY 1, 2, 3
+), counted AS (
+	SELECT coalesce(t.agent,'') a, coalesce(t.phase,'') ph, coalesce(t.branch,'') br,
+	       sum((coalesce(t.tokens_in,0)*pr.input
+	            + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*pr.output
+	            + coalesce(t.cache_read,0)*pr.cache_read
+	            + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*pr.cache_write
+	            + coalesce(t.cache_write_1h,0)*pr.cache_write_1h)/1e6
+	           * CASE WHEN t.geo='us' THEN pr.us_surcharge ELSE 1 END) usd
+	FROM turns t JOIN prices pr ON pr.model = t.model
+	WHERE t.run = ? AND t.tokens_in IS NOT NULL
+	GROUP BY 1, 2, 3
+)
+SELECT coalesce((SELECT sum(usd) FROM billed), 0)
+     + coalesce((SELECT sum(c.usd) FROM counted c
+                 WHERE NOT EXISTS (SELECT 1 FROM billed b
+                                   WHERE b.a = c.a AND b.ph = c.ph AND b.br = c.br)), 0)`
 
-// countedUSD is what a run's turns come to so far, priced as they arrived.
-func countedUSD(run string) float64 {
+// spentExpr is spentSQL as a scalar subquery against the row's own run, so a
+// listing and a judgement cannot drift apart: one formula, two callers.
+const spentExpr = `(
+	coalesce((SELECT sum(coalesce(json_extract(e.payload,'$.usd'),0))
+	          FROM events e
+	          WHERE e.run = r.run AND e.kind = 'session_end'
+	            AND coalesce(json_extract(e.payload,'$.usd'),0) > 0), 0)
+	+ coalesce((SELECT sum(u.usd) FROM (
+	     SELECT coalesce(t.agent,'') a, coalesce(t.phase,'') ph,
+	            coalesce(t.branch,'') br,
+	            sum((coalesce(t.tokens_in,0)*pr.input
+	                 + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*pr.output
+	                 + coalesce(t.cache_read,0)*pr.cache_read
+	                 + (coalesce(t.cache_write,0)-coalesce(t.cache_write_1h,0))*pr.cache_write
+	                 + coalesce(t.cache_write_1h,0)*pr.cache_write_1h)/1e6
+	                * CASE WHEN t.geo='us' THEN pr.us_surcharge ELSE 1 END) usd
+	     FROM turns t JOIN prices pr ON pr.model = t.model
+	     WHERE t.run = r.run AND t.tokens_in IS NOT NULL
+	     GROUP BY 1,2,3) u
+	   WHERE NOT EXISTS (
+	     SELECT 1 FROM events e2
+	     WHERE e2.run = r.run AND e2.kind = 'session_end'
+	       AND coalesce(json_extract(e2.payload,'$.usd'),0) > 0
+	       AND coalesce(json_extract(e2.payload,'$.agent'),'') = u.a
+	       AND coalesce(json_extract(e2.payload,'$.phase'),'') = u.ph
+	       AND coalesce(json_extract(e2.payload,'$.branch'),'') = u.br)), 0))`
+
+// spentUSD is a run's spend, once: every session's bill where it sent one, and
+// the price of its turns where it did not.
+func spentUSD(r openRun) float64 {
 	mu.Lock()
 	defer mu.Unlock()
 	var usd float64
-	if err := db.QueryRow(countedSQL, run).Scan(&usd); err != nil {
-		log.Printf("ammit: counted usd: %v", err)
+	if err := db.QueryRow(spentSQL, r.run, r.run).Scan(&usd); err != nil {
+		log.Printf("ammit: spent usd: %v", err)
+		return r.usd
 	}
 	return usd
-}
-
-// spentUSD is a run's spend as far as anything knows it: the bill where the
-// SDK has sent one, the count of its turns where it has not, whichever is
-// larger. A session this service stopped never sends a bill.
-func spentUSD(r openRun) float64 {
-	return math.Max(r.usd, countedUSD(r.run))
 }
 
 func servePrices(w http.ResponseWriter, r *http.Request) {
