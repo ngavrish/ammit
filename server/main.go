@@ -412,7 +412,23 @@ func main() {
 			if late := time.Since(last); late > time.Duration(tick)*3*time.Second {
 				log.Printf("ammit: %.0fs since the last round against a %ds "+
 					"tick - this process was suspended, not the runs; "+
-					"skipping one round of judgement", late.Seconds(), tick)
+					"skipping one round of judgement and re-arming the "+
+					"absence clock", late.Seconds(), tick)
+				// Skipping the round is not enough, and run ac8adee9 is what
+				// that cost. The laptop slept from 23:11 to 23:29; on the far
+				// side the first round measured a pulse of 1113s against a
+				// limit of 120 - every second of it slept through - and fired
+				// restart_worker at a run that had been working normally two
+				// minutes before the machine went down. One skipped round does
+				// not make an age fresh: the round after it reads the same
+				// stale number and acts on it.
+				//
+				// A suspend is our absence exactly as a restart is, so it
+				// moves the same clock. Nothing older than this is ours to
+				// judge, and a run that really did die while we slept still
+				// earns its judgement - on a pulse measured awake, one
+				// timeouts.heartbeat later.
+				_upSince = time.Now()
 				last = time.Now()
 				time.Sleep(time.Duration(tick) * time.Second)
 				continue

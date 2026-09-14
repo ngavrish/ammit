@@ -263,16 +263,39 @@ func weigh(conf Config) {
 		// that stopped, and the worker_gone/orphan path below still catches
 		// the run that died before its first beat.
 		if hb, ok := conf.num("timeouts", "heartbeat"); ok && hb > 0 {
-			if pulse := heartbeatAge(r.run); pulse >= 0 && pulse > hb && pulse < up {
-				action := conf.str("actions", "on_heartbeat_gone", "restart_worker")
-				ctx := map[string]string{"run": r.run, "name": r.name,
-					"branch": lastBranch(r.run)}
-				for k, v := range conf["context"] {
-					ctx[k] = v
+			// Only the silence measured AWAKE counts. The age of the pulse is
+			// not the same question as how long we have watched it: a laptop
+			// that sleeps for eighteen minutes wakes with every pulse aged
+			// eighteen minutes, and none of that silence was witnessed.
+			//
+			// "pulse < up" used to say this and said it wrong. The two clocks
+			// run at the same speed, so a pulse that starts older than our
+			// uptime stays older than it forever: after a restart or a sleep
+			// the check did not delay, it switched off, and the run that
+			// really was dead was left to the slower paths below.
+			//
+			// The awake part of the silence is min(pulse, up). It is zero at
+			// the moment we wake, so nothing is judged on a sleep; it reaches
+			// timeouts.heartbeat one limit after waking if the pulse never
+			// comes back, which is the reaper doing its job on evidence it
+			// actually saw; and for a run alive across our absence it never
+			// gets there, because the next beat lands within the minute.
+			if pulse := heartbeatAge(r.run); pulse >= 0 {
+				quiet := pulse
+				if up < quiet {
+					quiet = up
 				}
-				judge("run", r.run, r.name, "timeouts.heartbeat", hb, pulse,
-					action, act(action, conf, ctx))
-				continue
+				if quiet > hb {
+					action := conf.str("actions", "on_heartbeat_gone", "restart_worker")
+					ctx := map[string]string{"run": r.run, "name": r.name,
+						"branch": lastBranch(r.run)}
+					for k, v := range conf["context"] {
+						ctx[k] = v
+					}
+					judge("run", r.run, r.name, "timeouts.heartbeat", hb, quiet,
+						action, act(action, conf, ctx))
+					continue
+				}
 			}
 		}
 		// A run whose worker has stopped reporting entirely is not a run to
