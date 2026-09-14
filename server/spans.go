@@ -620,3 +620,42 @@ func shortPhases(run string, floor float64) map[string]float64 {
 	}
 	return out
 }
+
+// workerStartedAt is when the worker container the runs live in last started,
+// as the daemon reports it. ok is false when the daemon cannot say - the same
+// leash and the same meaning as workerUp: unknown certifies nothing.
+func workerStartedAt(conf Config) (float64, bool) {
+	worker := conf.str("context", "worker", "")
+	if worker == "" {
+		return 0, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
+		"{{.State.StartedAt}}", worker).Output()
+	if err != nil {
+		return 0, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, false
+	}
+	return float64(at.UnixNano()) / 1e9, true
+}
+
+// lastHeard is when the WORKER last said anything at all under a run, as an
+// absolute time. Heartbeats count here - the question is whether the process
+// spoke, not whether it worked - and only ammit's own instruments are left
+// out. ok is false for a row that has no event of its own.
+func lastHeard(run string) (float64, bool) {
+	mu.Lock()
+	defer mu.Unlock()
+	var at float64
+	err := db.QueryRow(`SELECT at FROM events
+	                    WHERE run=? AND kind NOT IN ('sample','netprobe')
+	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
+	if err != nil {
+		return 0, false
+	}
+	return at, true
+}

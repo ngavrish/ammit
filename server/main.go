@@ -406,6 +406,8 @@ func main() {
 		// genuinely dead worker and saves every live run from being shot for
 		// its host's sleep.
 		last := time.Now()
+		// Armed until the daemon answers once: see sweepCrashed.
+		swept := false
 		for {
 			if late := time.Since(last); late > time.Duration(tick)*3*time.Second {
 				log.Printf("ammit: %.0fs since the last round against a %ds "+
@@ -418,6 +420,9 @@ func main() {
 			last = time.Now()
 			conf := loadConfig(confPath)
 			if len(conf) > 0 {
+				if !swept {
+					swept = sweepCrashed(conf)
+				}
 				recordLimits(conf)
 				sweepAbandoned(conf)
 				sweepQueue(conf)
