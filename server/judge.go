@@ -280,6 +280,37 @@ func weigh(conf Config) {
 			// comes back, which is the reaper doing its job on evidence it
 			// actually saw; and for a run alive across our absence it never
 			// gets there, because the next beat lands within the minute.
+			// The stillborn run: a row with a start and no pulse, ever.
+			//
+			// Skipping it here was deliberate - a pulse that never began is
+			// not a pulse that stopped - and the corpse path below was meant
+			// to catch it. It cannot: that path asks whether the WORKER
+			// container is up, and the worker is a service container that is
+			// always up, run or no run. So run e429dd53, killed thirteen
+			// seconds in by a deploy that recreated the orchestrator under it,
+			// stayed open for six hours; every start gate that asks ammit
+			// whether a run is live was blocked by a run that had been dead
+			// since one minute past one.
+			//
+			// A run that has not beaten once by timeouts.heartbeat after its
+			// own start never got going. There is no session to retry and no
+			// process to reanimate, so this closes the row rather than firing
+			// a hand at it - the same treatment, and for the same reason, as
+			// the corpse below. Measured awake, like everything else here.
+			if pulse := heartbeatAge(r.run); pulse < 0 {
+				born := age
+				if up < born {
+					born = up
+				}
+				if born > hb {
+					finish(r.run, "BLOCKED", fmt.Sprintf(
+						"ammit: stillborn - no heartbeat in the %.0fs since "+
+							"the run started, so nothing ever got going", born))
+					log.Printf("ammit: closed stillborn run %s (%s) - no "+
+						"heartbeat in %.0fs", r.run, r.name, born)
+					continue
+				}
+			}
 			if pulse := heartbeatAge(r.run); pulse >= 0 {
 				quiet := pulse
 				if up < quiet {

@@ -363,18 +363,35 @@ func workerBusy(conf Config) bool {
 // is treated as "unknown", and unknown keeps the certificate unsigned - the
 // caller then leaves the row open, which is the recoverable mistake.
 func workerUp(conf Config) bool {
+	out, ok := inspectWorker(conf, "{{.State.Running}}")
+	if !ok {
+		return true // unknown: do not certify a death the daemon cannot confirm
+	}
+	return out == "true"
+}
+
+// inspectWorker asks the daemon one field about the worker container. The only
+// place this service shells out to docker for an answer (act() shells out to
+// give orders, which is a different thing): both questions we ask - is it
+// running, when did it start - are the same call with a different format, and
+// one call site is one place to put the leash, the empty-name check and the
+// meaning of silence.
+//
+// ok is false when the daemon cannot say, and every caller must read that as
+// "unknown", never as "no".
+func inspectWorker(conf Config, format string) (string, bool) {
 	worker := conf.str("context", "worker", "")
 	if worker == "" {
-		return false
+		return "", false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
-		"{{.State.Running}}", worker).Output()
+		format, worker).Output()
 	if err != nil {
-		return true // unknown: do not certify a death the daemon cannot confirm
+		return "", false
 	}
-	return strings.TrimSpace(string(out)) == "true"
+	return strings.TrimSpace(string(out)), true
 }
 
 // heardFrom is seconds since the WORKER said anything at all - any event it
@@ -625,18 +642,11 @@ func shortPhases(run string, floor float64) map[string]float64 {
 // as the daemon reports it. ok is false when the daemon cannot say - the same
 // leash and the same meaning as workerUp: unknown certifies nothing.
 func workerStartedAt(conf Config) (float64, bool) {
-	worker := conf.str("context", "worker", "")
-	if worker == "" {
+	out, ok := inspectWorker(conf, "{{.State.StartedAt}}")
+	if !ok {
 		return 0, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
-		"{{.State.StartedAt}}", worker).Output()
-	if err != nil {
-		return 0, false
-	}
-	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(out)))
+	at, err := time.Parse(time.RFC3339Nano, out)
 	if err != nil {
 		return 0, false
 	}
