@@ -271,6 +271,21 @@ func turnsPerSession(run string) map[string]float64 {
 // session grinding through a suite makes calls — measured across a whole
 // four-hour run, no healthy session ever crossed both lines at once.
 //
+// What counts as a request is the model ANSWERING, not a frame arriving. The
+// runner records one request per message out of the CLI's stream, and that
+// stream carries bookkeeping: on run ab93afec, 13,899 of 15,100 recorded
+// requests were SystemMessage/thinking_tokens counters, 0.02s apart, against
+// 746 assistant messages. Counting frames, a planner that spent ten minutes
+// thinking read as 218 requests with no tool call - "spinning" - and earned a
+// retry_session that ended a session doing exactly what it was asked to do.
+// Twice in one run, and in the two runs before it.
+//
+// So the count is AssistantMessage request_ends: one per answer the model
+// actually produced. The pathology this was written for - ninety-seven
+// requests, seventy-two returning nothing - is ninety-seven answers and still
+// crosses the line; a session thinking hard between two tool calls no longer
+// does.
+//
 // Returns session key -> requests in the window.
 func spinningSessions(run string, window, minRequests float64) map[string]float64 {
 	mu.Lock()
@@ -278,9 +293,10 @@ func spinningSessions(run string, window, minRequests float64) map[string]float6
 	since := float64(time.Now().UnixNano())/1e9 - window
 	rows, err := db.Query(`
 		SELECT s.session,
-		  (SELECT count(*) FROM events r WHERE r.run=s.run AND r.kind='request_start'
+		  (SELECT count(*) FROM events r WHERE r.run=s.run AND r.kind='request_end'
 		     AND coalesce(r.agent,'')=s.agent AND coalesce(r.branch,'')=s.branch
-		     AND r.at>=?) reqs,
+		     AND r.at>=?
+		     AND json_extract(r.payload,'$.msg')='AssistantMessage') reqs,
 		  (SELECT count(*) FROM events c WHERE c.run=s.run AND c.kind='call'
 		     AND coalesce(c.session,'')=s.session AND c.at>=?) calls
 		FROM (SELECT run, coalesce(session,'') session, coalesce(agent,'') agent,
