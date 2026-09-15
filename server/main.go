@@ -422,15 +422,19 @@ func main() {
 		// everyone was awake. One free round costs a tick of lateness on a
 		// genuinely dead worker and saves every live run from being shot for
 		// its host's sleep.
-		last := time.Now()
+		// Wall clock on purpose: a suspended VM stops the monotonic one, so a
+		// round that arrived seven minutes late by the calendar arrived on time
+		// by time.Since, and this guard - the one written for exactly that
+		// case - never fired. See _upSince.
+		last := nowWall()
 		// Armed until the daemon answers once: see sweepCrashed.
 		swept := false
 		for {
-			if late := time.Since(last); late > time.Duration(tick)*3*time.Second {
+			if late := nowWall() - last; late > float64(tick)*3 {
 				log.Printf("ammit: %.0fs since the last round against a %ds "+
 					"tick - this process was suspended, not the runs; "+
 					"skipping one round of judgement and re-arming the "+
-					"absence clock", late.Seconds(), tick)
+					"absence clock", late, tick)
 				// Skipping the round is not enough, and run ac8adee9 is what
 				// that cost. The laptop slept from 23:11 to 23:29; on the far
 				// side the first round measured a pulse of 1113s against a
@@ -445,12 +449,12 @@ func main() {
 				// judge, and a run that really did die while we slept still
 				// earns its judgement - on a pulse measured awake, one
 				// timeouts.heartbeat later.
-				_upSince = time.Now()
-				last = time.Now()
+				_upSince = nowWall()
+				last = nowWall()
 				time.Sleep(time.Duration(tick) * time.Second)
 				continue
 			}
-			last = time.Now()
+			last = nowWall()
 			conf := loadConfig(confPath)
 			if len(conf) > 0 {
 				if !swept {

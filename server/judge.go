@@ -248,10 +248,26 @@ func finish(run, verdict, summary string) {
 // and ending it.
 //
 // Nothing older than our own uptime is ours to judge.
-var _upSince = time.Now()
+// Wall clock, not monotonic, and that distinction is the whole of run
+// 25e6a95b. The host slept for 407 seconds at 09:03; inside the Docker VM the
+// monotonic clock sleeps with it, so time.Since read the round as on time and
+// the suspend guard never fired - while the pulse, which is wall-clock
+// timestamps the worker wrote, had jumped the full seven minutes. The guard
+// against measuring our own absence was therefore blind to the one absence
+// this machine actually has, and restart_worker went off at a run whose
+// process had been asleep with everything else.
+//
+// Everything compared with an event timestamp has to be measured the way that
+// timestamp was: by the clock that moves while the machine is suspended.
+var _upSince = nowWall()
+
+// nowWall is the time every age here is measured in: seconds since the epoch,
+// the same scale the events carry, and the clock that keeps counting while
+// the VM is paused.
+func nowWall() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 func weigh(conf Config) {
-	up := time.Since(_upSince).Seconds()
+	up := nowWall() - _upSince
 	for _, r := range openRuns() {
 		age := float64(time.Now().UnixNano())/1e9 - r.started
 		// The fast pulse check, ahead of the slow work-silence one. The runner
