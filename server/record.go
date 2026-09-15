@@ -70,9 +70,17 @@ var perKind = map[string][]string{
 	"compression": {"comp_in", "comp_out", "dedup", "markers", "errors",
 		"results"},
 	"service_log": {"service", "level", "logger", "text"},
+	// The tune's own numbers joined this on 15 September: a LoRA run is the
+	// one thing here that takes an hour, changes what the pipeline is made
+	// of, and until now left nothing behind but a log file on a laptop.
+	// role/iters/adapter say which tune, loss says how it went, and
+	// base_rate/tuned_rate/identical are the acceptance gate's three
+	// answers - did it change the model, and is it better on the judge.
 	"learning": {"item", "model", "base", "samples", "epochs", "loss",
 		"minutes", "pairs", "local_rate", "sonnet_rate", "total", "fresh",
-		"confirmed", "kb", "ticket", "transcripts", "funcreq"},
+		"confirmed", "kb", "ticket", "transcripts", "funcreq",
+		"role", "iters", "adapter", "base_rate", "tuned_rate", "identical",
+		"verdict"},
 	// Written by this service about the machine, not by the pipeline.
 	"sample":    {"container", "memory_mb", "memory_pct", "cpu_pct", "pids"},
 	"netprobe":  {"host", "latency_ms", "ok"},

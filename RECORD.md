@@ -139,7 +139,7 @@ own way produce two numbers for one idea.
 | kind | fields |
 |---|---|
 | `service_log` | `service`, `level`, `logger`, `text` |
-| `learning` | `item`, `model`, `base`, `samples`, `epochs`, `loss`, `minutes`, `pairs`, `local_rate`, `sonnet_rate`, `total`, `fresh`, `confirmed`, `kb`, `ticket`, `transcripts`, `funcreq` |
+| `learning` | `item`, `model`, `base`, `samples`, `epochs`, `loss`, `minutes`, `pairs`, `local_rate`, `sonnet_rate`, `total`, `fresh`, `confirmed`, `kb`, `ticket`, `transcripts`, `funcreq`, `role`, `iters`, `adapter`, `base_rate`, `tuned_rate`, `identical`, `verdict` |
 | `heartbeat` | nothing beyond the envelope. It is a pulse, and its whole content is that it arrived |
 
 Two kinds are written by this service about the machine rather than sent by a
