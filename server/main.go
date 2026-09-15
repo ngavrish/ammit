@@ -250,6 +250,23 @@ CREATE TABLE IF NOT EXISTS limits (
 );
 CREATE INDEX IF NOT EXISTS limits_name ON limits (name, at);
 
+-- Who is holding the stack, and since when.
+--
+-- The deploy job yields to a live run, and that is half a gate: a run that
+-- starts while a deploy is between its check and its "up" dies under the
+-- containers being replaced. Run e429dd53 did, thirteen seconds in. The other
+-- half is here - a mark each side leaves before it looks at the other, so the
+-- one that was second sees the first and stands aside.
+--
+-- In the database rather than in memory, because "Start the watchdog" recreates
+-- this container in the middle of the deploy that holds the lease.
+CREATE TABLE IF NOT EXISTS leases (
+    name    TEXT PRIMARY KEY,
+    holder  TEXT NOT NULL,
+    at      REAL NOT NULL,
+    expires REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS queue (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     name      TEXT NOT NULL,
@@ -676,6 +693,97 @@ func main() {
 	mux.HandleFunc("GET /runs", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT r.*, `+spentExpr+` AS usd
 		              FROM runs r ORDER BY r.started DESC LIMIT 50`)
+	})
+	// The stack lease: POST to take it, DELETE to give it back, GET to ask.
+	//
+	// Whoever is about to replace containers takes it first and looks for a
+	// live run second; whoever is about to start a run asks for it first and
+	// opens its row second. Both orders are "mark, then look", which is what
+	// makes the two checks a gate instead of two races.
+	//
+	// A holder that dies without giving it back must not wedge the machine, so
+	// every lease carries its own deadline and an expired one is not a lease.
+	// Re-taking a lease you already hold is not a conflict: it extends it.
+	mux.HandleFunc("POST /lease", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Name   string  `json:"name"`
+			Holder string  `json:"holder"`
+			TTL    float64 `json:"ttl"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil ||
+			!validName.MatchString(in.Name) || in.Holder == "" {
+			writeJSON(w, http.StatusBadRequest,
+				map[string]string{"error": "name and holder are required"})
+			return
+		}
+		if in.TTL <= 0 || in.TTL > 3600 {
+			in.TTL = 1200
+		}
+		now := float64(time.Now().UnixNano()) / 1e9
+		mu.Lock()
+		var holder string
+		var at, expires float64
+		err := db.QueryRow(`SELECT holder, at, expires FROM leases WHERE name=?`,
+			in.Name).Scan(&holder, &at, &expires)
+		held := err == nil && expires > now && holder != in.Holder
+		if !held {
+			if err != nil || holder != in.Holder {
+				at = now
+			}
+			db.Exec(`INSERT INTO leases (name, holder, at, expires) VALUES (?,?,?,?)
+			         ON CONFLICT(name) DO UPDATE SET holder=excluded.holder,
+			                                        at=excluded.at,
+			                                        expires=excluded.expires`,
+				in.Name, in.Holder, at, now+in.TTL)
+		}
+		mu.Unlock()
+		if held {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"taken": false, "holder": holder, "since": at, "expires": expires})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"taken": true, "holder": in.Holder, "since": at, "expires": now + in.TTL})
+	})
+	mux.HandleFunc("DELETE /lease", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		holder := r.URL.Query().Get("holder")
+		if name == "" || holder == "" {
+			writeJSON(w, http.StatusBadRequest,
+				map[string]string{"error": "name and holder are required"})
+			return
+		}
+		// Only the holder gives it back. A deploy that timed out and a deploy
+		// that started afterwards are two different holders, and the late one
+		// must not release the live one's lease on its way out.
+		mu.Lock()
+		res, _ := db.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, name, holder)
+		mu.Unlock()
+		n := int64(0)
+		if res != nil {
+			n, _ = res.RowsAffected()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"released": n > 0})
+	})
+	mux.HandleFunc("GET /lease", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		if name == "" {
+			rows2json(w, `SELECT * FROM leases ORDER BY name`)
+			return
+		}
+		now := float64(time.Now().UnixNano()) / 1e9
+		mu.Lock()
+		var holder string
+		var at, expires float64
+		err := db.QueryRow(`SELECT holder, at, expires FROM leases WHERE name=?`,
+			name).Scan(&holder, &at, &expires)
+		mu.Unlock()
+		if err != nil || expires <= now {
+			writeJSON(w, http.StatusOK, map[string]any{"held": false})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"held": true, "holder": holder, "since": at, "expires": expires})
 	})
 	mux.HandleFunc("GET /gates", func(w http.ResponseWriter, r *http.Request) {
 		rows2json(w, `SELECT * FROM gates ORDER BY id DESC LIMIT 500`)
