@@ -629,11 +629,26 @@ func retryWaits(run string, window float64) map[string]float64 {
 func shortPhases(run string, floor float64) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
+	// The FIRST time a branch enters a phase, and only that one.
+	//
+	// The floor is against a phase that answered without doing the work, so
+	// the next phase starts on nothing. A phase re-entered after a gate or a
+	// heal lap is the opposite case: the branch comes back to change one
+	// thing, and honest work there is about a minute. Run aab603f0 was closed
+	// for claim-13's second pass through implementing at 56 seconds while
+	// claim-12's second pass, 63 seconds, had just cleared the same floor -
+	// the rule was firing on noise, and taking a two-hour run with it.
+	//
+	// One row per (phase, branch), the earliest, judged on its own seconds.
 	rows, err := db.Query(`
 		SELECT coalesce(e.phase,''), coalesce(json_extract(e.payload,'$.seconds'), 0)
 		FROM events e
 		WHERE e.run=? AND e.kind='phase_end' AND ifnull(e.phase,'') <> ''
 		  AND coalesce(json_extract(e.payload,'$.seconds'), 0) < ?
+		  AND e.id = (SELECT min(f.id) FROM events f
+		              WHERE f.run=e.run AND f.kind='phase_end'
+		                AND coalesce(f.phase,'')=coalesce(e.phase,'')
+		                AND coalesce(f.branch,'')=coalesce(e.branch,''))
 		  AND EXISTS (SELECT 1 FROM events s WHERE s.run=e.run
 		              AND s.kind='session_start' AND coalesce(s.phase,'')=coalesce(e.phase,''))`,
 		run, floor)
