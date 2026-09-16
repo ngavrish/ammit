@@ -134,6 +134,8 @@ func store(e event) {
 		// Go is not reentrant and this file locks in a dozen places — anything
 		// called from inside store() must take the lock for itself, later.
 		go judgeEmptyRun(e.s("run"), e.s("verdict"), e.s("summary"))
+		// And say so, for the runs that die before the phase that reports.
+		go judgeRunEnd(e.s("run"), e.s("name"), e.s("verdict"), e.s("summary"))
 	case "gate":
 		// The round is counted here rather than trusted from the caller: a
 		// pipeline knows what it found, and this service knows how many times it
