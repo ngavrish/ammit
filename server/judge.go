@@ -113,6 +113,38 @@ func endsRun(conf Config, action string) bool {
 	return false
 }
 
+// judgeRunEnd says out loud that a run ended badly.
+//
+// Everything this service does was a hand and never a voice: it stops, retries,
+// restarts and closes, and the person who wanted the run learns how it went by
+// asking. On 16 September a run died on the environment gate at 13:50 and the
+// next human word about it was a question at 14:22 - and the run before it had
+// died to a rebuild that failed silently in CI. Two silences in one afternoon,
+// both from systems that knew.
+//
+// So a verdict that is not green is an event with a hand on it, like any other
+// judgement here: actions.on_run_verdict names what to do (notify by default),
+// commands.notify says how. The reporting phase still writes the report; this
+// is for the runs that never reach it.
+func judgeRunEnd(run, name, verdict, summary string) {
+	if run == "" || verdict == "" {
+		return
+	}
+	switch strings.ToUpper(verdict) {
+	case "GREEN", "OK", "PASS", "PASSED":
+		return
+	}
+	conf := loadConfig(env("AMMIT_CONFIG", "/config/limits.yml"))
+	action := conf.str("actions", "on_run_verdict", "notify")
+	ctx := map[string]string{"run": run, "name": name, "verdict": verdict,
+		"summary": summary}
+	for k, v := range conf["context"] {
+		ctx[k] = v
+	}
+	judge("run", run, name, "verdict."+strings.ToLower(verdict), 0, 0,
+		action, act(action, conf, ctx))
+}
+
 // judgeEmptyRun records a run that finished having taken no turns.
 //
 // Read from the table rather than from the event: the client's run_end carries
@@ -153,6 +185,17 @@ func judgeEmptyRun(run, verdict, summary string) {
 		floor, turns, action, act(action, conf, ctx))
 	log.Printf("ammit: run %s finished after %.0fs having taken %.0f turns: %s",
 		run, lived, turns, summary)
+}
+
+// stops says whether an action ends the run it is aimed at. warn does not, and
+// neither does anything that only touches a session or a worker: the run goes
+// on and the judgement stands beside it.
+func stops(action string) bool {
+	switch action {
+	case "stop_run", "cancel_run", "close_run":
+		return true
+	}
+	return false
 }
 
 func act(name string, conf Config, ctx map[string]string) string {
@@ -407,8 +450,12 @@ func weigh(conf Config) {
 			action := conf.str("actions", "on_run_timeout", "stop_run")
 			judge("run", r.run, r.name, "timeouts.run", limit, age, action,
 				act(action, conf, ctx))
-			finish(r.run, "BLOCKED", fmt.Sprintf("ammit: over timeouts.run (%.0fs)", limit))
-			continue
+			// Same rule as the money cap below: the action decides.
+			if stops(action) {
+				finish(r.run, "BLOCKED",
+					fmt.Sprintf("ammit: over timeouts.run (%.0fs)", limit))
+				continue
+			}
 		}
 		// Money as it arrives, not only as it is billed. The SDK's bill comes
 		// at session end and never for a session this service stops; the turns
@@ -421,8 +468,19 @@ func weigh(conf Config) {
 				action := conf.str("actions", "on_usd", "stop_run")
 				judge("run", r.run, r.name, "limits.usd_per_run", limit, usd, action,
 					act(action, conf, ctx))
-				finish(r.run, "BLOCKED", "ammit: over limits.usd_per_run")
-				continue
+				// The close belongs to the action, not to the limit.
+				//
+				// It was unconditional, so actions.on_usd: warn was a setting
+				// that did nothing: run a50736ce was judged "warn" at $70.07
+				// and closed BLOCKED in the same breath, one phase short of
+				// its report, with the configuration saying it should have
+				// been told and left alone. A limit says what is true; the
+				// action says what to do about it, and a config that cannot
+				// choose is not a config.
+				if stops(action) {
+					finish(r.run, "BLOCKED", "ammit: over limits.usd_per_run")
+					continue
+				}
 			}
 		}
 		// What the pipeline is carrying, turn after turn.
