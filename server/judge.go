@@ -795,8 +795,23 @@ func weigh(conf Config) {
 		// answered without doing the work, and the next phase starts on
 		// nothing. timeouts.phase_min is a floor for phases that ran a
 		// session; actions.on_phase_min answers it, stop_run by default.
+		// The floor is per phase, because the phases are not alike.
+		//
+		// It was one number for all of them, and on run 528b2565 it closed a
+		// run that was working: implgate went red, gatefix repaired the
+		// feature file in nineteen seconds, the gate came back green over
+		// thirty checks and the branch went on to run its scenarios - and the
+		// floor, which can only see a clock, called those nineteen seconds an
+		// agent that had answered without doing the work. A repair phase is
+		// exactly the one whose honest run can be seconds: the fix is one
+		// edit. timeouts.phase_min.<phase> says so; the bare phase_min still
+		// covers everything that has no entry of its own.
 		if floor, ok := conf.num("timeouts", "phase_min"); ok && floor > 0 {
 			for phase, secs := range shortPhases(r.run, floor) {
+				if own, ok := conf.numFor("timeouts", "phase_min", phase); ok &&
+					(own <= 0 || secs >= own) {
+					continue
+				}
 				if recently("timeouts.phase_min", r.run+phase, 86400) {
 					continue
 				}
