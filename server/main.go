@@ -387,8 +387,26 @@ func main() {
 	port := env("AMMIT_PORT", "8099")
 	tick, _ := strconv.Atoi(env("AMMIT_TICK", "20"))
 
-	if err := openDB(dbPath); err != nil {
-		log.Fatalf("ammit: no database: %v", err)
+	// The two gates over the charts page, asked of the page as served, before
+	// anything is served. They were checkable only from the test suite, which
+	// means they were checked wherever somebody ran it - and one of them had a
+	// hole big enough for a second time formatter to live in beside the first.
+	// A gate that refuses at boot cannot be skipped by not running the tests.
+	page := chartsPageHTML("")
+	for _, gate := range []struct {
+		name string
+		err  error
+	}{
+		{"time-on-an-axis-is-spelled-out", axisTimeIsSpelledOut(page)},
+		{"a-chart-starts-where-its-data-does", chartStartsWhereItsDataDoes(page)},
+	} {
+		if gate.err != nil {
+			log.Fatalf("ammit: the charts page breaks %s: %v", gate.name, gate.err)
+		}
+
+		if err := openDB(dbPath); err != nil {
+			log.Fatalf("ammit: no database: %v", err)
+		}
 	}
 
 	// Readings on their own thread. Judging must never wait for a machine

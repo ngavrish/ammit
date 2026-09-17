@@ -108,12 +108,11 @@ function shade(r){
   if(!v) return "";
   return "red";
 }
-function ago(sec){
-  if(!sec) return "—";
-  const m=Math.round(sec/60);
-  if(m<60) return m+" min";
-  const h=Math.floor(m/60); return h+"h "+(m%60)+"m";
-}
+// How long a run took, in the same words as every other span on the page.
+// It had its own arithmetic and its own units - "27h 47m", "8 min" - beside
+// dur(), which is exactly the second formatter the rule forbids: one word
+// list, one function, or the gate cannot see the label.
+function ago(sec){ return sec ? dur(sec) : "—" }
 function when(t){return new Date(t*1000).toLocaleString()}
 
 // Picking a run sends the run, and the server narrows every table to it. The
