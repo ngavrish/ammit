@@ -712,8 +712,20 @@ func main() {
 	// its container -- never bills. On run 0ad6a8c6 that was $29.25 of $69.27,
 	// and the row said $40.02: not the number anybody was charged, and the one
 	// every dashboard and every summary read.
+	// The row carries the phase the run is actually in, from its latest event.
+	//
+	// It did not, and every watcher then had to guess: the obvious guess is the
+	// last line of the run's spend file, which is written when a phase ENDS, so
+	// a two-second shell gate that finished after a long phase started sits
+	// there as "the current phase" for as long as that phase runs. One watch
+	// reported `funcreqrules` for an hour while `implementing` was running, and
+	// the person reading it was told the wrong thing the whole time. A fact
+	// nobody has to derive cannot be derived wrongly.
 	mux.HandleFunc("GET /runs", func(w http.ResponseWriter, r *http.Request) {
-		rows2json(w, `SELECT r.*, `+spentExpr+` AS usd
+		rows2json(w, `SELECT r.*, `+spentExpr+` AS usd,
+		                (SELECT e.phase FROM events e
+		                  WHERE e.run = r.run AND e.phase IS NOT NULL AND e.phase <> ''
+		                  ORDER BY e.at DESC LIMIT 1) AS phase
 		              FROM runs r ORDER BY r.started DESC LIMIT 50`)
 	})
 	// The stack lease: POST to take it, DELETE to give it back, GET to ask.
