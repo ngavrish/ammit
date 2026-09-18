@@ -55,6 +55,39 @@ func unquote(value string) string {
 	return value
 }
 
+// anchored reads YAML's `&name value` and `*name`, which the line reader would
+// otherwise store verbatim.
+//
+// Not a general YAML implementation, and here for one reason: three limits were
+// written as an anchor and an alias, and every one of them had been dead since
+// the day it was written. `phase_min.gatefix: &repair_floor 10` was kept as the
+// string "&repair_floor 10", `phase_min.implrulefix: *repair_floor` as
+// "*repair_floor", neither parses as a number, and num() answers "no such
+// limit" to a value that is right there in the file - so all three repair
+// phases were judged against the general 60-second floor for weeks, and run
+// 558879e7 was ended by it after a repair phase did its work in 26 seconds.
+//
+// A file that is edited by people will be written in the language it is named
+// after. Either the reader speaks that much of it or the file stops being YAML;
+// this is the cheaper half.
+func anchored(value string, anchors map[string]string) string {
+	if strings.HasPrefix(value, "&") {
+		name, rest, found := strings.Cut(value[1:], " ")
+		if !found {
+			return value
+		}
+		rest = strings.TrimSpace(rest)
+		anchors[name] = rest
+		return rest
+	}
+	if strings.HasPrefix(value, "*") {
+		if v, ok := anchors[strings.TrimSpace(value[1:])]; ok {
+			return v
+		}
+	}
+	return value
+}
+
 func loadConfig(path string) Config {
 	conf := Config{}
 	raw, err := os.ReadFile(path)
@@ -62,6 +95,7 @@ func loadConfig(path string) Config {
 		return conf
 	}
 	section := ""
+	anchors := map[string]string{}
 	for _, line := range strings.Split(string(raw), "\n") {
 		line, _ = cutComment(line)
 		if strings.TrimSpace(line) == "" {
@@ -79,7 +113,8 @@ func loadConfig(path string) Config {
 		if !found {
 			continue
 		}
-		conf[section][strings.TrimSpace(key)] = unquote(strings.TrimSpace(value))
+		conf[section][strings.TrimSpace(key)] =
+			anchored(unquote(strings.TrimSpace(value)), anchors)
 	}
 	return conf
 }

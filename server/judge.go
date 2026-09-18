@@ -797,21 +797,15 @@ func weigh(conf Config) {
 		// session; actions.on_phase_min answers it, stop_run by default.
 		// The floor is per phase, because the phases are not alike.
 		//
-		// It was one number for all of them, and on run 528b2565 it closed a
-		// run that was working: implgate went red, gatefix repaired the
-		// feature file in nineteen seconds, the gate came back green over
-		// thirty checks and the branch went on to run its scenarios - and the
-		// floor, which can only see a clock, called those nineteen seconds an
-		// agent that had answered without doing the work. A repair phase is
-		// exactly the one whose honest run can be seconds: the fix is one
-		// edit. timeouts.phase_min.<phase> says so; the bare phase_min still
-		// covers everything that has no entry of its own.
+		// One number for every phase, because what it judges is not the
+		// clock. A phase that answered without doing the work took no turn;
+		// a repair that mended one line in nineteen seconds took one. Reading
+		// only the seconds needed a floor per kind of phase, and that grew a
+		// general value plus three exceptions written as a YAML anchor this
+		// service could not read - dead the day they were written, which is
+		// how run 558879e7 was ended by a floor nobody had chosen for it.
 		if floor, ok := conf.num("timeouts", "phase_min"); ok && floor > 0 {
 			for phase, secs := range shortPhases(r.run, floor) {
-				if own, ok := conf.numFor("timeouts", "phase_min", phase); ok &&
-					(own <= 0 || secs >= own) {
-					continue
-				}
 				if recently("timeouts.phase_min", r.run+phase, 86400) {
 					continue
 				}
@@ -821,8 +815,9 @@ func weigh(conf Config) {
 					action, act(action, conf, ctx))
 				if endsRun(conf, action) {
 					finish(r.run, "BLOCKED", fmt.Sprintf(
-						"ammit: phase %s ran its agents and closed in %.0fs, "+
-							"under the %.0fs floor", phase, secs, floor))
+						"ammit: phase %s ran its agents, took no turn, and "+
+							"closed in %.0fs - under the %.0fs floor",
+						phase, secs, floor))
 					break
 				}
 			}

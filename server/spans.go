@@ -639,7 +639,21 @@ func shortPhases(run string, floor float64) map[string]float64 {
 	// claim-12's second pass, 63 seconds, had just cleared the same floor -
 	// the rule was firing on noise, and taking a two-hour run with it.
 	//
-	// One row per (phase, branch), the earliest, judged on its own seconds.
+	// One row per (phase, branch), the earliest, judged on its own seconds -
+	// and only when the phase took no turn at all.
+	//
+	// The clock alone could not tell the two apart, and the difference is the
+	// whole rule. A phase that answered without doing the work takes seconds
+	// AND writes nothing; a repair that mended one line takes seconds and
+	// writes a turn. Reading only the seconds meant the floor had to be
+	// different for every kind of phase, which is how it came to have a
+	// general value and three per-phase exceptions written as a YAML anchor
+	// the config reader could not read - so the exceptions were dead, and run
+	// 558879e7 was ended by a floor nobody had chosen for that phase.
+	//
+	// A turn is the thing the floor was always reaching for. With it there is
+	// one number for every phase, and the number only has to be long enough
+	// that a phase which truly did nothing has finished failing.
 	rows, err := db.Query(`
 		SELECT coalesce(e.phase,''), coalesce(json_extract(e.payload,'$.seconds'), 0)
 		FROM events e
@@ -650,7 +664,10 @@ func shortPhases(run string, floor float64) map[string]float64 {
 		                AND coalesce(f.phase,'')=coalesce(e.phase,'')
 		                AND coalesce(f.branch,'')=coalesce(e.branch,''))
 		  AND EXISTS (SELECT 1 FROM events s WHERE s.run=e.run
-		              AND s.kind='session_start' AND coalesce(s.phase,'')=coalesce(e.phase,''))`,
+		              AND s.kind='session_start' AND coalesce(s.phase,'')=coalesce(e.phase,''))
+		  AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.run=e.run
+		                  AND coalesce(t.phase,'')=coalesce(e.phase,'')
+		                  AND coalesce(t.branch,'')=coalesce(e.branch,''))`,
 		run, floor)
 	if err != nil {
 		return nil
