@@ -76,8 +76,17 @@ func judge(scope, run, subject, rule string, threshold, observed float64,
 		float64(time.Now().UnixNano())/1e9, run, scope, subject, rule, threshold,
 		observed, action, outcome)
 	mu.Unlock()
-	log.Printf("ammit: %s — %.0f against %.0f on %s %s -> %s %s",
-		rule, observed, threshold, orDash(run), subject, action, outcome)
+	// WARN is called out, because a warning is the only judgement that changes
+	// nothing: the run carries on, and if the line reads like every other line
+	// nobody learns that a limit was crossed until they go looking. The turn
+	// ceilings became warnings on 2026-09-19 and this is what makes them
+	// audible.
+	mark := "ammit"
+	if action == "warn" {
+		mark = "ammit WARN"
+	}
+	log.Printf("%s: %s — %.0f against %.0f on %s %s -> %s %s",
+		mark, rule, observed, threshold, orDash(run), subject, action, outcome)
 }
 
 func orDash(s string) string {
