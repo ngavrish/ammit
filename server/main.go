@@ -224,6 +224,43 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS documents_run ON documents (run, kind);
 
+-- What a run undertook to cover, and what covers it.
+--
+-- Requirements and claims lived only as files in a run directory, and that
+-- directory is reset by the next run of the same ticket. So the question a
+-- tester is actually asked - what does this requirement come from, and which
+-- tests prove it - could be answered for the run in front of you and for no
+-- other. Three kinds in one table, because they are three levels of one
+-- chain and a join across three tables would be the same chain spelled
+-- longer:
+--
+--   requirement  recovered from the tracker; carries its source and its quote
+--   funcreq      derived from a requirement by a technique; covers names it
+--   claim        what a funcreq asserts; one claim is one Scenario Outline
+--
+-- covers is a list: a funcreq covers one requirement, a claim gathers several
+-- functional requirements under one outcome, and both are the same column.
+--
+-- tests is where the chain reaches the suite: the scenario ids that prove
+-- this row. Written when the implementing phase knows them, empty until then,
+-- and empty afterwards is a row nothing proves.
+CREATE TABLE IF NOT EXISTS coverage (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    at     REAL NOT NULL,
+    run    TEXT,
+    ticket TEXT,
+    kind   TEXT NOT NULL,
+    rid    TEXT NOT NULL,
+    covers TEXT,
+    source TEXT,
+    quote  TEXT,
+    title  TEXT,
+    tests  TEXT,
+    body   TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS coverage_row ON coverage (run, kind, rid);
+CREATE INDEX IF NOT EXISTS coverage_ticket ON coverage (ticket, kind);
+
 -- How a run is found: by what it is called, by when it started, or by the id
 -- that is neither. A person asks for APF-1934 and means the one from Thursday
 -- afternoon; a query asks for the uuid and means exactly one row.
@@ -526,6 +563,13 @@ func main() {
 			in.Name, string(payload), float64(time.Now().UnixNano())/1e9)
 		mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]string{"queued": in.Name})
+	})
+	// What a run undertook to cover, and what proves it. See coverage.go.
+	mux.HandleFunc("POST /coverage", func(w http.ResponseWriter, r *http.Request) {
+		putCoverage(db, &mu, w, r)
+	})
+	mux.HandleFunc("GET /coverage", func(w http.ResponseWriter, r *http.Request) {
+		getCoverage(db, &mu, w, r)
 	})
 	mux.HandleFunc("POST /documents", func(w http.ResponseWriter, r *http.Request) {
 		// A phase's artefact — a framework map, the requirements, a report. The
