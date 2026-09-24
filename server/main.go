@@ -259,6 +259,29 @@ CREATE TABLE IF NOT EXISTS coverage (
     body   TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS coverage_row ON coverage (run, kind, rid);
+CREATE INDEX IF NOT EXISTS coverage_ticket_kind ON coverage (ticket, kind);
+
+-- What the deploy is doing, and how the last one ended.
+--
+-- The lease says a deploy holds the machine right now. It does not say that
+-- one is queued and about to, nor that the last one failed halfway - and a
+-- run started in either of those windows is a run against a stack that is
+-- part old: containers from one commit, a flow catalog from another, and
+-- every finding after that attributed to the code under test. That happened
+-- all of 23 September, twice, and the symptom each time was a run that made
+-- no sense rather than an error anybody could see.
+--
+-- So the deploy says what it is doing, at the start and again at the end
+-- whatever the end was, and a run asks before it starts.
+CREATE TABLE IF NOT EXISTS deploys (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    at      REAL NOT NULL,
+    run     TEXT,
+    status  TEXT NOT NULL,
+    detail  TEXT,
+    shas    TEXT
+);
+CREATE INDEX IF NOT EXISTS deploys_at ON deploys (at DESC);
 CREATE INDEX IF NOT EXISTS coverage_ticket ON coverage (ticket, kind);
 
 -- How a run is found: by what it is called, by when it started, or by the id
@@ -563,6 +586,13 @@ func main() {
 			in.Name, string(payload), float64(time.Now().UnixNano())/1e9)
 		mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]string{"queued": in.Name})
+	})
+	// What the deploy is doing, so a run can decline to start into it.
+	mux.HandleFunc("POST /deploy", func(w http.ResponseWriter, r *http.Request) {
+		putDeploy(db, &mu, w, r)
+	})
+	mux.HandleFunc("GET /deploy", func(w http.ResponseWriter, r *http.Request) {
+		getDeploy(db, &mu, w, r)
 	})
 	// What a run undertook to cover, and what proves it. See coverage.go.
 	mux.HandleFunc("POST /coverage", func(w http.ResponseWriter, r *http.Request) {
