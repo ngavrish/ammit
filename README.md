@@ -180,7 +180,7 @@ actions:
 
 commands:
   restart_worker: docker restart {worker}
-  stop_run: docker exec {worker} sh -c "rm -f /runs/{name}/.running"
+  stop_run: docker exec {worker} sh -c "touch /runs/{name}/.cancel"
   start_run: curl -sS -X POST {starter} -d {payload}
 
 context:
