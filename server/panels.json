@@ -125,6 +125,30 @@
    "agg": "sum"
   },
   {
+   "kind": "table",
+   "title": "Model turn time by phase",
+   "about": "How long the model takes to answer, per phase and model: answers, the fastest, the average, the percentiles, the slowest, the share over two minutes, and the time spent waiting on API retries and on the agent's own background commands.",
+   "unit": "s",
+   "height": 8,
+   "queries": [
+    "SELECT phase, model, answers, min_s AS \"min s\", avg_s AS \"avg s\", p50_s AS \"p50 s\", p90_s AS \"p90 s\", p99_s AS \"p99 s\", max_s AS \"max s\", over_2min_pct AS \"> 2 min %\", retry_pct AS \"retry wait %\", retry_s AS \"retry s\", background_s AS \"background s\" FROM $__model_answers ORDER BY avg_s DESC"
+   ],
+   "label": "Model turn time",
+   "why": "A request_end is one message off the SDK, not a turn: a forty-second answer arrives as thirty thinking_tokens messages and one AssistantMessage, and request ids restart in every session and fan-out branch. An answer is the model waits of one (run, branch, agent, phase) stream since the last tool ran, up to the AssistantMessage. Task*Message and RateLimitEvent waits are the agent idling on its own background command or a rate limit - they are counted as background and retry time, never as the model's. Kept on ingest in model_answers."
+  },
+  {
+   "kind": "bars",
+   "title": "Average answer time by phase",
+   "about": "The model's average time to answer in each phase, one bar per model.",
+   "unit": "s",
+   "height": 8,
+   "queries": [
+    "SELECT $__to/1000 AS time, model AS metric, avg_s AS value, phase AS label FROM $__model_answers ORDER BY avg_s DESC"
+   ],
+   "label": "Average answer time",
+   "why": "A request_end is one message off the SDK, not a turn: a forty-second answer arrives as thirty thinking_tokens messages and one AssistantMessage, and request ids restart in every session and fan-out branch. An answer is the model waits of one (run, branch, agent, phase) stream since the last tool ran, up to the AssistantMessage. Task*Message and RateLimitEvent waits are the agent idling on its own background command or a rate limit - they are counted as background and retry time, never as the model's. Kept on ingest in model_answers."
+  },
+  {
    "kind": "timeline",
    "title": "Time in a phase, minute by minute",
    "about": "When each phase began and ended. A bar that reaches the right edge is still open.",

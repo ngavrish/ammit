@@ -11,6 +11,7 @@ import "log"
 // seconds. The event is still kept whole in events; this is the column view
 // of it, keyed by the event's own id so nothing is lifted twice.
 func lift(id int64, at float64, e event) {
+	liftAnswer(id, at, e)
 	switch e.s("kind") {
 	case "turn":
 		// Two provenances, two columns: tokens_out is exactly what the SDK

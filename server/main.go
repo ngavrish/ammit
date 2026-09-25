@@ -93,6 +93,61 @@ CREATE TABLE IF NOT EXISTS turns (
 CREATE INDEX IF NOT EXISTS turns_run ON turns (run, at);
 CREATE INDEX IF NOT EXISTS turns_at ON turns (at);
 
+-- How long the model takes to answer, made on ingest (answers.go). One row
+-- per answer: the model waits of one stream since the last tool ran, up to
+-- and including the AssistantMessage. model is NULL until a turn event of
+-- the same (run, branch, agent) names it.
+CREATE TABLE IF NOT EXISTS model_answers (
+    event_id INTEGER PRIMARY KEY,   -- the AssistantMessage's request_end
+    at       REAL NOT NULL,
+    day      INTEGER NOT NULL,      -- at / 86400, UTC
+    run      TEXT, branch TEXT, agent TEXT, phase TEXT,
+    model    TEXT,
+    seconds  REAL NOT NULL,         -- the model's time to answer
+    retry_s  REAL NOT NULL          -- of which api_retry back-off
+);
+CREATE INDEX IF NOT EXISTS model_answers_at ON model_answers (at);
+CREATE INDEX IF NOT EXISTS model_answers_day ON model_answers (day, phase, model);
+CREATE INDEX IF NOT EXISTS model_answers_stream ON model_answers (run, branch, agent);
+-- Model waits that are the agent idling, not the model thinking: its own
+-- background command (Task*Message) or a rate-limit notice.
+CREATE TABLE IF NOT EXISTS model_idle (
+    event_id INTEGER PRIMARY KEY,
+    at       REAL NOT NULL,
+    day      INTEGER NOT NULL,
+    run      TEXT, branch TEXT, agent TEXT, phase TEXT,
+    model    TEXT,
+    kind     TEXT NOT NULL,         -- background | retry
+    seconds  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS model_idle_at ON model_idle (at);
+CREATE INDEX IF NOT EXISTS model_idle_day ON model_idle (day, phase, model);
+CREATE INDEX IF NOT EXISTS model_idle_stream ON model_idle (run, branch, agent);
+-- The clock of each stream between answers, so a restart resumes mid-answer.
+CREATE TABLE IF NOT EXISTS model_streams (
+    run TEXT, branch TEXT, agent TEXT, phase TEXT,
+    seconds REAL NOT NULL, retry_s REAL NOT NULL, at REAL,
+    PRIMARY KEY (run, branch, agent, phase)
+);
+CREATE TABLE IF NOT EXISTS model_of (
+    run TEXT, branch TEXT, agent TEXT, model TEXT,
+    PRIMARY KEY (run, branch, agent)
+);
+-- The answers per UTC day, phase and model, kept current as answers land.
+CREATE TABLE IF NOT EXISTS phase_model_times (
+    day          INTEGER NOT NULL,
+    phase        TEXT NOT NULL,
+    model        TEXT NOT NULL,
+    answers      INTEGER NOT NULL,
+    min_s        REAL, sum_s REAL NOT NULL, max_s REAL,
+    over_120     INTEGER NOT NULL,
+    retry_s      REAL NOT NULL,
+    background_s REAL NOT NULL,
+    PRIMARY KEY (day, phase, model)
+);
+-- How far a replay of the event stream has read, per table it fills.
+CREATE TABLE IF NOT EXISTS lift_marks (name TEXT PRIMARY KEY, at REAL NOT NULL);
+
 CREATE TABLE IF NOT EXISTS suites (
     event_id INTEGER PRIMARY KEY,
     at       REAL NOT NULL,
@@ -468,6 +523,9 @@ func main() {
 			log.Fatalf("ammit: no database: %v", err)
 		}
 	}
+	// The answers table replays history on its own thread, a slice at a time:
+	// serving starts now, and the live path takes over when it has caught up.
+	go backfillAnswers()
 
 	// Readings on their own thread. Judging must never wait for a machine
 	// reading: one is a call out to a daemon that answers when it feels like it,
@@ -1008,6 +1066,35 @@ func main() {
 	// this column added two units together. It is tokens throughout now, and
 	// a ResultMessage — which carries the session's cumulative output, not one
 	// request's — no longer lands here at all.
+	// How long the model takes to answer, per phase and model, over the last
+	// ?days= (default 7): the rows model_answers keeps on ingest, so this is a
+	// read of a few thousand narrow rows, not of the event stream. ?min= drops
+	// a phase/model with fewer answers (default 20). ?by=day answers from the
+	// daily rollup instead: one row per day, phase and model.
+	mux.HandleFunc("GET /stats/model-turns", func(w http.ResponseWriter, r *http.Request) {
+		days, err := strconv.ParseFloat(r.URL.Query().Get("days"), 64)
+		if err != nil || days <= 0 {
+			days = 7
+		}
+		min, err := strconv.Atoi(r.URL.Query().Get("min"))
+		if err != nil || min < 0 {
+			min = 20
+		}
+		to := time.Now().UnixMilli()
+		from := to - int64(days*86400*1000)
+		if r.URL.Query().Get("by") == "day" {
+			rows2json(w, `SELECT date(day*86400,'unixepoch') AS day, phase, model, answers,
+			              round(min_s,1) AS min_s, round(sum_s/max(answers,1),1) AS avg_s,
+			              round(max_s,0) AS max_s, round(100.0*over_120/max(answers,1),2) AS over_2min_pct,
+			              round(retry_s,0) AS retry_s, round(background_s,0) AS background_s
+			              FROM phase_model_times WHERE day >= ? AND answers >= ?
+			              ORDER BY day, phase, model`, (from/1000)/86400, min)
+			return
+		}
+		rows2json(w, fill(`SELECT * FROM $__model_answers WHERE answers >= `+strconv.Itoa(min)+
+			` ORDER BY avg_s DESC`, from, to))
+	})
+
 	mux.HandleFunc("GET /requests/by-agent", func(w http.ResponseWriter, r *http.Request) {
 		where, args := "kind='request_end'"+notClosed(r), []any{}
 		if run := r.URL.Query().Get("run"); run != "" {

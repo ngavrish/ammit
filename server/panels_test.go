@@ -63,7 +63,7 @@ func queryFaults(spec chartSpec) (faults []string, ran int) {
 			continue
 		}
 		for i, q := range p.Queries {
-			sql := strings.ReplaceAll(strings.ReplaceAll(q, "$__from", "0"), "$__to", "9999999999999")
+			sql := fill(q, 0, 9999999999999)
 			for _, s := range []string{sql, scope(sql, "a-run")} {
 				ran++
 				rows, err := db.Query(s)

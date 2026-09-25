@@ -209,6 +209,7 @@ func window(r *http.Request) (from, to int64) {
 }
 
 func fill(sql string, from, to int64) string {
+	sql = fillAnswers(sql)
 	sql = strings.ReplaceAll(sql, "$__from", strconv.FormatInt(from, 10))
 	return strings.ReplaceAll(sql, "$__to", strconv.FormatInt(to, 10))
 }
