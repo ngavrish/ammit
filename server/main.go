@@ -1082,6 +1082,20 @@ func main() {
 		}
 		to := time.Now().UnixMilli()
 		from := to - int64(days*86400*1000)
+		// One run's answers, for the gate that rotates a phase's model: no
+		// window and no minimum count - a phase that answered twice in this run
+		// is judged on those two answers.
+		if run := r.URL.Query().Get("run"); run != "" {
+			where, args := "run LIKE ? AND phase <> '' AND model IS NOT NULL", []any{run + "%"}
+			if br, ok := r.URL.Query()["branch"]; ok {
+				where, args = where+" AND branch = ?", append(args, br[0])
+			}
+			rows2json(w, `SELECT phase, model, count(*) AS answers, round(min(seconds),1) AS min_s,
+			              round(avg(seconds),1) AS avg_s, round(max(seconds),0) AS max_s,
+			              round(100.0*sum(seconds > 120)/count(*),2) AS over_2min_pct
+			              FROM model_answers WHERE `+where+` GROUP BY phase, model ORDER BY phase, model`, args...)
+			return
+		}
 		if r.URL.Query().Get("by") == "day" {
 			rows2json(w, `SELECT date(day*86400,'unixepoch') AS day, phase, model, answers,
 			              round(min_s,1) AS min_s, round(sum_s/max(answers,1),1) AS avg_s,
