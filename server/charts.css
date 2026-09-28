@@ -1,18 +1,16 @@
-/* Dark, dense, on the house palette: deep space blue for the ground, cards a
-   shade lighter with a hairline round them, bronze for the one thing that is
-   active, data grey for what is said quietly. The names keep their jobs from
-   the light page - slate is secondary text, mute is tertiary, hair is a line -
-   so every rule below goes on meaning what it meant. */
+/* Light, on the palette the rest of Chiron uses: navy text and a navy sidebar
+   on white, bronze for the one thing that is active, slate for what is said
+   quietly. Cards are white with a hairline round them. The names keep their
+   jobs - slate/mute is secondary text, dim is tertiary, hair is a line. */
 :root{
-  --ground:var(--navy); --card:var(--navy);
-  --raised:var(--raised);
+  --ground:var(--bg); --card:#FFFFFF;
   --line:var(--hair);
 }
 *{box-sizing:border-box}
 
 /*@HEADER_CSS@*/
 
-/* The strip's controls: dark fields, one hairline, bronze on focus. */
+/* The strip's controls: white fields, one hairline, bronze on focus. */
 #tz{font:400 12px/1 var(--mono);color:var(--mute);background:var(--deeper);
   border:1px solid var(--hair);border-radius:8px;padding:7px 9px;cursor:pointer;
   transition:border-color var(--quick),color var(--quick)}
@@ -46,7 +44,7 @@
 #filters input::placeholder{color:var(--dim)}
 #filters input:focus{outline:0;background:var(--bronze-wash)}
 #filters input[type=date]{font:11.5px/1 var(--mono);color:var(--mute);padding:6px;min-width:116px}
-#filters input[type=date]::-webkit-calendar-picker-indicator{opacity:.5;filter:invert(1)}
+#filters input[type=date]::-webkit-calendar-picker-indicator{opacity:.5}
 .sep{width:1px;align-self:stretch;background:var(--hair);margin:3px 2px}
 .when{display:flex;align-items:center;gap:2px}
 .when i{font:600 9.5px/1 var(--sans);font-style:normal;letter-spacing:.1em;
@@ -89,12 +87,12 @@ main{padding:18px 22px 60px;display:flex;flex-direction:column;gap:22px}
 .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:start;grid-auto-flow:dense}
 .panel{grid-column:span 6;min-width:0;position:relative;
   background:var(--card);border:1px solid var(--hair);border-radius:12px;padding:14px 16px 16px;
-  box-shadow:0 1px 0 rgba(0,0,0,.25);
+  box-shadow:0 1px 2px rgba(15,21,32,.04);
   animation:rise .55s var(--ease) both;animation-delay:calc(var(--i,0)*45ms);
   transition:border-color .25s var(--ease),box-shadow .25s var(--ease),transform .25s var(--ease)}
 .panel::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:0 3px 3px 0;
   background:var(--g,transparent);opacity:.9}
-.panel:hover{border-color:var(--hair-strong);box-shadow:0 8px 30px rgba(0,0,0,.35),0 0 0 1px rgba(205,127,50,.15)}
+.panel:hover{border-color:var(--hair-strong);box-shadow:0 8px 30px rgba(15,21,32,.08),0 0 0 1px rgba(205,127,50,.15)}
 .panel.wide{grid-column:span 12}
 .panel.away{display:none}
 @media (max-width:1180px){.panel{grid-column:span 12}}
@@ -106,23 +104,23 @@ main{padding:18px 22px 60px;display:flex;flex-direction:column;gap:22px}
 .plot{position:relative;min-height:0}
 .plot.drawn:has(.uplot){min-height:320px}
 .plot.loading{min-height:160px;border-radius:8px;overflow:hidden;
-  background:linear-gradient(90deg,transparent 0%,rgba(247,250,252,.05) 45%,rgba(247,250,252,.07) 50%,rgba(247,250,252,.05) 55%,transparent 100%) var(--hair-soft);
+  background:linear-gradient(90deg,transparent 0%,rgba(15,21,32,.03) 45%,rgba(15,21,32,.05) 50%,rgba(15,21,32,.03) 55%,transparent 100%) var(--hair-soft);
   background-size:220% 100%;animation:shimmer 1.3s linear infinite}
 @keyframes shimmer{from{background-position:120% 0}to{background-position:-120% 0}}
 .plot>*{animation:fade .35s var(--ease) both}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 
-/* uPlot on the dark ground. */
+/* uPlot on the white ground. */
 .uplot,.u-legend{color:var(--mute)}
 .u-legend{font-size:11px;color:var(--mute);margin-top:10px}
 .u-legend .u-series>*{padding:2px 6px}
 .u-legend .u-value{color:var(--ink)}
 .u-legend .u-series:hover{background:var(--hair-soft);border-radius:4px}
 .u-select{background:rgba(205,127,50,.15)}
-.u-cursor-x,.u-cursor-y{border-color:rgba(247,250,252,.25)!important}
+.u-cursor-x,.u-cursor-y{border-color:rgba(15,21,32,.25)!important}
 .tip{position:absolute;display:none;pointer-events:none;z-index:5;background:var(--raised);color:var(--ink);
   border:1px solid var(--hair-strong);font:12px/1.4 var(--mono);padding:6px 9px;border-radius:6px;white-space:nowrap;
-  box-shadow:0 6px 24px rgba(0,0,0,.45)}
+  box-shadow:0 6px 24px rgba(15,21,32,.12)}
 
 /* Bars, one row per name. */
 .bars{display:grid;grid-template-columns:auto 1fr auto;gap:6px 14px;align-items:center;
@@ -165,7 +163,7 @@ main{padding:18px 22px 60px;display:flex;flex-direction:column;gap:22px}
 .candles + .keys{margin-top:12px;color:var(--dim);font:11px var(--sans)}
 .candles g:hover rect{fill-opacity:.9}
 .vbars{cursor:crosshair;user-select:none}
-.vbars g:hover rect{filter:brightness(1.2)}
+.vbars g:hover rect{filter:brightness(.9)}
 .vbars + .keys{margin-top:14px;color:var(--mute);font:11px var(--sans)}
 .vbars + .keys i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 5px 0 12px;vertical-align:-1px}
 .vbars + .keys i:first-child{margin-left:0}
@@ -173,7 +171,7 @@ main{padding:18px 22px 60px;display:flex;flex-direction:column;gap:22px}
 
 /* Tiles of one number each. */
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:12px 14px}
-.stat{border:1px solid var(--hair);border-radius:10px;padding:12px 14px;background:var(--deeper);
+.stat{border:1px solid var(--hair);border-radius:10px;padding:12px 14px;background:var(--raised);
   transition:border-color var(--quick),transform var(--quick)}
 .stat:hover{border-color:var(--bronze-glow);transform:translateY(-1px)}
 .stat b{display:block;font:700 21px/1.2 var(--mono);color:var(--ink);letter-spacing:-.02em;
@@ -197,7 +195,7 @@ table{border-collapse:collapse;width:100%;font:12px/1.5 var(--mono);display:bloc
   overflow:auto;max-height:360px;border:1px solid var(--hair);border-radius:8px}
 th,td{border-bottom:1px solid var(--hair);padding:6px 11px;text-align:left;
   white-space:nowrap;font-variant-numeric:tabular-nums}
-th{color:var(--mute);position:sticky;top:0;background:var(--deeper);
+th{color:var(--mute);position:sticky;top:0;background:var(--raised);
   font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.04em;text-transform:uppercase}
 tbody tr{transition:background var(--quick)}
 tbody tr:hover{background:var(--bronze-wash)}
@@ -218,7 +216,7 @@ td .verdict{font-style:normal;font-weight:700}
   animation:rise .5s var(--ease) both;animation-delay:calc(var(--i,0)*30ms);
   transition:border-color .2s var(--ease),box-shadow .2s var(--ease),transform .2s var(--ease)}
 .tile:hover{border-color:var(--hair-strong);border-left-color:var(--bronze);
-  box-shadow:0 10px 30px rgba(0,0,0,.4);transform:translateY(-2px)}
+  box-shadow:0 10px 30px rgba(15,21,32,.10);transform:translateY(-2px)}
 .tile.green{border-left-color:var(--good)}
 .tile.red{border-left-color:var(--bad)}
 .tile.going{border-left-color:var(--warm)}
@@ -264,9 +262,9 @@ td .verdict{font-style:normal;font-weight:700}
 
 /* The dialog. */
 dialog#dlg{border:1px solid var(--hair-strong);border-radius:12px;padding:18px 20px;
-  width:min(760px,92vw);background:var(--navy);color:var(--ink);box-shadow:0 20px 60px rgba(0,0,0,.6);
+  width:min(760px,92vw);background:var(--card);color:var(--ink);box-shadow:0 20px 60px rgba(15,21,32,.25);
   animation:rise .3s var(--ease) both}
-#dlg::backdrop{background:rgba(1,11,23,.7);backdrop-filter:blur(3px)}
+#dlg::backdrop{background:rgba(15,21,32,.35);backdrop-filter:blur(3px)}
 #dlg h3{margin:0 0 4px;font:700 14px var(--sans);color:var(--ink)}
 #dlg .hint{color:var(--mute);font-size:12px;margin:0 0 8px}
 #dlg label{display:block;font:600 10.5px/1.8 var(--mono);color:var(--mute);

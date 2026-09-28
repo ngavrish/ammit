@@ -9,9 +9,9 @@ package main
 //
 // The shape is the one dashboards settled on: navigation in a narrow column
 // that can fold to its icons, the page's own controls in a strip along the top,
-// and the content as cards on a dark ground. The colours are the house's - deep
-// space blue for the ground, bronze for the one thing that is active, data grey
-// for everything that is said quietly.
+// and the content as cards on a white ground. The colours are the house's -
+// navy for the sidebar and the text, bronze for the one thing that is active,
+// slate grey for everything that is said quietly.
 func headerHTML(active string) string {
 	tab := func(href, label, name string) string {
 		on := ""
@@ -85,17 +85,20 @@ func icon(name string) string {
 // state nothing of their own about the ground, the type or the sidebar.
 const headerCSS = `
 :root{
-  --bg:#02101F; --navy:#001F3F; --raised:#062A4F; --deeper:#010B17;
-  --hair:rgba(247,250,252,.08); --hair-strong:rgba(247,250,252,.16); --hair-soft:rgba(247,250,252,.045);
-  --ink:#F7FAFC; --mute:#A0AEC0; --dim:#718096; --slate:#A0AEC0;
-  --bronze:#CD7F32; --bronze-hi:#E39A4C; --bronze-wash:rgba(205,127,50,.12); --bronze-glow:rgba(205,127,50,.45);
-  --sky:#38BDF8; --good:#34D399; --bad:#F87171; --warm:#FBBF24;
+  --bg:#FFFFFF; --navy:#001F3F; --raised:#FAFBFC; --deeper:#FFFFFF; --card:#FFFFFF;
+  --hair:#E5E7EB; --hair-strong:#CBD2DB; --hair-soft:#F1F3F6;
+  --ink:#0F1520; --mute:#4A5568; --dim:#718096; --slate:#4A5568;
+  --bronze:#CD7F32; --bronze-hi:#B06A22; --bronze-wash:rgba(205,127,50,.10); --bronze-glow:rgba(205,127,50,.45);
+  --sky:#0EA5E9; --good:#16A34A; --bad:#DC2626; --warm:#D97706;
+  /* What the charts draw with, read by charts.js so the theme lives here. */
+  --chart-axis:#4A5568; --chart-grid:rgba(15,21,32,.07); --chart-tick:rgba(15,21,32,.14);
+  --chart-zero:rgba(15,21,32,.35); --chart-label:#0F1520; --chart-sep:#FFFFFF;
   --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
   --sans:"Plus Jakarta Sans","Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
   --side:224px; --side-min:64px; --top:56px;
   --ease:cubic-bezier(.2,.7,.2,1); --quick:.18s;
   --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 13 9'%3E%3Cpath d='M4.8.7 1 4.5l3.8 3.8M1 4.5h11' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  color-scheme:dark;
+  color-scheme:light;
 }
 html{background:var(--bg)}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 var(--sans);
@@ -104,12 +107,17 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 var(--sans);
 body.folded{grid-template-columns:var(--side-min) minmax(0,1fr)}
 body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:
-    radial-gradient(1100px 600px at 85% -10%, rgba(205,127,50,.07), transparent 60%),
-    radial-gradient(900px 700px at -10% 110%, rgba(56,189,248,.05), transparent 60%)}
+    radial-gradient(1100px 600px at 85% -10%, rgba(205,127,50,.05), transparent 60%),
+    radial-gradient(900px 700px at -10% 110%, rgba(14,165,233,.035), transparent 60%)}
 .page{position:relative;z-index:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
 
-/* The sidebar: the house colour, one column, sticky for the whole height. */
+/* The sidebar: the house colour, one column, sticky for the whole height. It
+   stays navy on the white page, the way the bar was on the old light one, so it
+   carries its own light-on-dark names and everything inside it inherits them. */
 #side{position:sticky;top:0;height:100vh;z-index:40;display:flex;flex-direction:column;
+  --ink:#F7FAFC; --mute:#A0AEC0; --dim:#718096; --bronze-hi:#E39A4C; --bronze-wash:rgba(205,127,50,.14);
+  --hair:rgba(247,250,252,.08); --hair-strong:rgba(247,250,252,.16); --hair-soft:rgba(247,250,252,.06);
+  color-scheme:dark;
   background:linear-gradient(180deg,var(--navy),#00172F);border-right:1px solid var(--hair);
   padding:14px 10px 12px;gap:10px;overflow:hidden}
 .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 12px;text-decoration:none;
@@ -171,7 +179,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
 
 /* The strip along the top of the page, where the page keeps its own controls. */
 #bar{position:sticky;top:0;z-index:25;min-height:var(--top);padding:9px 18px;
-  background:rgba(2,16,31,.78);backdrop-filter:saturate(140%) blur(12px);
+  background:rgba(255,255,255,.86);backdrop-filter:saturate(140%) blur(12px);
   border-bottom:1px solid var(--hair);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 #bar .title{display:flex;flex-direction:column;gap:2px;line-height:1;margin-right:4px;min-width:0}
 #bar .title b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:22ch}

@@ -32,7 +32,7 @@ func pageHTML() string {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
 <style>
-/* The house style: deep navy, bronze, and mono for anything that is data.
+/* The house style: navy on white, bronze, and mono for anything that is data.
    Fonts come from the network when there is one and fall back to what the
    machine already has when there is not — a page about a pipeline that is down
    should not itself depend on being online. */
@@ -41,14 +41,14 @@ func pageHTML() string {
 ` + headerCSS + `
 /* The page's own names, on the shell's palette: deep is a card, deeper is a
    field, bronze-dim is the line round either. */
-:root{--deep:var(--navy); --panel:var(--navy); --bronze-dim:var(--hair); --ok:var(--good)}
+:root{--deep:var(--card); --panel:var(--card); --bronze-dim:var(--hair); --ok:var(--good)}
 ` + footerCSS + `
 
 h1{margin:0;font:700 1.15rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
    color:var(--bronze)}
 main{max-width:82rem;width:100%;margin:0 auto;padding:1.5rem 1.5rem 3rem;display:grid;gap:1.25rem}
 section{background:var(--deep);border:1px solid var(--bronze-dim);border-radius:12px;
-        padding:1.4rem 1.6rem;box-shadow:0 1px 0 rgba(0,0,0,.25);
+        padding:1.4rem 1.6rem;box-shadow:0 1px 2px rgba(15,21,32,.04);
         animation:rise .55s var(--ease) both;
         transition:border-color .25s var(--ease),box-shadow .25s var(--ease)}
 section:nth-child(2){animation-delay:60ms} section:nth-child(3){animation-delay:120ms} section:nth-child(4){animation-delay:180ms}

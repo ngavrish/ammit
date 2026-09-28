@@ -8,9 +8,19 @@ function humanize(text){
   return String(text).replace(/\b(limits|timeouts)\.[a-z_]+/g, m=>LIMIT_TITLES[m] ? "the "+LIMIT_TITLES[m].charAt(0).toLowerCase()+LIMIT_TITLES[m].slice(1) : m);
 }
 // Twenty, told apart: seventeen containers on a palette of ten put the two
-// that mattered in the same orange.
-const COLORS=["#CD7F32","#38BDF8","#34D399","#F87171","#A78BFA","#22D3EE","#FBBF24","#60A5FA","#F472B6","#2DD4BF",
-  "#FB923C","#818CF8","#4ADE80","#E5B25D","#C084FC","#FB7185","#0EA5E9","#A3E635","#F0ABFC","#94A3B8"];
+// that mattered in the same orange. The pale ones are a shade deeper than they
+// were on the dark ground, so a line still reads against white.
+const COLORS=["#CD7F32","#0EA5E9","#10B981","#EF4444","#8B5CF6","#0891B2","#D97706","#3B82F6","#DB2777","#0D9488",
+  "#EA580C","#6366F1","#16A34A","#B8862B","#A855F7","#E11D48","#0284C7","#65A30D","#C026D3","#64748B"];
+// The chart's own ink, read from the page's :root so the theme lives in one
+// place (header.go) and a chart cannot disagree with the card it sits on.
+const THEME=(()=>{
+  const cs=getComputedStyle(document.documentElement);
+  const v=(n,d)=>(cs.getPropertyValue(n)||"").trim()||d;
+  return {axis:v("--chart-axis","#4A5568"), grid:v("--chart-grid","rgba(15,21,32,.07)"),
+    tick:v("--chart-tick","rgba(15,21,32,.14)"), zero:v("--chart-zero","rgba(15,21,32,.35)"),
+    label:v("--chart-label","#0F1520"), sep:v("--chart-sep","#FFFFFF"), bad:v("--bad","#DC2626")};
+})();
 const main=document.getElementById("main");
 let panels=[], spec={};
 let local=null;
@@ -427,12 +437,12 @@ function drawSeries(box,payload,kind){
       if(alongX) u.setScale("x",{min:Z.x[0],max:Z.x[1]});
       if(alongY) u.setScale("y",{min:Z.y[0],max:Z.y[1]});
     }]},
-    axes:[{stroke:"#A0AEC0",grid:{stroke:"rgba(247,250,252,.06)"},ticks:{stroke:"rgba(247,250,252,.12)"},size:44,
+    axes:[{stroke:THEME.axis,grid:{stroke:THEME.grid},ticks:{stroke:THEME.tick},size:44,
            values:tzFmt(),
            // Which clock the times are read in, said on the axis itself rather
            // than only in a dropdown at the top of the page.
            label:"time ("+zone.replace(/_/g," ")+")",labelSize:26,labelFont:LABEL_FONT,labelGap:10},
-          {stroke:"#A0AEC0",grid:{stroke:"rgba(247,250,252,.06)"},ticks:{stroke:"rgba(247,250,252,.12)"},
+          {stroke:THEME.axis,grid:{stroke:THEME.grid},ticks:{stroke:THEME.tick},
            size:axisWidth,
            ...(incrsOf(U)?{incrs:incrsOf(U)}:{}),
            values:(u,vs)=>vs.map(v=>v==null?"":U.tick(v)),
@@ -528,8 +538,8 @@ function drawBars(box,payload){
   const y=v=>T+ph-(v/ymax)*ph;
   const slot=pw/gs.length, per=metrics.length, bw=Math.max(2,Math.min(36,(slot*0.72)/per));
   let g='';
-  for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"rgba(247,250,252,.07)":"rgba(247,250,252,.3)")+'"/>'+
-    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#A0AEC0">'+esc(U.tick(v))+'</text>';
+  for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?THEME.grid:THEME.zero)+'"/>'+
+    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="'+THEME.axis+'">'+esc(U.tick(v))+'</text>';
   const every=Math.ceil(gs.length/Math.max(4,Math.floor(pw/(byName?60:92))));
   const showVal=gs.length*per<=24;
   const share=v=>limit?Math.round(100*v/limit.value)+"%":"";
@@ -540,11 +550,11 @@ function drawBars(box,payload){
       const tip=gr.title+(per>1?" - "+x.name:"")+": "+U.val(x.value)+(limit?" ("+share(x.value)+" of the "+limitTitle(limit.name).toLowerCase()+")":"");
       return '<g data-tip="'+esc(tip)+'"><rect x="'+bx.toFixed(1)+'" y="'+y(x.value).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0.5,y(0)-y(x.value)).toFixed(1)+
         '" fill="'+(hot?"#EF4444":colour(x.name))+'" rx="1.5"/>'+
-        (showVal?'<text x="'+(bx+bw/2).toFixed(1)+'" y="'+(y(x.value)-4).toFixed(1)+'" text-anchor="middle" font-size="10.5" fill="#F7FAFC">'+esc(U.val(x.value))+(limit?'<tspan fill="#A0AEC0"> '+share(x.value)+'</tspan>':'')+'</text>':'')+'</g>';
+        (showVal?'<text x="'+(bx+bw/2).toFixed(1)+'" y="'+(y(x.value)-4).toFixed(1)+'" text-anchor="middle" font-size="10.5" fill="'+THEME.label+'">'+esc(U.val(x.value))+(limit?'<tspan fill="'+THEME.axis+'"> '+share(x.value)+'</tspan>':'')+'</text>':'')+'</g>';
     }).join("");
     const lab=i%every===0 ? (byName
-      ? '<text x="'+(L+slot*(i+0.5)).toFixed(1)+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#A0AEC0">'+esc(gr.title)+'</text>'
-      : '<text transform="translate('+(L+slot*(i+0.5)).toFixed(1)+','+(H-B+12)+') rotate(35)" font-size="10.5" fill="#A0AEC0">'+esc(gr.label!=null&&seen[gr.label]===1?gr.title:(gr.label||"")+" "+short.format(new Date(gr.t*1000)))+'</text>') : '';
+      ? '<text x="'+(L+slot*(i+0.5)).toFixed(1)+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="'+THEME.axis+'">'+esc(gr.title)+'</text>'
+      : '<text transform="translate('+(L+slot*(i+0.5)).toFixed(1)+','+(H-B+12)+') rotate(35)" font-size="10.5" fill="'+THEME.axis+'">'+esc(gr.label!=null&&seen[gr.label]===1?gr.title:(gr.label||"")+" "+short.format(new Date(gr.t*1000)))+'</text>') : '';
     return bars+lab;
   }).join("");
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
@@ -574,8 +584,8 @@ function drawBars(box,payload){
 // along the bottom. Every chart says what its axes are; none is left to be
 // guessed from the title.
 function axisNames(W,H,L,B,yName,xName){
-  return '<text transform="translate(13,'+((H-B)/2+8).toFixed(0)+') rotate(-90)" text-anchor="middle" font-size="12" font-weight="600" fill="#F7FAFC">'+yName+'</text>'+
-    '<text x="'+(L+(W-L)/2).toFixed(0)+'" y="'+(H-4)+'" text-anchor="middle" font-size="12" font-weight="600" fill="#F7FAFC">'+xName+'</text>';
+  return '<text transform="translate(13,'+((H-B)/2+8).toFixed(0)+') rotate(-90)" text-anchor="middle" font-size="12" font-weight="600" fill="'+THEME.label+'">'+yName+'</text>'+
+    '<text x="'+(L+(W-L)/2).toFixed(0)+'" y="'+(H-4)+'" text-anchor="middle" font-size="12" font-weight="600" fill="'+THEME.label+'">'+xName+'</text>';
 }
 
 // The number under the pointer, at once. A browser's own tooltip on an SVG
@@ -661,8 +671,8 @@ function drawCandles(box,payload){
   const esc=t=>String(t).replace(/[<&"]/g,x=>x==="<"?"&lt;":x==="&"?"&amp;":"&quot;");
   let g='';
   const ticks=log?gridAt:(()=>{const o=[]; for(let v=0;v<=ymax+1e-9;v+=nice) o.push(v); return o})();
-  for(const v of ticks) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?"rgba(247,250,252,.07)":"rgba(247,250,252,.3)")+'"/>'+
-    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="#A0AEC0">'+esc(U.tick(v))+'</text>';
+  for(const v of ticks) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?THEME.grid:THEME.zero)+'"/>'+
+    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="'+THEME.axis+'">'+esc(U.tick(v))+'</text>';
   const every=Math.ceil(stat.length/12);
   // A bucket shorter than a day is named by its clock, a day by its date.
   const clock=new Intl.DateTimeFormat("en-GB",{timeZone:zone,hour:"2-digit",minute:"2-digit",hour12:false});
@@ -671,10 +681,10 @@ function drawCandles(box,payload){
   const c=stat.map((s,i)=>{const x=L+slot*(i+0.5);
     const tip=nameOf(s)+': '+s.n+' '+noun+(s.n===1?'':'s')+', min '+U.val(s.min)+', average '+U.val(s.avg)+', max '+U.val(s.max);
     return '<g data-tip="'+esc(tip)+'">'+
-      '<line x1="'+x+'" x2="'+x+'" y1="'+y(s.max)+'" y2="'+y(s.min)+'" stroke="#A0AEC0" stroke-width="1.5"/>'+
+      '<line x1="'+x+'" x2="'+x+'" y1="'+y(s.max)+'" y2="'+y(s.min)+'" stroke="'+THEME.axis+'" stroke-width="1.5"/>'+
       (s.n>1?'<rect x="'+(x-bw/2)+'" y="'+y(s.q3)+'" width="'+bw+'" height="'+Math.max(1,y(s.q1)-y(s.q3))+'" fill="#CD7F32" fill-opacity=".55" stroke="#CD7F32" rx="2"/>':'')+
-      '<line x1="'+(x-bw/2-3)+'" x2="'+(x+bw/2+3)+'" y1="'+y(s.avg)+'" y2="'+y(s.avg)+'" stroke="#F7FAFC" stroke-width="2"/>'+
-      (i%every===0?'<text x="'+x+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="#A0AEC0">'+esc(nameOf(s))+'</text>':'')+
+      '<line x1="'+(x-bw/2-3)+'" x2="'+(x+bw/2+3)+'" y1="'+y(s.avg)+'" y2="'+y(s.avg)+'" stroke="'+THEME.label+'" stroke-width="2"/>'+
+      (i%every===0?'<text x="'+x+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="'+THEME.axis+'">'+esc(nameOf(s))+'</text>':'')+
       '</g>'});
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
     '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+U.val(limit.value))+'</text>':'';
@@ -805,18 +815,18 @@ function drawPie(box,payload){
       ctx.beginPath(); ctx.moveTo(cx+ox+hole*Math.cos(a),cy+oy+hole*Math.sin(a));
       ctx.arc(cx+ox,cy+oy,r,a,b); ctx.arc(cx+ox,cy+oy,hole,b,a,true); ctx.closePath();
       ctx.fillStyle=COLORS[i%COLORS.length]; ctx.globalAlpha=hot>=0&&i!==hot?0.55:1; ctx.fill(); ctx.globalAlpha=1;
-      ctx.strokeStyle="#001F3F"; ctx.lineWidth=2; ctx.stroke();
+      ctx.strokeStyle=THEME.sep; ctx.lineWidth=2; ctx.stroke();
       arcs.push({i,a,b}); a=b;
     });
     ctx.textAlign="center"; ctx.textBaseline="middle";
     if(hot>=0&&!off.has(hot)){
       const x=parts[hot];
       ctx.fillStyle=COLORS[hot%COLORS.length]; ctx.font='700 13px '+FONT; ctx.fillText(x.name,cx,cy-20);
-      ctx.fillStyle="#F7FAFC"; ctx.font='700 18px '+FONT; ctx.fillText(U.val(x.value),cx,cy+2);
-      ctx.fillStyle="#A0AEC0"; ctx.font='500 11px '+FONT; ctx.fillText((100*x.value/total).toFixed(1)+"%",cx,cy+22);
+      ctx.fillStyle=THEME.label; ctx.font='700 18px '+FONT; ctx.fillText(U.val(x.value),cx,cy+2);
+      ctx.fillStyle=THEME.axis; ctx.font='500 11px '+FONT; ctx.fillText((100*x.value/total).toFixed(1)+"%",cx,cy+22);
     }else{
-      ctx.fillStyle="#F7FAFC"; ctx.font='700 18px '+FONT; ctx.fillText(U.val(total),cx,cy-8);
-      ctx.fillStyle="#A0AEC0"; ctx.font='500 11px '+FONT; ctx.fillText(off.size?"of what is on":"in all",cx,cy+12);
+      ctx.fillStyle=THEME.label; ctx.font='700 18px '+FONT; ctx.fillText(U.val(total),cx,cy-8);
+      ctx.fillStyle=THEME.axis; ctx.font='500 11px '+FONT; ctx.fillText(off.size?"of what is on":"in all",cx,cy+12);
     }
     box.querySelectorAll(".slices tr").forEach((tr,i)=>{
       tr.classList.toggle("off",off.has(i)); tr.classList.toggle("hot",i===hot);
