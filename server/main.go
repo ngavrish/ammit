@@ -482,6 +482,12 @@ func openDB(dbPath string) error {
 		// The wait the call happened in (sid#seq), so a call and the turn that
 		// asked for it are one trace.
 		`ALTER TABLE calls ADD COLUMN request TEXT DEFAULT ''`,
+		// Whether the guard read this call as arbitrary python: 1, 0, or
+		// NULL from a client that does not say. The gate that audits python
+		// reasons asked a regex over the signature, which is whitespace
+		// folded and cut short, and on run 4314fb3c it counted a call the
+		// guard had read differently. One judge, recorded once.
+		`ALTER TABLE calls ADD COLUMN adhoc INTEGER`,
 	} {
 		if _, err := db.Exec(add); err != nil &&
 			!strings.Contains(err.Error(), "duplicate column") {

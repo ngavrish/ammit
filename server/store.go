@@ -165,12 +165,21 @@ func store(e event) {
 		if v, is := e["ok"].(bool); is && !v {
 			ok = 0
 		}
+		var adhoc any
+		if v, is := e["adhoc"].(bool); is {
+			adhoc = 0
+			if v {
+				adhoc = 1
+			}
+		}
 		db.Exec(`INSERT INTO calls (at, run, phase, branch, agent, session, tool,
-		         kind, target, signature, repeat, on_target, seconds, ok, why, request)
-		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		         kind, target, signature, repeat, on_target, seconds, ok, why, request,
+		         adhoc)
+		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("agent"),
 			e.s("session"), e.s("tool"), kind, target, signature,
-			repeat+1, onTarget+1, e.f("seconds"), ok, e.s("why"), e.s("request"))
+			repeat+1, onTarget+1, e.f("seconds"), ok, e.s("why"), e.s("request"),
+			adhoc)
 	case "spend":
 		db.Exec(`UPDATE runs SET usd = coalesce(usd,0) + ? WHERE run=?`,
 			e.f("usd"), e.s("run"))
