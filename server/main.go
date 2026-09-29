@@ -396,8 +396,10 @@ CREATE TABLE IF NOT EXISTS queue (
 var (
 	docsDir string
 	db      *sql.DB
-	mu      sync.Mutex
-	dryRun  = os.Getenv("AMMIT_DRY_RUN") == "1"
+	// readDB: the same file, opened read-only, for SQL a caller wrote (/query, charts).
+	readDB *sql.DB
+	mu     sync.Mutex
+	dryRun = os.Getenv("AMMIT_DRY_RUN") == "1"
 )
 
 // {word} and nothing else: a substituted payload carries JSON braces of its
@@ -464,6 +466,15 @@ func openDB(dbPath string) error {
 	}
 	var err error
 	db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
+	if err != nil {
+		return err
+	}
+	// The handle free-form SQL runs on: /query and the charts, whose queries
+	// anyone can save. The SELECT/WITH prefix check let `WITH x AS (SELECT 1)
+	// DELETE FROM events` and `SELECT 1; DROP TABLE runs` through - both ran,
+	// on a throwaway instance, and emptied the table. Read-only here is the
+	// database's own refusal, however the statement is spelled.
+	readDB, err = sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(30000)")
 	if err != nil {
 		return err
 	}

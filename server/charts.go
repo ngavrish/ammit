@@ -261,7 +261,7 @@ func rows(sql string) map[string]any {
 	ctx, cancel := context.WithTimeout(context.Background(), _QUERY_DEADLINE)
 	defer cancel()
 	mu.Lock()
-	rs, err := db.QueryContext(ctx, sql)
+	rs, err := readDB.QueryContext(ctx, sql)
 	mu.Unlock()
 	if err != nil {
 		return map[string]any{"error": err.Error()}
