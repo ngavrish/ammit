@@ -260,9 +260,11 @@ const _QUERY_DEADLINE = 60 * time.Second
 func rows(sql string) map[string]any {
 	ctx, cancel := context.WithTimeout(context.Background(), _QUERY_DEADLINE)
 	defer cancel()
-	mu.Lock()
+	// Not under mu: mu serialises the writer, and this is the read-only
+	// connection, which WAL lets run beside it. Holding mu here stalled every
+	// POST /events for as long as one slow panel or /query ran - 59 s behind a
+	// runaway recursive CTE.
 	rs, err := readDB.QueryContext(ctx, sql)
-	mu.Unlock()
 	if err != nil {
 		return map[string]any{"error": err.Error()}
 	}

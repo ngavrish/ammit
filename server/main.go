@@ -17,7 +17,9 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -634,6 +636,12 @@ func main() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
 			return
 		}
+		// Every reader selects by kind; a body of null, 5 or {"kind": 5} was
+		// kept as a kindless row that no query ever finds and every count sees.
+		if e.s("kind") == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind is required"})
+			return
+		}
 		// What is kept is what RECORD.md lists, and the sender is told the
 		// rest went nowhere. A client that has been reporting a field for a
 		// month into a column that does not exist finds out on its first
@@ -725,8 +733,28 @@ func main() {
 		}
 		// Nanoseconds, not seconds: two branches of a fan-out end in the same
 		// second and the second one used to overwrite the first one's file.
-		path := fmt.Sprintf("%s/%s-%d", dir, safeName(in.Kind), time.Now().UnixNano())
-		if err := os.WriteFile(path, []byte(in.Body), 0o644); err != nil {
+		//
+		// And exclusively: a clock that ticks in microseconds (macOS) handed two
+		// of forty concurrent posts the same name, and the later one wrote over
+		// the earlier. A taken name gets a suffix instead.
+		base := fmt.Sprintf("%s/%s-%d", dir, safeName(in.Kind), time.Now().UnixNano())
+		path := base
+		var file *os.File
+		var err error
+		for n := 1; ; n++ {
+			file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			if !errors.Is(err, fs.ErrExist) || n > 1000 {
+				break
+			}
+			path = fmt.Sprintf("%s-%d", base, n)
+		}
+		if err == nil {
+			_, err = file.WriteString(in.Body)
+			if closeErr := file.Close(); err == nil {
+				err = closeErr
+			}
+		}
+		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -1350,6 +1378,11 @@ func safeName(s string) string {
 	}
 	if len(out) > 80 {
 		out = out[:80]
+	}
+	// A leading dot is how "." and ".." climb out of the directory this name
+	// is joined onto; a run called ".." wrote its documents beside the store.
+	for i := 0; i < len(out) && out[i] == '.'; i++ {
+		out[i] = '_'
 	}
 	return string(out)
 }
