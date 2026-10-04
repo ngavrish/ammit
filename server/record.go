@@ -85,6 +85,10 @@ var perKind = map[string][]string{
 	"sample":    {"container", "memory_mb", "memory_pct", "cpu_pct", "pids"},
 	"netprobe":  {"host", "latency_ms", "ok"},
 	"heartbeat": {},
+	// Where a replayed run started and from which run. The orchestrator's
+	// resume reads it to know the phases before that point were inherited;
+	// without it every resume of a resume began again at planning.
+	"replay": {"from_phase", "source_run"},
 }
 
 // documentFields is the whole of POST /documents. The body is stored byte for
