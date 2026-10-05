@@ -8,6 +8,13 @@
 // panels in its Dashboard tab - so the sidebar and the filter bar, which belong
 // to ammit's own shell, are left out and the panels take the whole width.
 if(/[?&]embed=1(&|$)/.test(location.search)) document.documentElement.classList.add('embed');
+// Embedded, the page around it owns the search box: it posts {ammitFind: text}
+// and the chart filter below does the finding, exactly as its own box would.
+window.addEventListener('message', e=>{
+  if(!e.data || typeof e.data.ammitFind!=='string') return;
+  const f=document.getElementById('find'); if(!f) return;
+  f.value=e.data.ammitFind; f.dispatchEvent(new Event('input'));
+});
 </script>
 /*@HEADER_HTML@*/
 <div class=page>
