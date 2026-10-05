@@ -106,7 +106,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 var(--sans);
   transition:grid-template-columns .28s var(--ease)}
 body.folded{grid-template-columns:var(--side-min) minmax(0,1fr)}
 html.embed body{grid-template-columns:minmax(0,1fr)}
-html.embed #side,html.embed #bar,html.embed body::before{display:none}
+html.embed #side,html.embed #bar,html.embed body::before,html.embed #back,html.embed .row.head{display:none}
 body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
   background:
     radial-gradient(1100px 600px at 85% -10%, rgba(205,127,50,.05), transparent 60%),
