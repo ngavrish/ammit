@@ -137,7 +137,10 @@ function windowMs(){
   }
   const to=Date.now();return[to-hours()*3600e3,to];
 }
-function runParam(){ return chosen?"&run="+encodeURIComponent(chosen):"" }
+// ?with=<runs>: the runs this one continued from, so the page covers the whole
+// result rather than its last lap.
+const WITH=(new URLSearchParams(location.search).get("with")||"").split(",").map(x=>x.trim()).filter(Boolean);
+function runParam(){ return chosen?"&run="+encodeURIComponent([chosen,...WITH].join(",")):"" }
 
 // The series come back as rows of (time, metric, value) — one long table, many
 // lines. uPlot wants a column per line over one shared clock, so the rows are

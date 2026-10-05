@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -228,15 +229,30 @@ var runScoped = []string{"events", "runs", "gates", "judgements", "calls", "turn
 // common table expression and a schema-qualified one to the real table, so
 // each becomes itself filtered to this run, and sixty queries go on saying
 // exactly what they said before.
+var runIDChars = regexp.MustCompile(`^[0-9a-zA-Z-]+$`)
+
 func scope(sql, run string) string {
 	if run == "" {
 		return sql
 	}
-	quoted := strings.ReplaceAll(run, "'", "''")
+	// One run, or a run and the runs it continued from, comma-separated: a
+	// resumed run's result stands on the runs before it, so a page about that
+	// result is about all of them. Only run-id characters survive.
+	var ids []string
+	for _, r := range strings.Split(run, ",") {
+		r = strings.TrimSpace(r)
+		if r != "" && runIDChars.MatchString(r) {
+			ids = append(ids, "'"+r+"'")
+		}
+	}
+	if len(ids) == 0 {
+		ids = []string{"''"}
+	}
+	in := strings.Join(ids, ",")
 	var parts []string
 	for _, t := range runScoped {
-		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM main.%s WHERE run = '%s')",
-			t, t, quoted))
+		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM main.%s WHERE run IN (%s))",
+			t, t, in))
 	}
 	return "WITH " + strings.Join(parts, ",\n     ") + "\n" + sql
 }
