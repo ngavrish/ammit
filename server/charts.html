@@ -3,6 +3,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%E2%9A%96%3C/text%3E%3C/svg%3E">
 <style>/*@STYLES@*/</style>
+<script>
+// ?embed=1: the page inside another page - the Revisore run page shows a run's
+// panels in its Dashboard tab - so the sidebar and the filter bar, which belong
+// to ammit's own shell, are left out and the panels take the whole width.
+if(/[?&]embed=1(&|$)/.test(location.search)) document.documentElement.classList.add('embed');
+</script>
 /*@HEADER_HTML@*/
 <div class=page>
 <div id=bar>
