@@ -130,10 +130,12 @@ function when(t){return new Date(t*1000).toLocaleString()}
 // wide enough to hold the whole run.
 function windowMs(){
   if(chosen){
-    const r=runs.find(x=>x.run===chosen);
+    // The run and the runs it continued from (?with=): the window spans them all.
+    const rs=[chosen,...WITH].map(id=>runs.find(x=>x.run===id)).filter(Boolean);
     // Whole milliseconds. started is a float of seconds, and the server reads
     // the window as an integer: a fraction sent it back to its default.
-    if(r) return [Math.floor(r.started*1000-2000), Math.ceil((r.finished||Date.now()/1000)*1000+2000)];
+    if(rs.length) return [Math.floor(Math.min(...rs.map(r=>r.started))*1000-2000),
+      Math.ceil(Math.max(...rs.map(r=>r.finished||Date.now()/1000))*1000+2000)];
   }
   const to=Date.now();return[to-hours()*3600e3,to];
 }
