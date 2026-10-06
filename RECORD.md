@@ -102,6 +102,7 @@ on three kinds is what makes a wait, its turn and its tool calls one trace.
 | `gate` | `verdict`, `findings`, `seconds` |
 | `suite` | `verdict`, `total`, `passed`, `failed`, `reason` |
 | `heal_lap` | `lap`, `cap`, `decision` |
+| `rule_verdict` | `rule` the rule judged, `source` the phase whose work was judged, `label` how it went (`verified`, `trusted`, `missing`, `contradicted`, `unknown`), `check` the function that read the evidence, `detail` its first 300 characters |
 | `adhoc` | `reason` what the caller said the script was for, `allowed` whether the guardrail let it run, `head` its first 160 characters |
 
 A gate's `round` is not on this list because it is not accepted: the pipeline

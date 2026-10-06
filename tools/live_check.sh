@@ -241,6 +241,18 @@ cat "$work/wiped.json"; echo
 want "run_start keeps the bill"           '\[\["live-d-1","LIVE-D",3.25,1\]\]' \
   "$work/wiped.json"
 
+echo "== a rule_verdict keeps which rule it was and how it went"
+curl -sS -o "$work/rv-post.json" -X POST "$base/events" -H 'Content-Type: application/json' \
+  -d '{"kind":"rule_verdict","run":"live-a-1","phase":"implrules","branch":"req-3",
+       "rule":"a-sleep-is-not-a-wait","source":"implementing","label":"verified",
+       "check":"sleep_instead_of_waiting","detail":"no sleep over the settle ceiling"}'
+deny "nothing is named back as dropped" 'dropped' "$work/rv-post.json"
+curl -sS -o "$work/rv.json" --get "$base/query" --data-urlencode \
+  "sql=SELECT json_extract(payload,'\$.rule'), json_extract(payload,'\$.label'), json_extract(payload,'\$.check'), json_extract(payload,'\$.source') FROM events WHERE kind='rule_verdict' AND run='live-a-1'"
+cat "$work/rv.json"; echo
+want "the rule, the label, the check and the source are kept" \
+  'a-sleep-is-not-a-wait.,.verified.,.sleep_instead_of_waiting.,.implementing' "$work/rv.json"
+
 echo "== the same database, restarted, with the search index thrown away"
 # What a live check is for. Every /search above ran against an index built row
 # by row as the events landed, which is the one case the backfill is not in:

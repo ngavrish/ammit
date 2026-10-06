@@ -62,11 +62,18 @@ var perKind = map[string][]string{
 	// refused it, and a stable id like map.search-refused when something
 	// did. It is the field that makes "how often was the map asked for
 	// twice" a count rather than a grep over prose.
-	"call":       {"tool", "input", "ok", "seconds", "why", "request", "rule"},
-	"suite":      {"verdict", "total", "passed", "failed", "reason"},
-	"heal_lap":   {"lap", "cap", "decision"},
-	"adhoc":      {"reason", "allowed", "head"},
-	"compaction": {"trigger", "fold", "pending", "rules"},
+	"call":     {"tool", "input", "ok", "seconds", "why", "request", "rule"},
+	"suite":    {"verdict", "total", "passed", "failed", "reason"},
+	"heal_lap": {"lap", "cap", "decision"},
+	// One per rule a gate judged, refused or not. rule is the rule, source the
+	// phase whose work was judged, label how it went (verified, trusted,
+	// missing, contradicted, unknown), check the function that read the
+	// evidence, detail its first 300 characters. The runner has sent these
+	// since 2026-09-07 and they were kept as an envelope with nothing in it:
+	// 84,883 verdicts on 2026-10-06 that could not say which rule they were.
+	"rule_verdict": {"rule", "source", "label", "check", "detail"},
+	"adhoc":        {"reason", "allowed", "head"},
+	"compaction":   {"trigger", "fold", "pending", "rules"},
 	"compression": {"comp_in", "comp_out", "dedup", "markers", "errors",
 		"results"},
 	"service_log": {"service", "level", "logger", "text"},
