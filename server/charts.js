@@ -1083,8 +1083,7 @@ async function boot(){
   main.innerHTML=head+'<div class=how>drag along the time axis or the value axis to zoom that axis, '+
     'diagonally for both; double-click a chart to have it all back</div>'+
     (tops.length?'<div class=grid>'+tops.map(i=>section(i,"var(--bronze)")).join("")+'</div>':'')+
-    grouped().map(g=>'<div class="row grp" style="--g:'+g.colour+'">'+g.title+
-      '<small>'+g.items.length+'</small></div>'+
+    grouped().map(g=>'<div class="row grp" style="--g:'+g.colour+'">'+g.title+'</div>'+
       (g.blurb?'<p class=blurb style="--g:'+g.colour+'">'+g.blurb+'</p>':'')+
       // Tables share the width: a three-column table does not need a screen.
       '<div class=cards>'+g.items.map(i=>section(i,g.colour)).join("")+'</div>').join("");
