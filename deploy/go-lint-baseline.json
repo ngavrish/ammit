@@ -1,7 +1,7 @@
 {
  "contextcheck": 2,
  "errcheck": 19,
- "gosec": 13,
+ "gosec": 12,
  "noctx": 10,
  "prealloc": 2,
  "rowserrcheck": 2,
