@@ -28,6 +28,7 @@ var limitTitles = map[string]string{
 	"timeouts.request_tool":      "Tool request timeout",
 	"timeouts.module":            "Module timeout",
 	"timeouts.deploy":            "Deploy timeout",
+	"timeouts.idle":              "Idle cooldown",
 	"timeouts.test":              "Test timeout",
 	"timeouts.heartbeat":         "Heartbeat timeout",
 	"timeouts.worker_gone":       "Worker-gone timeout",

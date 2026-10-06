@@ -620,6 +620,7 @@ func main() {
 				sweepQueue(conf)
 				weigh(conf)
 				pumpQueue(conf)
+				cooldown(conf)
 				// Every tick: deciding whether there is anything to archive is one
 				// indexed count, and an hourly guard only made it harder to tell
 				// whether archiving works at all.

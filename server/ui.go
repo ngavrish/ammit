@@ -373,7 +373,7 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 			http.Error(w, "that does not parse as limits", http.StatusBadRequest)
 			return
 		}
-		if err := os.WriteFile(confPath, body, 0o644); err != nil {
+		if err := os.WriteFile(confPath, body, 0o644); err != nil { //nolint:gosec // G306: limits.yml is a bind mount from the harness repo; 0o600 from root would lock git on the host out of it
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -408,7 +408,7 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 			http.Error(w, "that does not parse as limits", http.StatusBadRequest)
 			return
 		}
-		if err := os.WriteFile(confPath, []byte(after), 0o644); err != nil {
+		if err := os.WriteFile(confPath, []byte(after), 0o644); err != nil { //nolint:gosec // G306: limits.yml is a bind mount from the harness repo; 0o600 from root would lock git on the host out of it
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
