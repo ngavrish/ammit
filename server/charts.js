@@ -573,7 +573,7 @@ function drawBars(box,payload){
     return bars+lab;
   }).join("");
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
-    '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+U.val(limit.value))+'</text>':'';
+    '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+C.tick(limit.value))+'</text>':'';
   const keys=per>1?metrics.map(m=>'<i style="background:'+colour(m)+'"></i>'+esc(m)).join(""):'';
   const note=(gs.length<total?gs.length+" of "+total+" - ":"")+(limit?"hover a column for its share of the limit - ":"")+"drag across columns to keep a range, double-click for all";
   const xName=byName ? (payload.panel&&/by (phase|agent)/i.test(payload.panel.title) ? payload.panel.title.match(/by (phase|agent)/i)[1].toLowerCase()+"s" : "name") : "runs, in the order they started ("+zone.replace(/_/g," ")+")";
@@ -703,7 +703,7 @@ function drawCandles(box,payload){
       (i%every===0?'<text x="'+x+'" y="'+(H-B+16)+'" text-anchor="middle" font-size="11" fill="'+THEME.axis+'">'+esc(nameOf(s))+'</text>':'')+
       '</g>'});
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
-    '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+U.val(limit.value))+'</text>':'';
+    '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+C.tick(limit.value))+'</text>':'';
   box.innerHTML='<svg class=candles width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+c.join("")+lim+
     axisNames(W,H,L,B,esc((C.name||"value")+(log?", logarithmic":"")),byName?esc(col+"s, the usual first"):(bucket&&bucket<86400?"time, in buckets of "+dur(bucket)+" ("+zone.replace(/_/g," ")+")":"day ("+zone.replace(/_/g," ")+")"))+'</svg>'+
     '<div class=keys><span>wick: the least to the most - body: the middle half - line: the average'+(limit?' - dashed: '+esc(limitTitle(limit.name)):'')+(log?' - logarithmic axis: the typical and the worst are both readable':'')+'</span></div>';
