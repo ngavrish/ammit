@@ -1286,6 +1286,16 @@ func archive(conf Config, dbPath string) {
 	}
 	cutoff := float64(time.Now().Add(-time.Duration(days*24)*time.Hour).UnixNano()) / 1e9
 
+	// Never while a run is live. The archive holds the database's write lock
+	// for as long as it copies, and on 2026-10-04 it began at 15:49 with nine
+	// claim branches of APF-1933 in flight: no event of theirs was recorded
+	// for the length of it, the WAL grew past five gigabytes, and the judge
+	// could have read the silence as a dead worker. A quiet stack archives
+	// the same rows a little later.
+	if len(openRuns()) > 0 {
+		return
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 

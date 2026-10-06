@@ -375,6 +375,24 @@ curl -sS -o /dev/null -X POST "$base/events" -H 'Content-Type: application/json'
 curl -sS -o "$work/ghost-live.json" "$base/search?q=zzzghost"
 want "the word is findable while it is here" '"count":1' "$work/ghost-live.json"
 
+# Never while a run is live. live-a-1, live-b-1 and live-d-1 were started
+# above and never ended, so the archive must wait: on 2026-10-04 it ran beside
+# nine live claim branches and held the write lock for twenty-one minutes.
+# The tick here is a second; five of them is five chances to get it wrong.
+sleep 5
+curl -sS -o "$work/ghost-waits.json" --get "$base/query" \
+  --data-urlencode "sql=SELECT count(*) FROM events WHERE run='live-c-1'"
+cat "$work/ghost-waits.json"; echo
+deny "the archive waits while a run is live" 'rows.:..0..' "$work/ghost-waits.json"
+
+for r in live-a-1 live-b-1 live-d-1; do
+  curl -sS -o /dev/null -X POST "$base/events" -H 'Content-Type: application/json' \
+    -d '{"kind":"run_end","run":"'"$r"'","verdict":"PASS","summary":"ended so the archive may run"}'
+done
+curl -sS -o "$work/open-runs.json" --get "$base/query" \
+  --data-urlencode "sql=SELECT count(*) FROM runs WHERE finished IS NULL"
+want "no run is left open" 'rows.:..0..' "$work/open-runs.json"
+
 # retention.days is a fraction of a day here, so the tick archives the run
 # about a second after it ends. Waiting for the record rather than for a
 # sleep: the assertion is about what archiving did, not about how fast.
