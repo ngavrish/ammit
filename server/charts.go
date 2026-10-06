@@ -251,8 +251,14 @@ func scope(sql, run string) string {
 	in := strings.Join(ids, ",")
 	var parts []string
 	for _, t := range runScoped {
-		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM main.%s WHERE run IN (%s))",
-			t, t, in))
+		where := fmt.Sprintf("run IN (%s)", in)
+		if t == "events" {
+			// What the learning side reports - lessons stored, the hoard, shadow
+			// evals - belongs to a ticket, not a run, and arrives with no run.
+			// A run page keeps its ticket's; the window keeps them to its time.
+			where += fmt.Sprintf(" OR (run = '' AND kind = 'learning' AND json_extract(payload,'$.ticket') IN (SELECT name FROM main.runs WHERE run IN (%s)))", in)
+		}
+		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM main.%s WHERE %s)", t, t, where))
 	}
 	return "WITH " + strings.Join(parts, ",\n     ") + "\n" + sql
 }
