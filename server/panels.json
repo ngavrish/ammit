@@ -239,12 +239,12 @@
   {
    "kind": "bars",
    "title": "Sessions by how they ended",
-   "about": "What stopped each session: the model finishing (end_turn), a tool it asked for, a length cap, or nothing reported. Counted per agent. Only sessions from runners that report it.",
+   "about": "What stopped each model session: the model finishing (end_turn), a tool it asked for, a length cap, or nothing reported. Script steps (no model, no turns: the map, the build gate, the suite run) are not sessions of a model and are left out.",
    "unit": "sessions",
    "height": 8,
    "agg": "sum",
    "queries": [
-    "SELECT at AS time, coalesce(nullif(json_extract(payload,'$.stopped'),''),'(not reported)') AS metric, 1 AS value FROM events WHERE kind='session_end' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
+    "SELECT at AS time, coalesce(nullif(json_extract(payload,'$.stopped'),''),'(not reported)') AS metric, 1 AS value FROM events WHERE kind='session_end' AND (coalesce(json_extract(payload,'$.model'),'') <> '' OR coalesce(json_extract(payload,'$.turns'),0) > 0) AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
    ]
   },
   {
@@ -364,11 +364,11 @@
   {
    "kind": "bars",
    "title": "Gates: rounds, findings, minutes",
-   "about": "One row per gate: how many rounds it ran, how much it refused in all, and how many minutes the rounds and their repairs took. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
+   "about": "One row per gate: how many rounds it ran, how much it refused in all, and how many minutes of the clock it held - rounds that ran side by side, one per branch, are counted once, not added up. A gate that never finds anything is a tollbooth; one whose findings do not fall between rounds is asking for something the repair cannot give.",
    "unit": "",
    "height": 8,
    "queries": [
-    "SELECT max(at) AS time, 'rounds' AS metric, count(*) AS value, phase AS label FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'findings', sum(findings), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'minutes', round(sum(seconds)/60.0, 1), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase ORDER BY 1"
+    "SELECT max(at) AS time, 'rounds' AS metric, count(*) AS value, phase AS label FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'findings', sum(findings), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(e), 'minutes', round(sum(e-s)/60.0, 1), phase FROM (SELECT phase, min(s) s, max(e) e FROM (SELECT phase, s, e, sum(nw) OVER (PARTITION BY phase ORDER BY s ROWS UNBOUNDED PRECEDING) grp FROM (SELECT phase, s, e, CASE WHEN s > coalesce(max(e) OVER (PARTITION BY phase ORDER BY s ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), -1) THEN 1 ELSE 0 END nw FROM (SELECT phase, at-seconds s, at e FROM gates WHERE at*1000 BETWEEN $__from AND $__to))) GROUP BY phase, grp) GROUP BY phase ORDER BY 1"
    ],
    "label": "Gates"
   },

@@ -221,6 +221,15 @@ const UNITS={
   percent:{name:"%", tick:v=>trim(v)+"%", val:v=>Math.round(v)+"%"},
   short:{name:"", tick:short, val:trim},
 };
+// One axis, one clock: every mark in the unit its smallest mark reads in -
+// "1,800 seconds" over "1 second", never "30 minutes" over "30 seconds".
+function clockOf(U,vs){
+  const k=U===UNITS.ms?1/1000:U===UNITS.m?60:1, W=TIME_WORDS;
+  const nz=vs.filter(v=>v).map(v=>Math.abs(v*k)), low=nz.length?Math.min(...nz):1;
+  const [d,one,many]=low<1?[1/1000,W.millisecond,W.milliseconds]:low<60?[1,W.second,W.seconds]:low<3600?[60,W.minute,W.minutes]:[3600,W.hour,W.hours];
+  return {name:many, tick:v=>{ if(v==null) return ""; const n=+(v*k/d).toFixed(2); return n.toLocaleString("en-US")+" "+(Math.abs(n)===1?one:many); }};
+}
+const isClock=U=>U===UNITS.s||U===UNITS.ms||U===UNITS.m;
 // Steps a clock is read in. Left to itself an axis of seconds steps by tens
 // of thousands - 5h 33m, 11h 7m - because ten is what it knows.
 const TIME_INCRS=[1,2,5,10,15,30,60,120,300,600,900,1800,3600,7200,10800,14400,21600,43200,86400,172800,604800];
@@ -450,8 +459,8 @@ function drawSeries(box,payload,kind){
           {stroke:THEME.axis,grid:{stroke:THEME.grid},ticks:{stroke:THEME.tick},
            size:axisWidth,
            ...(incrsOf(U)?{incrs:incrsOf(U)}:{}),
-           values:(u,vs)=>vs.map(v=>v==null?"":U.tick(v)),
-           label:U.name||"value",labelSize:22,labelFont:LABEL_FONT,labelGap:4}],
+           values:(u,vs)=>{ const f=isClock(U)?clockOf(U,vs).tick:U.tick; return vs.map(v=>v==null?"":f(v)); },
+           label:isClock(U)?"how long":(U.name||"value"),labelSize:22,labelFont:LABEL_FONT,labelGap:4}],
     // The legend's moment in the same clock as the axis. Left alone uPlot
     // writes it in the browser's zone, beside an axis that says another.
     series:[{value:(u,t)=>t==null?"—":legendFmt.format(new Date(t*1000))},...series],
@@ -543,8 +552,9 @@ function drawBars(box,payload){
   const y=v=>T+ph-(v/ymax)*ph;
   const slot=pw/gs.length, per=metrics.length, bw=Math.max(2,Math.min(36,(slot*0.72)/per));
   let g='';
+  const C=isClock(U)?clockOf(U,[nice]):U;
   for(let v=0;v<=ymax+1e-9;v+=nice) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?THEME.grid:THEME.zero)+'"/>'+
-    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="'+THEME.axis+'">'+esc(U.tick(v))+'</text>';
+    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="'+THEME.axis+'">'+esc(C.tick(v))+'</text>';
   const every=Math.ceil(gs.length/Math.max(4,Math.floor(pw/(byName?60:92))));
   const showVal=gs.length*per<=24;
   const share=v=>limit?Math.round(100*v/limit.value)+"%":"";
@@ -567,7 +577,7 @@ function drawBars(box,payload){
   const keys=per>1?metrics.map(m=>'<i style="background:'+colour(m)+'"></i>'+esc(m)).join(""):'';
   const note=(gs.length<total?gs.length+" of "+total+" - ":"")+(limit?"hover a column for its share of the limit - ":"")+"drag across columns to keep a range, double-click for all";
   const xName=byName ? (payload.panel&&/by (phase|agent)/i.test(payload.panel.title) ? payload.panel.title.match(/by (phase|agent)/i)[1].toLowerCase()+"s" : "name") : "runs, in the order they started ("+zone.replace(/_/g," ")+")";
-  box.innerHTML='<svg class="candles vbars" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+cols+lim+axisNames(W,H,L,B,esc(U.name||"value"),esc(xName))+
+  box.innerHTML='<svg class="candles vbars" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+cols+lim+axisNames(W,H,L,B,esc(C.name||"value"),esc(xName))+
     '<rect class=sel x="0" y="'+T+'" width="0" height="'+ph+'" fill="#CD7F32" fill-opacity=".15" style="display:none"/></svg>'+
     '<div class=keys>'+keys+'<span>'+esc(note)+'</span></div>';
   hoverTips(box);
@@ -676,8 +686,9 @@ function drawCandles(box,payload){
   const esc=t=>String(t).replace(/[<&"]/g,x=>x==="<"?"&lt;":x==="&"?"&amp;":"&quot;");
   let g='';
   const ticks=log?gridAt:(()=>{const o=[]; for(let v=0;v<=ymax+1e-9;v+=nice) o.push(v); return o})();
+  const C=isClock(U)?clockOf(U,ticks):U;
   for(const v of ticks) g+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?THEME.grid:THEME.zero)+'"/>'+
-    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="'+THEME.axis+'">'+esc(U.tick(v))+'</text>';
+    '<text x="'+(L-8)+'" y="'+(y(v)+4)+'" text-anchor="end" font-size="11" fill="'+THEME.axis+'">'+esc(C.tick(v))+'</text>';
   const every=Math.ceil(stat.length/12);
   // A bucket shorter than a day is named by its clock, a day by its date.
   const clock=new Intl.DateTimeFormat("en-GB",{timeZone:zone,hour:"2-digit",minute:"2-digit",hour12:false});
@@ -694,7 +705,7 @@ function drawCandles(box,payload){
   const lim=limit?'<line x1="'+L+'" x2="'+(W-R)+'" y1="'+y(limit.value).toFixed(1)+'" y2="'+y(limit.value).toFixed(1)+'" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="6 4"/>'+
     '<text x="'+(W-R)+'" y="'+(y(limit.value)-5).toFixed(1)+'" text-anchor="end" font-size="11" font-weight="600" fill="#EF4444">'+esc(limitTitle(limit.name)+" = "+U.val(limit.value))+'</text>':'';
   box.innerHTML='<svg class=candles width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="'+FONT.replace(/"/g,"")+'">'+g+c.join("")+lim+
-    axisNames(W,H,L,B,esc((U.name||"value")+(log?", logarithmic":"")),byName?esc(col+"s, the usual first"):(bucket&&bucket<86400?"time, in buckets of "+dur(bucket)+" ("+zone.replace(/_/g," ")+")":"day ("+zone.replace(/_/g," ")+")"))+'</svg>'+
+    axisNames(W,H,L,B,esc((C.name||"value")+(log?", logarithmic":"")),byName?esc(col+"s, the usual first"):(bucket&&bucket<86400?"time, in buckets of "+dur(bucket)+" ("+zone.replace(/_/g," ")+")":"day ("+zone.replace(/_/g," ")+")"))+'</svg>'+
     '<div class=keys><span>wick: the least to the most - body: the middle half - line: the average'+(limit?' - dashed: '+esc(limitTitle(limit.name)):'')+(log?' - logarithmic axis: the typical and the worst are both readable':'')+'</span></div>';
   hoverTips(box);
 }
@@ -1059,7 +1070,7 @@ async function boot(){
     " — "+(r.turns||0)+" turns — $"+(r.usd||0).toFixed(2)+'</div>':"";
   await fetchLocal();
   const section=(i,colour)=>{const p=panels[i];
-    const wide=/^(table|timeline|bars|stats)$/.test(p.kind)?" wide":"";
+    const wide=/^(table|timeline|bars|stats|pie|candles)$/.test(p.kind)?" wide":"";
     return '<section class="panel'+wide+'" style="--g:'+colour+'" title="'+p.title.replace(/"/g,"&quot;")+'"><h2>'+(p.label||humanize(p.title))+
       ((p.by||[]).length>1?'<span class=by>by '+p.by.map((b,k)=>'<button data-i='+i+' data-by="'+b+'" class="'+(k?'':'on')+'">'+b+'</button>').join("")+'</span>':'')+
       '<span class=pact data-i='+i+' data-act=hide>hide</span>'+
