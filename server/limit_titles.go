@@ -35,7 +35,6 @@ var limitTitles = map[string]string{
 	"timeouts.test":              "Test timeout",
 	"timeouts.heartbeat":         "Heartbeat timeout",
 	"timeouts.worker_gone":       "Worker-gone timeout",
-	"timeouts.turns_per_session": "Turns-per-session timeout",
 }
 
 // limitTitlesJS is the map as a JavaScript literal, for the pages.
