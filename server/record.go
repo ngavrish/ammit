@@ -65,6 +65,10 @@ var perKind = map[string][]string{
 	"call":     {"tool", "input", "ok", "seconds", "why", "request", "rule"},
 	"suite":    {"verdict", "total", "passed", "failed", "reason"},
 	"heal_lap": {"lap", "cap", "decision"},
+	// A number from limits.yml the runner applied on its own: the key, the
+	// number, what met it and what the runner did. Lifted into judgements so
+	// a limit the runner enforces is in the same record as one ammit does.
+	"limit": {"rule", "threshold", "observed", "action"},
 	// One per rule a gate judged, refused or not. rule is the rule, source the
 	// phase whose work was judged, label how it went (verified, trusted,
 	// missing, contradicted, unknown), check the function that read the
