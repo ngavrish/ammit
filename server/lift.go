@@ -120,7 +120,8 @@ func judgeLater(e event) {
 		mu.Lock()
 		db.QueryRow(`SELECT coalesce(name,'') FROM runs WHERE run=?`, run).Scan(&name)
 		mu.Unlock()
-		judge("branch", run, name+" "+branch, "loops.heal_laps_per_branch", cap, lap, "none",
+		_, rule := healCap(loadConfig(env("AMMIT_CONFIG", "/config/limits.yml")))
+		judge("branch", run, name+" "+branch, rule, cap, lap, "none",
 			"the runner gave the branch up, unconverged")
 	}()
 }
