@@ -1,6 +1,9 @@
 package main
 
-import "log"
+import (
+	"log"
+	"strings"
+)
 
 // What an event becomes when it lands: a row in the table that is about it.
 //
@@ -41,7 +44,25 @@ func lift(id int64, at float64, e event) {
 		if e.s("decision") == "gave_up" {
 			judgeLater(e)
 		}
+	case "limit":
+		judgeRunnerLimit(e)
 	}
+}
+
+// judgeRunnerLimit writes down a limit the runner applied itself.
+//
+// The runner holds no numbers of its own any more: each one is a key in
+// limits.yml, and every time one bites the runner says which, against what,
+// and what it did. Until 9 October the rule-repair cap was enforced, and
+// bypassed, inside the runner with nothing here to count it - claim-9 of
+// APF-3296 went five laps on a cap of two. Recorded as a judgement with
+// scope "runner", so it reads beside the limits this service enforces, and
+// outside the lock store holds, as judgeLater does.
+func judgeRunnerLimit(e event) {
+	run, rule, action := e.s("run"), e.s("rule"), e.s("action")
+	threshold, observed := e.f("threshold"), e.f("observed")
+	subject := strings.TrimSpace(strings.Join([]string{e.s("phase"), e.s("branch"), e.s("agent")}, " "))
+	go judge("runner", run, subject, rule, threshold, observed, action, "applied by the runner")
 }
 
 // opt is a number the event may not carry: NULL when absent, so a column can
