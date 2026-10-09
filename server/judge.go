@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -270,7 +271,13 @@ func act(name string, conf Config, ctx map[string]string) string {
 	}
 	said := strings.TrimSpace(string(out))
 	if len(said) > 200 {
-		said = said[:200]
+		// On a rune boundary: a cut through a Cyrillic letter left a broken
+		// byte at the end of every Russian notice.
+		cut := 200
+		for cut > 0 && !utf8.RuneStart(said[cut]) {
+			cut--
+		}
+		said = said[:cut]
 	}
 	if said == "" {
 		return "done"
@@ -773,6 +780,10 @@ func weigh(conf Config) {
 				}
 			}
 		}
+		// A repair loop past its cap, counted from the run's own phase_start
+		// events: loops.laps_<phase>. laps.go says why it is not left to the
+		// runner.
+		judgeRepairLaps(r.run, conf, ctx)
 		// The silence limit below cannot see a session that never stops
 		// talking: a funcreq branch made fifty turns in twenty minutes on
 		// run 16922dd7 and was quiet for no more than four minutes at a
