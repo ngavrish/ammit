@@ -431,6 +431,17 @@
   },
   {
    "kind": "table",
+   "title": "What the watchdog did",
+   "about": "Every run that dropped, its cause, the phase it resumes from, and each fix, merge, deploy and resume cycle that answered it",
+   "unit": "",
+   "height": 9,
+   "queries": [
+    "SELECT coalesce(c.updated, d.at) AS at, d.name, d.run, d.cause, coalesce(d.phase,'') AS resume_from, coalesce(c.cycle,0) AS cycle, coalesce(c.state,'recorded') AS state, coalesce(c.prs,'') AS prs, coalesce(c.resumed_run,'') AS resumed_run, coalesce(c.why,'') AS why FROM watchdog_drops d LEFT JOIN watchdog_cycles c ON c.run = d.run ORDER BY at DESC LIMIT 200"
+   ],
+   "label": "Watchdog"
+  },
+  {
+   "kind": "table",
    "title": "Runs",
    "about": "",
    "unit": "",

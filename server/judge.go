@@ -244,7 +244,7 @@ func act(name string, conf Config, ctx map[string]string) string {
 		}
 	}
 	for key, value := range ctx {
-		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", value)
+		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", shellSafe(value))
 	}
 	// A hole nobody filled is not a command.
 	//
@@ -915,4 +915,13 @@ func sweepCrashed(conf Config) bool {
 			"before the worker started", r.run, r.name, started-at)
 	}
 	return true
+}
+
+// shellSafe is a value as it may enter a command template. The templates
+// wrap their holes in single quotes - '{payload}', 'echo "{summary}"' - and a
+// value carrying one of its own closes that quote and runs whatever follows:
+// a run's summary is an agent's prose, and prose has apostrophes. The
+// typographic one reads the same and quotes nothing.
+func shellSafe(value string) string {
+	return strings.ReplaceAll(value, "'", "’")
 }

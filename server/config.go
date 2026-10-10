@@ -48,8 +48,15 @@ func cutComment(line string) (string, string) {
 func unquote(value string) string {
 	if len(value) >= 2 {
 		first, last := value[0], value[len(value)-1]
-		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+		if first == '"' && last == '"' {
 			return value[1 : len(value)-1]
+		}
+		// Inside single quotes YAML writes a quote as two. Left doubled,
+		// start_run's `-d ''{payload}''` reached the shell as two empty
+		// strings around a bare payload, and the shell ate the JSON's own
+		// quotes: the orchestrator was sent {key:APF-1934}.
+		if first == '\'' && last == '\'' {
+			return strings.ReplaceAll(value[1:len(value)-1], "''", "'")
 		}
 	}
 	return value
@@ -89,15 +96,33 @@ func anchored(value string, anchors map[string]string) string {
 }
 
 func loadConfig(path string) Config {
-	conf := Config{}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return conf
+		return Config{}
 	}
+	return parseLimits(string(raw))
+}
+
+// indentOf is how far a line is indented, a tab counting as one.
+func indentOf(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " \t"))
+}
+
+// parseLimits reads the two levels of limits.yml, with the three pieces of
+// YAML the file is actually written in: quotes, anchors, and block scalars.
+//
+// A block scalar - `notify: >-` and the lines indented under it - was read as
+// the value ">-" and a run of junk keys made of the lines below. notify, warn
+// and cooldown were written that way, so each of them ran `sh -c ">-"`, which
+// makes an empty file named "-" and exits 0: every alert this service has
+// "sent" since was the word done in a judgement row, and nothing else.
+func parseLimits(raw string) Config {
+	conf := Config{}
 	section := ""
 	anchors := map[string]string{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line, _ = cutComment(line)
+	lines := strings.Split(raw, "\n")
+	for i := 0; i < len(lines); i++ {
+		line, _ := cutComment(lines[i])
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -113,8 +138,34 @@ func loadConfig(path string) Config {
 		if !found {
 			continue
 		}
-		conf[section][strings.TrimSpace(key)] =
-			anchored(unquote(strings.TrimSpace(value)), anchors)
+		value = strings.TrimSpace(value)
+		switch value {
+		case ">", ">-", "|", "|-":
+			// Every following line indented deeper than the key is the
+			// value: folded into one line by `>`, kept as lines by `|`. The
+			// block's lines are taken whole, comment marks and all - inside a
+			// block a # is text.
+			own := indentOf(line)
+			var body []string
+			for i+1 < len(lines) {
+				next := lines[i+1]
+				if strings.TrimSpace(next) != "" && indentOf(next) <= own {
+					break
+				}
+				body = append(body, strings.TrimSpace(next))
+				i++
+			}
+			for len(body) > 0 && body[len(body)-1] == "" {
+				body = body[:len(body)-1]
+			}
+			sep := " "
+			if value[0] == '|' {
+				sep = "\n"
+			}
+			conf[section][strings.TrimSpace(key)] = strings.Join(body, sep)
+			continue
+		}
+		conf[section][strings.TrimSpace(key)] = anchored(unquote(value), anchors)
 	}
 	return conf
 }
