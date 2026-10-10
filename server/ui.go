@@ -530,26 +530,5 @@ func (e errNamed) Error() string { return "cannot set " + string(e) }
 
 // parseConfig is loadConfig for text that is not on disk yet.
 func parseConfig(raw string) Config {
-	conf := Config{}
-	section := ""
-	for _, line := range strings.Split(raw, "\n") {
-		line, _ = cutComment(line)
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ":"))
-			conf[section] = map[string]string{}
-			continue
-		}
-		if section == "" {
-			continue
-		}
-		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
-		if !found {
-			continue
-		}
-		conf[section][strings.TrimSpace(key)] = unquote(strings.TrimSpace(value))
-	}
-	return conf
+	return parseLimits(raw)
 }

@@ -484,6 +484,9 @@ func openDB(dbPath string) error {
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("could not make the tables: %w", err)
 	}
+	if _, err := db.Exec(watchdogSchema); err != nil {
+		return fmt.Errorf("could not make the watchdog's tables: %w", err)
+	}
 	// Columns added to a table that already exists. CREATE TABLE IF NOT EXISTS
 	// does nothing to a database that has the table, so a new column arrives
 	// only this way. Each is tried and its error ignored: "duplicate column
@@ -520,6 +523,23 @@ func main() {
 	confPath := env("AMMIT_CONFIG", "/config/limits.yml")
 	port := env("AMMIT_PORT", "8099")
 	tick, _ := strconv.Atoi(env("AMMIT_TICK", "20"))
+
+	// The drop detector over past runs, read-only: watchdog_history.go.
+	if len(os.Args) > 1 && os.Args[1] == "watchdog-history" {
+		days := 7.0
+		if len(os.Args) > 2 {
+			dbPath = os.Args[2]
+		}
+		if len(os.Args) > 3 {
+			if d, err := strconv.ParseFloat(os.Args[3], 64); err == nil {
+				days = d
+			}
+		}
+		if err := watchdogHistory(os.Stdout, dbPath, days, loadConfig(confPath)); err != nil {
+			log.Fatalf("ammit: watchdog-history: %v", err)
+		}
+		return
+	}
 
 	// The two gates over the charts page, asked of the page as served, before
 	// anything is served. They were checkable only from the test suite, which
@@ -619,6 +639,10 @@ func main() {
 				sweepAbandoned(conf)
 				sweepQueue(conf)
 				weigh(conf)
+				// After weigh, so a run it closed this round is read as
+				// dropped this round; before pumpQueue, so a fix or a resume
+				// it queues is started in the same round when a slot is free.
+				watchdogTick(conf)
 				pumpQueue(conf)
 				cooldown(conf)
 				// Every tick: deciding whether there is anything to archive is one
@@ -881,6 +905,12 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]string{"outcome": outcome})
 	})
 
+	// What the watchdog has seen drop and what it did about it: every drop
+	// with its evidence and every fix/merge/resume cycle, or one chain's when
+	// ?run= names a run in it. The fix run reads its history here.
+	mux.HandleFunc("GET /watchdog", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, watchdogState(r.URL.Query().Get("run")))
+	})
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "db": dbPath})
 	})

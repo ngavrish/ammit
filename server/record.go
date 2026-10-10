@@ -100,6 +100,12 @@ var perKind = map[string][]string{
 	// resume reads it to know the phases before that point were inherited;
 	// without it every resume of a resume began again at planning.
 	"replay": {"from_phase", "source_run"},
+	// Written by this service: a run that dropped, and each step of the
+	// fix/merge/deploy/resume cycle that answers it (watchdog.go). state is
+	// the step, cause the drop's id, cycle and cap how many of
+	// loops.laps_watchdog this chain has taken, pr the fix's PR urls, text
+	// the evidence and what happened, as prose.
+	"watchdog": {"state", "cause", "cycle", "cap", "pr", "text"},
 }
 
 // documentFields is the whole of POST /documents. The body is stored byte for

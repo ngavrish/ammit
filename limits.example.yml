@@ -26,6 +26,13 @@ timeouts:
   # that waited for it took 592 — so ten minutes is the edge of what has actually
   # happened, not a margin above it.
   deploy: 900
+  # The drop watchdog's steps: a fix run's PR appearing, its CI going green and
+  # being merged, a deploy reporting success after the merge, and a queued
+  # resume turning into a run. A step past its timeout spends the cycle.
+  watchdog_fix: 7200
+  watchdog_ci: 3600
+  watchdog_deploy: 3600
+  watchdog_start: 900
 retention:
   # Finished runs older than this move into archive/ammit-YYYY-MM.db and leave
   # the live database small. Nothing is deleted: an archive is a database like
@@ -67,6 +74,11 @@ limits:
   # leaves no evidence behind, because the process that would have said so is
   # the one that died — so the reading is taken from out here.
   memory_mb: 6000
+  # A run that has stopped getting on with it: no phase, gate, turn, call,
+  # item or session event for this long. Heartbeats and timer notes ("waiting
+  # for approval") are not progress. wait_<phase> overrides it for one phase.
+  # Zero or absent: not judged.
+  wait: 3600
 
 sample:
   every: 60                # seconds between readings of memory and cpu
@@ -106,6 +118,9 @@ actions:
   on_deploy_timeout: warn
   on_test_timeout: warn
   on_start: start_run
+  # A run waiting past limits.wait is ended before its resume is queued: the
+  # runner has one clone, and a resume beside the run it resumes is two.
+  on_watchdog_wait: stop_run
   # Actions after which a run is not running any more, whatever they were called
   # to fix. Restarting a worker does not repair a run — it destroys every run
   # that worker was carrying — so the row is closed here rather than left open to
@@ -141,6 +156,16 @@ commands:
   # eats the JSON's own quotes and the request arrives as {key:APF-1934}.
   start_run: curl -sS -X POST {starter} -H "Content-Type: application/json" -d '{payload}' 
 
+  # The drop watchdog's hands on GitHub. watchdog_pr prints one JSON list per
+  # repository of the PRs on {branch}; watchdog_merge merges {pr}. Optional:
+  # watchdog_deploy, run once after the merge when the deploy is not already
+  # automatic, and watchdog_deployed, whose exit 0 is required on top of a
+  # deploy that reported success after the merge.
+  watchdog_pr: >-
+    sh -c 'for r in my-org/pipeline my-org/ammit; do gh pr list -R $r --head {branch}
+    --state all --json url,state,mergedAt,mergeCommit,statusCheckRollup; done'
+  watchdog_merge: gh pr merge {pr} --squash --delete-branch
+
 context:
   worker: my-pipeline-worker-1
   starter: http://orchestrator:8081/run
@@ -152,3 +177,13 @@ context:
 # so the Limit hits table shows it beside everything else.
 loops:
   heal_laps_per_branch: 3    # heal laps one branch may take before the runner gives up on it
+  # The drop watchdog (server/watchdog.go): how many fix -> merge -> deploy ->
+  # resume cycles one chain of drops may take. Absent or zero, the watchdog is
+  # off. The cycle past it is not taken: it is announced through `notify`
+  # with the whole history.
+  laps_watchdog: 3
+
+# What the drop watchdog queues as its fix run, through on_start like any run.
+# A run in this mode is never itself answered as a drop.
+watchdog:
+  fix_mode: watchdogfix

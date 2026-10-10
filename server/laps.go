@@ -31,7 +31,9 @@ const lapsPrefix = "laps_"
 func lapCaps(conf Config) map[string]float64 {
 	caps := map[string]float64{}
 	for key := range conf["loops"] {
-		if !strings.HasPrefix(key, lapsPrefix) {
+		// laps_watchdog is the watchdog's cycles per chain (watchdog.go),
+		// not a repair phase: no phase of that name starts on a branch.
+		if !strings.HasPrefix(key, lapsPrefix) || key == lapsPrefix+"watchdog" {
 			continue
 		}
 		if v, ok := conf.num("loops", key); ok && v > 0 {

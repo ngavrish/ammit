@@ -144,13 +144,21 @@ own way produce two numbers for one idea.
 | `heartbeat` | nothing beyond the envelope. It is a pulse, and its whole content is that it arrived |
 | `replay` | `from_phase`, `source_run` |
 
-Two kinds are written by this service about the machine rather than sent by a
-pipeline, and are on the page because the rule is the rule:
+Three kinds are written by this service rather than sent by a pipeline, two
+about the machine and one about what it did, and are on the page because the
+rule is the rule:
 
 | kind | fields |
 |---|---|
 | `sample` | `container`, `memory_mb`, `memory_pct`, `cpu_pct`, `pids` |
 | `netprobe` | `host`, `latency_ms`, `ok` |
+| `watchdog` | `state` the step (`detected`, `fixing`, `ci`, `merging`, `deploying`, `resumed`, `done`, `dropped`, `failed`, `left`, `exhausted`, `recorded`), `cause` the drop's id, `cycle` and `cap` how many of `loops.laps_watchdog` the chain has taken, `pr` the fix's PR urls, `text` the evidence and what happened |
+
+The watchdog keeps its own state in three tables, `watchdog_drops` (one row per
+dropped run: its chain, the phase a resume starts from, the cause and the
+evidence lines), `watchdog_cycles` (one row per fix/merge/deploy/resume cycle)
+and `watchdog_meta`. They are written by this service only, and `GET
+/watchdog` serves them.
 
 ## Documents
 
