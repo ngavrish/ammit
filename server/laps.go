@@ -57,14 +57,23 @@ func healCap(conf Config) (float64, string) {
 	return v, "loops.heal_laps_per_branch"
 }
 
-// phaseStarts is branch -> how many times the phase started on it in this run.
-func phaseStarts(run, phase string) map[string]int {
+// phaseStarts is branch -> how many times the phase started on it in the
+// branch's current attempt: since its latest start of attemptPhase, or in the
+// whole run when it has none. A claim that does not converge gets one fresh
+// attempt - a new implementer in an emptied directory - and its laps were
+// counted on top of the first attempt's: on APF-3296 (run fa72bb3b) claim-12's
+// fresh attempt was stopped by loops.laps_implrulefix as it entered its first
+// repair, and every phase after it ran in 0.05 s with nothing done.
+func phaseStarts(run, phase, attemptPhase string) map[string]int {
 	mu.Lock()
 	defer mu.Unlock()
 	rows, err := db.Query(`
-		SELECT coalesce(branch,''), count(*) FROM events
-		WHERE run=? AND kind='phase_start' AND phase=?
-		GROUP BY 1`, run, phase)
+		SELECT coalesce(e.branch,''), count(*) FROM events e
+		WHERE e.run=? AND e.kind='phase_start' AND e.phase=?
+		  AND e.at > coalesce((SELECT max(a.at) FROM events a
+		      WHERE a.run=e.run AND a.kind='phase_start' AND a.phase=?
+		        AND coalesce(a.branch,'')=coalesce(e.branch,'')), 0)
+		GROUP BY 1`, run, phase, attemptPhase)
 	if err != nil {
 		return nil
 	}
@@ -91,10 +100,10 @@ func (b lapBreach) subject() string { return phaseKey(b.Phase, b.Branch) }
 func (b lapBreach) rule() string    { return "loops." + lapsPrefix + b.Phase }
 
 // lapsOver is every branch of the run past a repair cap, in a stable order.
-func lapsOver(run string, caps map[string]float64) []lapBreach {
+func lapsOver(run string, caps map[string]float64, attemptPhase string) []lapBreach {
 	var out []lapBreach
 	for phase, limit := range caps {
-		for branch, n := range phaseStarts(run, phase) {
+		for branch, n := range phaseStarts(run, phase, attemptPhase) {
 			if float64(n) > limit {
 				out = append(out, lapBreach{phase, branch, n, limit})
 			}
@@ -124,7 +133,10 @@ func judgeRepairLaps(run string, conf Config, ctx map[string]string) {
 		return
 	}
 	action := conf.str("actions", "on_repair_laps", "stop_branch")
-	for _, b := range lapsOver(run, caps) {
+	// The phase a branch's attempt begins with: its laps are counted from its
+	// latest start (phaseStarts).
+	attempt := conf.str("loops", "attempt_phase", "implementing")
+	for _, b := range lapsOver(run, caps, attempt) {
 		if lapsJudged(run, b.rule(), b.subject()) {
 			continue
 		}
