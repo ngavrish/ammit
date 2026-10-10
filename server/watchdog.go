@@ -1300,6 +1300,15 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			}
 			return
 		}
+		// The resume may already be going: a person, or the fix run itself,
+		// started it while this cycle waited on the deploy. A second one in the
+		// queue would replay the same run again behind it.
+		if run := replayOf(d.name, c.run, c.started); run != "" {
+			wdMove(c.id, wdResumed, "deployed_at=?, resumed_run=?", at, run)
+			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs,
+				"deployed; the resume is already running as "+run+", not queued again")
+			return
+		}
 		q := queueResume(c, d)
 		wdMove(c.id, wdResumed, "deployed_at=?, resume_queue=?", at, q)
 		wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs, fmt.Sprintf(
@@ -1307,6 +1316,18 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			time.Unix(int64(at), 0).UTC().Format(time.RFC3339), d.name, orDash(d.phase), c.run))
 	case wdResumed:
 		run, finished, verdict, started := resumeOutcome(c)
+		if run == "" {
+			// A resume of this run that began outside the queue is the resume:
+			// the queued one is withdrawn rather than started on top of it.
+			if other := replayOf(d.name, c.run, c.started); other != "" {
+				withdraw(c.resumeQueue)
+				if c.resumedRun == "" {
+					wdUpdate(c.id, "resumed_run=?", other)
+				}
+				run, finished, verdict = runOutcome(other)
+				started = 0
+			}
+		}
 		if run == "" {
 			if started > 0 && over(c, conf, "watchdog_start", started) {
 				fail("the resume was started and no run came of it within timeouts.watchdog_start")
@@ -1400,6 +1421,40 @@ func queueResume(c wdCycle, d *dropFact) int64 {
 // and how, and when the queue started it (0 while it waits its turn).
 func resumeOutcome(c wdCycle) (string, bool, string, float64) {
 	return queueOutcome(c.resumeQueue)
+}
+
+// replayOf is a run of the ticket that replays source and started after the
+// cycle did - the resume, however it was started. Read from the run's own
+// replay event, so it is the run that says what it continues.
+func replayOf(name, source string, after float64) string {
+	mu.Lock()
+	defer mu.Unlock()
+	var run string
+	db.QueryRow(`SELECT r.run FROM runs r JOIN events e ON e.run = r.run AND e.kind = 'replay'
+	             WHERE r.name = ? AND json_extract(e.payload, '$.source_run') = ? AND r.started > ?
+	             ORDER BY r.started LIMIT 1`, name, source, after).Scan(&run)
+	return run
+}
+
+// runOutcome is whether a run has finished and how.
+func runOutcome(run string) (string, bool, string) {
+	mu.Lock()
+	defer mu.Unlock()
+	var finished sql.NullFloat64
+	var verdict sql.NullString
+	db.QueryRow(`SELECT finished, verdict FROM runs WHERE run=?`, run).Scan(&finished, &verdict)
+	return run, finished.Valid, verdict.String
+}
+
+// withdraw takes a queue row that has not started out of the line.
+func withdraw(row sql.NullInt64) {
+	if !row.Valid {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND state='waiting'`,
+		wdNow(), row.Int64)
 }
 
 // queueOutcome is the same four facts for any queue row the watchdog put
