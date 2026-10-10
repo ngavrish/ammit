@@ -1196,6 +1196,16 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			}
 			switch p.ci() {
 			case "red":
+				// The fix run opens its PR and goes on working: on APF-3296
+				// both WD-2ca50154-1 and -2 pushed a lint fix after their
+				// first push went red, and the cycle had already been failed
+				// on that first red - a green PR abandoned, a second and third
+				// cycle spent fixing what was fixed. Red counts once the run
+				// that can still push has ended.
+				if ended, _ := fixEnded(c); !ended {
+					green = false
+					continue
+				}
 				fail("CI is red on " + p.URL)
 				return
 			case "pending":
