@@ -1171,6 +1171,17 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			fail(fmt.Sprintf("the fix run %s ended without a PR on %s", orDash(run), c.branch))
 			return
 		}
+		// A start that never became a run. On 10 October the fix for 2ca50154
+		// was started against a stack that had no flow watchdogfix yet: the
+		// starter answered "no such flow", the queue row went to running with
+		// no run behind it, and this cycle would have sat in fixing for the
+		// whole of timeouts.watchdog_fix waiting on a PR nothing was writing.
+		// Same rule as the resume: started, no run within watchdog_start, spent.
+		if run, _, _, started := queueOutcome(c.fixQueue); run == "" && started > 0 &&
+			over(c, conf, "watchdog_start", started) {
+			fail("the fix run was started and no run came of it within timeouts.watchdog_start")
+			return
+		}
 		if over(c, conf, "watchdog_fix", since) {
 			fail("no PR on " + c.branch + " within timeouts.watchdog_fix")
 		}
@@ -1388,7 +1399,13 @@ func queueResume(c wdCycle, d *dropFact) int64 {
 // resumeOutcome is the run the resume turned into, whether it has finished
 // and how, and when the queue started it (0 while it waits its turn).
 func resumeOutcome(c wdCycle) (string, bool, string, float64) {
-	if !c.resumeQueue.Valid {
+	return queueOutcome(c.resumeQueue)
+}
+
+// queueOutcome is the same four facts for any queue row the watchdog put
+// there: the fix run as much as the resume.
+func queueOutcome(row sql.NullInt64) (string, bool, string, float64) {
+	if !row.Valid {
 		return "", false, "", 0
 	}
 	mu.Lock()
@@ -1396,7 +1413,7 @@ func resumeOutcome(c wdCycle) (string, bool, string, float64) {
 	var run, verdict sql.NullString
 	var started, finished sql.NullFloat64
 	db.QueryRow(`SELECT q.run, q.started, r.finished, r.verdict FROM queue q
-	             LEFT JOIN runs r ON r.run = q.run WHERE q.id=?`, c.resumeQueue.Int64).
+	             LEFT JOIN runs r ON r.run = q.run WHERE q.id=?`, row.Int64).
 		Scan(&run, &started, &finished, &verdict)
 	return run.String, finished.Valid, verdict.String, started.Float64
 }
