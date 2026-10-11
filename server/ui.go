@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -373,6 +375,10 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 			http.Error(w, "that does not parse as limits", http.StatusBadRequest)
 			return
 		}
+		if bad := limitsBroken(confPath, string(body)); len(bad) > 0 {
+			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(bad, "\n"), http.StatusBadRequest)
+			return
+		}
 		if err := os.WriteFile(confPath, body, 0o644); err != nil { //nolint:gosec // G306: limits.yml is a bind mount from the harness repo; 0o600 from root would lock git on the host out of it
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -406,6 +412,10 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 		}
 		if len(parseConfig(after)) == 0 {
 			http.Error(w, "that does not parse as limits", http.StatusBadRequest)
+			return
+		}
+		if bad := limitsBroken(confPath, after); len(bad) > 0 {
+			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(bad, "\n"), http.StatusBadRequest)
 			return
 		}
 		if err := os.WriteFile(confPath, []byte(after), 0o644); err != nil { //nolint:gosec // G306: limits.yml is a bind mount from the harness repo; 0o600 from root would lock git on the host out of it
@@ -531,4 +541,41 @@ func (e errNamed) Error() string { return "cannot set " + string(e) }
 // parseConfig is loadConfig for text that is not on disk yet.
 func parseConfig(raw string) Config {
 	return parseLimits(raw)
+}
+
+// runCeiling is the four hours a run is given; no edit through the page gives
+// it more.
+const runCeiling = 14400
+
+// limitsBroken is what an edit through the page would break, the same rules
+// agentic-v-model's engine/tools/limits_lock.py holds a commit to: no key or
+// section of the file on disk goes missing, no number is zero or below (zero
+// switches a limit off - laps_watchdog 0 stopped this watchdog for 14 hours on
+// 2026-10-11), and timeouts.run stays within four hours.
+func limitsBroken(confPath, after string) []string {
+	next := parseConfig(after)
+	var out []string
+	if raw, err := os.ReadFile(confPath); err == nil {
+		for section, keys := range parseConfig(string(raw)) {
+			for key := range keys {
+				if _, ok := next[section][key]; !ok {
+					out = append(out, section+"."+key+" would be removed")
+				}
+			}
+		}
+	}
+	for section, keys := range next {
+		for key, value := range keys {
+			if f, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil && f <= 0 {
+				out = append(out, section+"."+key+" = "+value+": zero or below switches the limit off")
+			}
+		}
+	}
+	if f, err := strconv.ParseFloat(strings.TrimSpace(next["timeouts"]["run"]), 64); err != nil {
+		out = append(out, "timeouts.run is missing or not a number")
+	} else if f > runCeiling {
+		out = append(out, fmt.Sprintf("timeouts.run = %.0f: past the %d s (4 h) a run is given", f, runCeiling))
+	}
+	sort.Strings(out)
+	return out
 }
