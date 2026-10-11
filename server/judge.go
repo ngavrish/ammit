@@ -243,7 +243,7 @@ func act(name string, conf Config, ctx map[string]string) string {
 			}
 		}
 	}
-	for key, value := range ctx {
+	for key, value := range withContext(conf, ctx) {
 		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", shellSafe(value))
 	}
 	// A hole nobody filled is not a command.
@@ -924,4 +924,27 @@ func sweepCrashed(conf Config) bool {
 // typographic one reads the same and quotes nothing.
 func shellSafe(value string) string {
 	return strings.ReplaceAll(value, "'", "’")
+}
+
+// withContext is what a command template is filled from: the caller's values,
+// and limits.yml's context block for every hole the caller did not name.
+//
+// Each caller used to copy the context in itself, and two forgot. The watchdog
+// asked commands.watchdog_merge for PR #631 (chain 0effa7ec, cycle 2) with
+// only {pr}, {run} and {name}; the template is `docker exec {worker} gh pr
+// merge ...`, the hole check refused it - "{worker} was never filled —
+// watchdog_merge would have been a no-op" - and a green, clean PR sat
+// unmerged until the cycle failed as "still not merged". watchdog_deploy had
+// the same gap. The hole check sits in act() and command() once, so the
+// context does too. A value the caller names wins, so the existing callers
+// mean exactly what they did.
+func withContext(conf Config, ctx map[string]string) map[string]string {
+	all := make(map[string]string, len(ctx)+len(conf["context"]))
+	for k, v := range conf["context"] {
+		all[k] = v
+	}
+	for k, v := range ctx {
+		all[k] = v
+	}
+	return all
 }

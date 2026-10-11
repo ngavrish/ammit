@@ -1086,7 +1086,7 @@ func command(name string, conf Config, ctx map[string]string) (string, error) {
 	if tmpl == "" {
 		return "", errors.New("no command named " + name)
 	}
-	for key, value := range ctx {
+	for key, value := range withContext(conf, ctx) {
 		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", shellSafe(value))
 	}
 	if hole := placeholder.FindString(tmpl); hole != "" {
