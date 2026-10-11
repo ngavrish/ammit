@@ -100,7 +100,15 @@ func pumpQueue(conf Config) {
 	}
 	mu.Lock()
 	var active int
-	db.QueryRow(`SELECT count(*) FROM runs WHERE finished IS NULL AND started > ?`,
+	// A run on the host (its run_start says tags.where = local) is watched
+	// here like any other - silence, limits, verdicts - but it does not hold
+	// the runner's one slot: it never touches the runner's clone. Counted as a
+	// slot, the APF-2327 host run on 2026-10-12 would have held APF-3296's
+	// queue the way its stack run had for two hours the night before.
+	db.QueryRow(`SELECT count(*) FROM runs r WHERE r.finished IS NULL AND r.started > ?
+	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run
+	                 AND e.kind = 'run_start'
+	                 AND json_extract(e.payload, '$.tags.where') = 'local')`,
 		float64(time.Now().Add(-24*time.Hour).UnixNano())/1e9).Scan(&active)
 	var id int64
 	var name, payload string
