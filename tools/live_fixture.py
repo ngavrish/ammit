@@ -67,9 +67,11 @@ def build_a() -> None:
         calls(run, "testing", "tester", [("Bash", {"command": "pytest tests -q"})])
         s.log("AttributeError: 'NoneType' object has no attribute 'weigh'", level="text")
     # A phase that said nothing for five minutes. Nothing else in this fixture
-    # is quiet, so the idle column is zero everywhere but here.
+    # is quiet, so the idle column is zero everywhere but here. Anchored on the
+    # run's own start, not on now: the gap is measured to the run's first
+    # event, and now-300 came out as 299.9 whenever the calls above took 0.1s.
     ammit.send("log", run=A_RUN, phase="testing", agent="tester", level="text",
-               text="bringing the environment up", at=time.time() - _IDLE_GAP_SECONDS)
+               text="bringing the environment up", at=run._t0 - _IDLE_GAP_SECONDS)
     run.document("map", "the framework map: a chartreuse thread through every step "
                         "definition, and the scenarios that reach it", phase="implementing")
     run.finish("PASS", "the live check's first run")
