@@ -208,6 +208,30 @@ func stops(action string) bool {
 	return false
 }
 
+// withContext is ctx with every limits.yml `context` value it does not set
+// itself: {worker}, {envd}, {starter}, {control}, {ammit}. What the caller set
+// wins; a key the caller left out is filled from the stand, never from "".
+//
+// Each caller used to merge conf["context"] on its own, and two forgot. The
+// watchdog's merge sent {pr, run, name} alone, so `docker exec {worker} gh pr
+// merge {pr}` was refused as a hole nobody filled - "refused: {worker} was never
+// filled — watchdog_merge would have been a no-op" on PR #630 for run 0dd68e70
+// (APF-3296), and on every merge the watchdog ever asked for, eight of eight
+// (agentic-v-model #622, #629-#633, ammit #79, #83) - and every green fix sat
+// open until timeouts.watchdog_ci spent its cycle as "still not merged".
+// watchdog_deploy had the same gap. Filled here, once, for every
+// command act() and command() run.
+func withContext(conf Config, ctx map[string]string) map[string]string {
+	out := make(map[string]string, len(ctx)+len(conf["context"]))
+	for k, v := range conf["context"] {
+		out[k] = v
+	}
+	for k, v := range ctx {
+		out[k] = v
+	}
+	return out
+}
+
 func act(name string, conf Config, ctx map[string]string) string {
 	tmpl := conf.str("commands", name, "")
 	if tmpl == "" {
@@ -243,7 +267,7 @@ func act(name string, conf Config, ctx map[string]string) string {
 			}
 		}
 	}
-	for key, value := range ctx {
+	for key, value := range withContext(conf, ctx) {
 		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", shellSafe(value))
 	}
 	// A hole nobody filled is not a command.
