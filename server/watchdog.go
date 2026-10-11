@@ -1078,6 +1078,25 @@ func (p prView) ci() string {
 	return "green"
 }
 
+// wdCtx is the context every watchdog command is filled from: what the call
+// names, with limits.yml's `context` laid over it, the way every other hand
+// in this service fills its template.
+//
+// watchdog_pr had it and watchdog_merge did not. limits.yml runs both through
+// the runner (`docker exec {worker} gh ...`), so the listing worked and every
+// merge was refused - "{worker} was never filled - watchdog_merge would have
+// been a no-op" - on ammit#79 (run fa72bb3b) and on agentic-v-model#622 (run
+// dc6e5cbd, cycle 2), both with CI green. The cycle then sat in `merging`
+// until timeouts.watchdog_ci and failed as "still not merged", and the drop
+// it had fixed was never resumed. watchdog_deploy was built the same way.
+// One helper, so the next command cannot be the one that forgets.
+func wdCtx(conf Config, ctx map[string]string) map[string]string {
+	for k, v := range conf["context"] {
+		ctx[k] = v
+	}
+	return ctx
+}
+
 // command runs a configured command and hands back everything it printed.
 // act() keeps 200 bytes of an answer for the judgement line; a PR listing is
 // data, and data cut at 200 bytes is not JSON.
@@ -1103,11 +1122,7 @@ func command(name string, conf Config, ctx map[string]string) (string, error) {
 // The command may print one JSON array per repository; they are read one
 // after another.
 func prsOn(branch string, conf Config) ([]prView, error) {
-	ctx := map[string]string{"branch": branch}
-	for k, v := range conf["context"] {
-		ctx[k] = v
-	}
-	out, err := command("watchdog_pr", conf, ctx)
+	out, err := command("watchdog_pr", conf, wdCtx(conf, map[string]string{"branch": branch}))
 	if err != nil {
 		return nil, err
 	}
@@ -1234,8 +1249,8 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			if strings.ToUpper(p.State) == "MERGED" {
 				continue
 			}
-			out := act("watchdog_merge", conf, map[string]string{"pr": p.URL, "run": c.run,
-				"name": d.name})
+			out := act("watchdog_merge", conf, wdCtx(conf, map[string]string{"pr": p.URL,
+				"run": c.run, "name": d.name}))
 			said = append(said, p.URL+": "+out)
 		}
 		wdMove(c.id, wdMerging, "prs=?", jsonList(urls))
@@ -1278,18 +1293,16 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		wdMove(c.id, wdDeploying, "merged_at=?", latest)
 		said := ""
 		if conf.str("commands", "watchdog_deploy", "") != "" {
-			said = "; deploy asked: " + act("watchdog_deploy", conf, map[string]string{
-				"pr": strings.Join(urlsOf(prs), " "), "run": c.run, "name": d.name})
+			said = "; deploy asked: " + act("watchdog_deploy", conf, wdCtx(conf, map[string]string{
+				"pr": strings.Join(urlsOf(prs), " "), "run": c.run, "name": d.name}))
 		}
 		wdSay(c.run, d.phase, wdDeploying, d.cause, c.cycle, limit, urlsOf(prs),
 			"merged "+strings.Join(urlsOf(prs), " ")+said)
 	case wdDeploying:
 		at, ok := deployedAfter(c.mergedAt.Float64)
 		if ok && conf.str("commands", "watchdog_deployed", "") != "" {
-			ctx := map[string]string{"pr": strings.Join(c.prs, " "), "run": c.run, "name": d.name}
-			for k, v := range conf["context"] {
-				ctx[k] = v
-			}
+			ctx := wdCtx(conf, map[string]string{"pr": strings.Join(c.prs, " "), "run": c.run,
+				"name": d.name})
 			if _, err := command("watchdog_deployed", conf, ctx); err != nil {
 				ok = false
 			}
