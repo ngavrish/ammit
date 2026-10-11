@@ -689,15 +689,18 @@ func recordDrop(d *dropFact, root string) bool {
 // rootOf is the chain a drop belongs to: the root of the cycle whose resume
 // became this run, or the run itself. The queue row is the link - a resume is
 // queued, the queue row is tied to the run it turned into on run_start - so
-// the chain is read from what happened, not from a name.
+// the chain is read from what happened, not from a name. A resume the cycle
+// adopted rather than queued (replayOf) has no queue row of its own: it is
+// the cycle's resumed_run, and its drop belongs to the same chain.
 func rootOf(run string) (string, int64) {
 	mu.Lock()
 	defer mu.Unlock()
 	var root string
 	var id int64
 	err := db.QueryRow(`SELECT c.root, c.id FROM watchdog_cycles c
-	                    JOIN queue q ON q.id = c.resume_queue
-	                    WHERE q.run = ? ORDER BY c.id DESC LIMIT 1`, run).Scan(&root, &id)
+	                    LEFT JOIN queue q ON q.id = c.resume_queue
+	                    WHERE q.run = ? OR c.resumed_run = ?
+	                    ORDER BY c.id DESC LIMIT 1`, run, run).Scan(&root, &id)
 	if err != nil {
 		return run, 0
 	}
@@ -1157,6 +1160,21 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 	since := c.entered
 	switch c.state {
 	case wdFixing:
+		// The dropped run may be resumed before its fix is handed back: a
+		// person merged a fix and replayed it. That replay is the resume, and
+		// the cycle follows it as it does one started while it waited on the
+		// deploy. Run db62b413 (APF-3296) dropped at bugsrules; #624 fixed the
+		// gate and 0dd68e70 replayed it from bugsrules, green there, while
+		// cycle 1 was fixing. Not seeing it, the chain spent cycles 1 to 3
+		// fixing a drop that was already past, and 0dd68e70's own drop at
+		// reportrules opened a second chain beside this one.
+		if run := replayOf(d.name, c.run, c.started); run != "" {
+			withdraw(c.fixQueue)
+			wdMove(c.id, wdResumed, "resumed_run=?", run)
+			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, nil,
+				"the dropped run was resumed outside this cycle as "+run+"; the cycle follows it")
+			return
+		}
 		prs, err := prsOn(c.branch, conf)
 		if err != nil {
 			log.Printf("ammit: watchdog %s: %v", c.branch, err)

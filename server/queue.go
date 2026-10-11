@@ -86,6 +86,9 @@ func sweepAbandoned(conf Config) {
 	}
 }
 
+// queueStart is how pumpQueue starts an item: act, unless a test stands in.
+var queueStart = act
+
 // pumpQueue starts the next item when a slot frees, in order.
 //
 // Parallelism becomes a number in a file rather than a property of whoever
@@ -112,10 +115,18 @@ func pumpQueue(conf Config) {
 	for k, v := range conf["context"] {
 		ctx[k] = v
 	}
-	outcome := act(conf.str("actions", "on_start", "start_run"), conf, ctx)
+	// The row is running before the run is started, not after. run_start ties
+	// the oldest running, unlinked row of the ticket to the run it became, and
+	// the run can report its start before the start command has returned: a
+	// run_start that arrives inside that call finds the row still waiting and
+	// ties nothing. WD-db62b413-2 (queue row 60) ran as e8b5fb60, whose
+	// run_start is stamped 0.012 s before the row's started; the run ended,
+	// its row stayed running with no run, and the watchdog failed the cycle as
+	// "the fix run was started and no run came of it".
 	mu.Lock()
 	db.Exec(`UPDATE queue SET state='running', started=? WHERE id=?`,
 		float64(time.Now().UnixNano())/1e9, id)
 	mu.Unlock()
+	outcome := queueStart(conf.str("actions", "on_start", "start_run"), conf, ctx)
 	judge("queue", "", name, "queue.parallel", slots, float64(active+1), "started", outcome)
 }
