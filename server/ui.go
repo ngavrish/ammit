@@ -571,6 +571,13 @@ func limitsBroken(confPath, after string) []string {
 			}
 		}
 	}
+	// A person's approval is never what a limit does when it fires.
+	for key, value := range next["actions"] {
+		if personCommands[strings.TrimSpace(value)] {
+			out = append(out, "actions."+key+" = "+value+": publishing is a person's "+
+				"approval, never a limit's action")
+		}
+	}
 	if f, err := strconv.ParseFloat(strings.TrimSpace(next["timeouts"]["run"]), 64); err != nil {
 		out = append(out, "timeouts.run is missing or not a number")
 	} else if f > runCeiling {
