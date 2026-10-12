@@ -529,8 +529,13 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 
 // causeOf names the cause as an id and adds the lines that show it.
 func causeOf(f *runFacts, conf Config, d *dropFact) string {
-	// A limit that ended the run, by this service or by the runner.
-	for _, j := range f.judgements {
+	// A limit that ended the run, by this service or by the runner: the
+	// latest one. A fan-out branch gives up and the run goes on, so the
+	// earliest give-up is a branch's, not the run's ending - 75061e39 stopped
+	// on bugsfix and was recorded as limit:loops.laps_implrulefix, claim-1's
+	// give-up two hours before, and its fix run was briefed on that.
+	for i := len(f.judgements) - 1; i >= 0; i-- {
+		j := f.judgements[i]
 		if j.scope == "hand" {
 			continue
 		}
