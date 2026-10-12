@@ -132,12 +132,12 @@ actions:
 # substituted before the command runs.
 commands:
   warn: /bin/true
-  restart_worker: docker restart {worker}
   # Kill switches the runner checks between messages: it stops where nothing is
   # half-done, rather than being shot mid-tool-call. Removing the lock file was
   # what this used to do, and it stopped nothing — the run kept spending, and
   # the ticket merely became free for another run to claim on top of it.
-  stop_run: docker exec {worker} sh -c "touch /runs/{name}/.cancel"
+  # The marker carries the run's id; the runner stops only the run it names.
+  stop_run: docker exec {worker} sh -c "echo {run} > /runs/{name}/.cancel"
   stop_phase: docker exec {worker} sh -c "touch /runs/{name}/.cancel.phase.{phase}"
   # A file cannot interrupt a process that is waiting on a model, and that is
   # the one wait worth interrupting. These call the worker's control handle, so
