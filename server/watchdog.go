@@ -501,6 +501,13 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 			return nil, "stopped by a person (" + j.rule + ")"
 		}
 	}
+	// A run on the host is not the stack's to fix: a fix run, a deploy and a
+	// resume all happen in the runner, which never ran it. 2026-10-12: the
+	// APF-2327 host run 28a6a227, closed by the session that owned it,
+	// queued WD-28a6a227-1 into the runner's only slot.
+	if hostRun(f.run) {
+		return nil, "a run on the host, not in the runner"
+	}
 	if !f.runStart && f.name == f.run {
 		return nil, "no run_start: a row made by a stray event, not a run"
 	}
