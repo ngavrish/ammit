@@ -1156,6 +1156,21 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 	if !ok {
 		return
 	}
+	// The rule classifyDrop applies to a new drop holds for a chain already
+	// moving: a run on the host is not the stack's to fix, and a cycle of it
+	// ends here - its waiting fix run and resume withdrawn, no next cycle started, nothing
+	// merged and nothing resumed in a runner that never ran it. 2026-10-12:
+	// #91 stopped new host-run chains at 00:34, but the chain of APF-2327's
+	// host run 28a6a227, opened at 00:30, failed cycle 1 into cycle 2
+	// (WD-28a6a227-2) at 00:35 because this step never asked again.
+	if hostRun(c.run) {
+		why := "a run on the host, not in the runner: not a drop the stack answers"
+		withdraw(c.fixQueue)
+		withdraw(c.resumeQueue)
+		wdMove(c.id, wdLeft, "why=?", why)
+		wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, c.prs, why)
+		return
+	}
 	fail := func(why string) {
 		wdMove(c.id, wdFailed, "why=?", why)
 		wdSay(c.run, d.phase, wdFailed, d.cause, c.cycle, limit, c.prs, why)

@@ -117,3 +117,67 @@ func TestFixingCycleFollowsAResumeStartedOutsideIt(t *testing.T) {
 		t.Errorf("rootOf(unrelated) = %s, cycle %d; want itself, 0", root, parent)
 	}
 }
+
+// A chain of a host run that was already moving when classifyDrop learned to
+// refuse host runs (#91) ends at its next step rather than cycling on. Read off
+// the record of APF-2327's host run 28a6a227 (run_start tags.where = local):
+// cycle 2 was queued at 00:35:00, after #91 at 00:34:20, because stepCycle
+// failed cycle 1 into a new cycle without asking again.
+func TestMovingCycleOfAHostRunIsLeftNotCycledOn(t *testing.T) {
+	const hostDropped = "28a6a227-392b-4e19-a779-f9c2a6ebf85a"
+	if err := openDB(t.TempDir() + "/ammit.db"); err != nil {
+		t.Fatal(err)
+	}
+	mustExec := func(q string, args ...any) int64 {
+		t.Helper()
+		res, err := db.Exec(q, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := res.LastInsertId()
+		return id
+	}
+	mustExec(`INSERT INTO runs (run, name, started, finished, verdict) VALUES (?,?,?,?,?)`,
+		hostDropped, "APF-2327", 1791761558.293004, 1791765040.9700053, "BLOCKED")
+	mustExec(`INSERT INTO events (at, kind, run, payload) VALUES (?, 'run_start', ?, ?)`,
+		1791761558.293004, hostDropped,
+		`{"kind":"run_start","name":"APF-2327","run":"`+hostDropped+`","tags":{"mode":"data-tester","where":"local"}}`)
+	mustExec(`INSERT INTO watchdog_drops (run, root, name, mode, phase, cause, verdict, evidence, at)
+	          VALUES (?,?,?,?,?,?,?,?,?)`, hostDropped, hostDropped, "APF-2327",
+		"data-tester", "", "limit:loops.laps_standfix", "BLOCKED", "[]", 1791765057.9735928)
+	fix := mustExec(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?)`,
+		"WD-28a6a227-2", "{}", 1791765300.4216988)
+	cycle := mustExec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, fix_queue,
+	                     started, entered, updated) VALUES (?,?,?,?,?,?,?,?,?)`,
+		hostDropped, hostDropped, 2, wdFixing, "watchdog/28a6a227-2", fix,
+		1791765300.4216988, 1791765300.4216988, 1791765300.4216988)
+
+	stepCycle(wdCycles(`id=?`, cycle)[0], Config{}, 3)
+
+	if c := wdCycles(`id=?`, cycle)[0]; c.state != wdLeft {
+		t.Fatalf("cycle 2 of the host run %s is %s, want %s", hostDropped, c.state, wdLeft)
+	}
+	var queued string
+	if err := db.QueryRow(`SELECT state FROM queue WHERE id=?`, fix).Scan(&queued); err != nil {
+		t.Fatal(err)
+	}
+	if queued != "done" {
+		t.Errorf("the fix run still waiting to start is %s, want withdrawn (done)", queued)
+	}
+	if n := len(wdCycles(`root=?`, hostDropped)); n != 1 {
+		t.Errorf("the host run's chain has %d cycles after the step, want 1: no next cycle", n)
+	}
+
+	// A stack run's moving cycle is untouched by the rule: still fixing.
+	mustExec(`INSERT INTO watchdog_drops (run, root, name, mode, phase, cause, verdict, evidence, at)
+	          VALUES (?,?,?,?,?,?,?,?,?)`, wdTestDropped, wdTestDropped, "APF-3296",
+		"functional-tester", "bugsrules", "limit:loops.laps_bugsfix", "BLOCKED", "[]", 1791687016.2542412)
+	stack := mustExec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, fix_queue,
+	                     started, entered, updated) VALUES (?,?,?,?,?,?,?,?,?)`,
+		wdTestDropped, wdTestDropped, 1, wdFixing, "watchdog/db62b413-1", nil,
+		wdNow(), wdNow(), wdNow())
+	stepCycle(wdCycles(`id=?`, stack)[0], Config{}, 3)
+	if c := wdCycles(`id=?`, stack)[0]; c.state != wdFixing {
+		t.Errorf("a stack run's fixing cycle went to %s, want it still fixing", c.state)
+	}
+}
