@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -900,6 +901,21 @@ func main() {
 				ctx[key] = value
 			}
 		}
+		if personCommands[in.Command] {
+			if who := runnerCaller(r); who != "" {
+				judge("hand", in.Run, in.Name, "hand."+in.Command, 0, 0, in.Command,
+					"refused: from agent-runner ("+who+")")
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": in.Command +
+					" is a person's approval: a run's agent (agent-runner) cannot send it"})
+				return
+			}
+			if in.Run == "" || in.Name == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": in.Command +
+					" names the run and the ticket it approves: run and name"})
+				return
+			}
+			ctx[byPerson] = "yes"
+		}
 		outcome := act(in.Command, conf, ctx)
 		judge("hand", in.Run, in.Name, "hand."+in.Command, 0, 0, in.Command, outcome)
 		writeJSON(w, http.StatusOK, map[string]string{"outcome": outcome})
@@ -1431,4 +1447,24 @@ func safeName(s string) string {
 func lastSegment(path string) string {
 	parts := strings.Split(path, "/")
 	return parts[len(parts)-1]
+}
+
+// runnerCaller is the address a request came from when that is agent-runner,
+// directly or through a proxy, and "" otherwise.
+func runnerCaller(r *http.Request) string {
+	runner, _ := net.DefaultResolver.LookupHost(r.Context(), "agent-runner")
+	from := []string{r.RemoteAddr, r.Header.Get("X-Real-Ip")}
+	from = append(from, strings.Split(r.Header.Get("X-Forwarded-For"), ",")...)
+	for _, f := range from {
+		f = strings.TrimSpace(f)
+		if h, _, err := net.SplitHostPort(f); err == nil {
+			f = h
+		}
+		for _, ip := range runner {
+			if f != "" && f == ip {
+				return f
+			}
+		}
+	}
+	return ""
 }

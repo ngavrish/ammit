@@ -208,10 +208,25 @@ func stops(action string) bool {
 	return false
 }
 
+// personCommands are a person's approval and nothing else's: approve_report
+// posts a run's report to Jira and Teams. ammit never runs one as a limit's
+// action, and /act runs one only for a hand that is not a run's agent
+// (agentic-v-model services/orchestrator/approval_gate.go takes a request from
+// ammit as the chat's approval). On 2026-10-12 a run of APF-3296 posted to
+// Jira and Teams with nobody asked.
+var personCommands = map[string]bool{"approve_report": true}
+
+// byPerson is the context key only /act sets, after it has checked the caller.
+const byPerson = "\x00by_person"
+
 func act(name string, conf Config, ctx map[string]string) string {
 	tmpl := conf.str("commands", name, "")
 	if tmpl == "" {
 		return "no command named " + name
+	}
+	if personCommands[name] && ctx[byPerson] != "yes" {
+		return "refused: " + name + " is a person's approval - only a hand through /act " +
+			"runs it, never a limit"
 	}
 	// A debug run on the subscription is a run the limits must watch and must
 	// not touch. actions.enforce: off keeps every judgement and drops every
