@@ -19,9 +19,12 @@ import (
 // /runs/_memory/<ticket> is per ticket and a learning event is a sentence; an
 // answer the next run can act on is a row with a probe in it.
 //
-// One row per (project, topic). topic is a flag key, or "environments" for
-// the product's environment map. kind says which: feature_switch or
-// environment. body is the answer as the envplan phase wrote it - mechanism
+// One row per (project, topic). topic is a flag key, "environments" for the
+// product's environment map, "dependency:<name>" for what a test meets when a
+// requirement reaches outside the service (real per environment, an approved
+// simulator, or nothing at all), or "simulator:<key>" for a simulator the
+// product itself ships. kind says which: feature_switch, environment,
+// dependency or simulator. body is the answer as the envplan phase wrote it - mechanism
 // per environment, how to turn it on and off, the probe that proves it, the
 // citation. A run that finds the probe failing marks the row stale; the next
 // envplan re-learns it and writes it again, which clears the mark.
@@ -42,7 +45,51 @@ CREATE TABLE IF NOT EXISTS kb (
 );`
 
 // kbKinds is the closed list; a typo that lands is a row nobody asks for.
-var kbKinds = map[string]bool{"feature_switch": true, "environment": true}
+var kbKinds = map[string]bool{"feature_switch": true, "environment": true,
+	"dependency": true, "simulator": true}
+
+// kbSimulatorFields are what a simulator entry must carry. Only a simulator
+// the product ships is approved - its compose file, its ci-tests fixtures - and
+// the citation is what says so: a simulator nobody can point at in the product
+// is a mock somebody invented, and the base refuses to hand it out.
+var kbSimulatorFields = []string{"dependency", "simulator", "start", "admin", "probe", "covers", "citations"}
+
+// kbBodyProblem says why a body cannot be stored for its kind; "" when it can.
+func kbBodyProblem(kind string, body map[string]any) string {
+	switch kind {
+	case "simulator":
+		for _, f := range kbSimulatorFields {
+			v, ok := body[f]
+			if !ok || v == nil || v == "" {
+				return "a simulator needs " + strings.Join(kbSimulatorFields, ", ") + "; missing " + f
+			}
+			if l, isList := v.([]any); isList && len(l) == 0 {
+				return "a simulator needs " + strings.Join(kbSimulatorFields, ", ") + "; " + f + " is empty"
+			}
+		}
+	case "dependency":
+		envs, _ := body["environments"].(map[string]any)
+		if len(envs) == 0 {
+			return "a dependency needs environments: {env: {kind: real|simulator|unavailable}}"
+		}
+		for env, raw := range envs {
+			e, _ := raw.(map[string]any)
+			switch e["kind"] {
+			case "real", "unavailable":
+			case "simulator":
+				if s, _ := e["simulator"].(string); s == "" {
+					return "dependency on " + env + ": kind simulator names no simulator"
+				}
+			default:
+				return "dependency on " + env + ": kind must be real, simulator or unavailable"
+			}
+		}
+		if c, _ := body["citations"].([]any); len(c) == 0 {
+			return "a dependency needs citations"
+		}
+	}
+	return ""
+}
 
 type kbEntry struct {
 	Project   string          `json:"project"`
@@ -71,12 +118,16 @@ func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	in.Kind = strings.TrimSpace(strings.ToLower(in.Kind))
 	if in.Project == "" || in.Topic == "" || !kbKinds[in.Kind] {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "need project, topic and kind (feature_switch or environment)"})
+			"error": "need project, topic and kind (feature_switch, environment, dependency or simulator)"})
 		return
 	}
 	var probe map[string]any
 	if json.Unmarshal(in.Body, &probe) != nil || len(probe) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body must be a JSON object"})
+		return
+	}
+	if why := kbBodyProblem(in.Kind, probe); why != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
 		return
 	}
 	at := kbNow()
