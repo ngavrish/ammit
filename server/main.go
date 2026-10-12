@@ -516,6 +516,9 @@ func openDB(dbPath string) error {
 	seedPrices()
 	liftHistory()
 	openSearch()
+	if err := openKBDocs(); err != nil {
+		return fmt.Errorf("could not make the knowledge base's documents: %w", err)
+	}
 	indexHistory()
 	return nil
 }
@@ -719,6 +722,20 @@ func main() {
 	})
 	mux.HandleFunc("POST /kb/stale", func(w http.ResponseWriter, r *http.Request) {
 		staleKB(db, &mu, w, r)
+	})
+	// The same base in words: documents chunked and embedded, and a question
+	// answered with the nearest chunks and their citations (kb_docs.go).
+	mux.HandleFunc("POST /kb/docs", func(w http.ResponseWriter, r *http.Request) {
+		putKBDoc(&mu, w, r)
+	})
+	mux.HandleFunc("GET /kb/docs", func(w http.ResponseWriter, r *http.Request) {
+		getKBDocs(&mu, w, r)
+	})
+	mux.HandleFunc("GET /kb/ask", func(w http.ResponseWriter, r *http.Request) {
+		askKB(&mu, w, r)
+	})
+	mux.HandleFunc("POST /kb/ask", func(w http.ResponseWriter, r *http.Request) {
+		askKB(&mu, w, r)
 	})
 	mux.HandleFunc("GET /kb", func(w http.ResponseWriter, r *http.Request) {
 		getKB(db, &mu, w, r)
