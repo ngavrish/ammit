@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -131,6 +132,11 @@ func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	at := kbNow()
+	// Indexed in words as well, so a question that does not know the topic
+	// finds the entry (kb_docs.go). Embedded before the lock.
+	doc := kbDoc{Project: in.Project, Topic: "entry:" + in.Topic, Kind: in.Kind,
+		Text: kbEntryText(in), Cite: kbEntryCite(in), LearnedBy: in.LearnedBy}
+	emb := embedKBDoc(r.Context(), doc)
 	mu.Lock()
 	defer mu.Unlock()
 	_, err := db.ExecContext(r.Context(), `
@@ -144,7 +150,12 @@ func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "project": in.Project, "topic": in.Topic, "at": at})
+	_, embedded, derr := storeKBDoc(r.Context(), doc, emb)
+	if derr != nil {
+		log.Printf("ammit: kb entry %s/%s not indexed for /kb/ask: %v", in.Project, in.Topic, derr)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "project": in.Project, "topic": in.Topic, "at": at,
+		"indexed": derr == nil, "embedded": embedded})
 }
 
 // staleKB marks an entry whose probe failed: {project, topic, why, run}.
@@ -168,7 +179,11 @@ func staleKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, _ := res.RowsAffected()
+	// A document of the same topic, or the entry's own words, go stale with it.
+	n += staleKBDoc(r.Context(), in.Project, in.Topic, in.Why)
+	n += staleKBDoc(r.Context(), in.Project, "entry:"+in.Topic, in.Why)
+	if n == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such entry"})
 		return
 	}
@@ -184,25 +199,11 @@ func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "need project"})
 		return
 	}
-	where, args := []string{"project = ?"}, []any{project}
-	if t := strings.TrimSpace(q.Get("topic")); t != "" {
-		where, args = append(where, "topic = ?"), append(args, t)
-	}
-	if k := strings.TrimSpace(q.Get("kind")); k != "" {
-		where, args = append(where, "kind = ?"), append(args, k)
-	}
+	topic, kind := strings.TrimSpace(q.Get("topic")), strings.TrimSpace(q.Get("kind"))
 	mu.Lock()
-	rows, err := db.QueryContext(r.Context(), `
-		SELECT project, topic, kind, body, coalesce(learned_by, ''), at, stale,
-		       coalesce(stale_why, ''), coalesce(stale_by, ''), coalesce(stale_at, 0)
-		FROM kb WHERE `+strings.Join(where, " AND ")+` ORDER BY kind, topic`, args...)
-	if err != nil {
-		mu.Unlock()
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
 	out := []kbEntry{}
-	for rows.Next() {
+	// An empty filter matches every row: one statement, no SQL built from parts.
+	err := kbEach(r.Context(), func(rows *sql.Rows) {
 		var e kbEntry
 		var body string
 		var stale int
@@ -211,8 +212,14 @@ func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 			e.Body, e.Stale = json.RawMessage(body), stale != 0
 			out = append(out, e)
 		}
-	}
-	rows.Close()
+	}, `SELECT project, topic, kind, body, coalesce(learned_by, ''), at, stale,
+		       coalesce(stale_why, ''), coalesce(stale_by, ''), coalesce(stale_at, 0)
+		FROM kb WHERE project = ? AND (? = '' OR topic = ?) AND (? = '' OR kind = ?)
+		ORDER BY kind, topic`, project, topic, topic, kind, kind)
 	mu.Unlock()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "entries": out})
 }
