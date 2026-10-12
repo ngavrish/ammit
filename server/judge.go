@@ -393,6 +393,18 @@ func weigh(conf Config) {
 				}
 				if quiet > hb {
 					action := conf.str("actions", "on_heartbeat_gone", "restart_worker")
+					// A run on the host (run_start tags.where = local) has no
+					// process in the runner container, so restarting that
+					// container reanimates nothing of it - and kills whatever
+					// the stack is running. 2026-10-12 00:28: APF-2327's host
+					// run missed a beat, restart_worker hit
+					// agentic-v-model-agent-runner-1, and APF-3296's stack run
+					// ce792911 died two hours in.
+					if action == "restart_worker" && hostRun(r.run) {
+						judge("run", r.run, r.name, "timeouts.heartbeat", hb, quiet,
+							"none", "a host run: the runner container is not its worker, left alone")
+						continue
+					}
 					ctx := map[string]string{"run": r.run, "name": r.name,
 						"branch": lastBranch(r.run)}
 					for k, v := range conf["context"] {
@@ -947,4 +959,15 @@ func withContext(conf Config, ctx map[string]string) map[string]string {
 		all[k] = v
 	}
 	return all
+}
+
+// hostRun is a run whose run_start says tags.where = local: it runs on the
+// host, not in the runner container.
+func hostRun(run string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	var n int
+	db.QueryRow(`SELECT count(*) FROM events WHERE run = ? AND kind = 'run_start'
+	               AND json_extract(payload, '$.tags.where') = 'local'`, run).Scan(&n)
+	return n > 0
 }
