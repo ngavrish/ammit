@@ -524,6 +524,9 @@ func openDB(dbPath string) error {
 	if _, err := db.Exec(watchdogSchema); err != nil {
 		return fmt.Errorf("could not make the watchdog's tables: %w", err)
 	}
+	if _, err := db.Exec(kbSchema); err != nil {
+		return fmt.Errorf("could not make the knowledge base's table: %w", err)
+	}
 	// Columns added to a table that already exists. CREATE TABLE IF NOT EXISTS
 	// does nothing to a database that has the table, so a new column arrives
 	// only this way. Each is tried and its error ignored: "duplicate column
@@ -550,6 +553,9 @@ func openDB(dbPath string) error {
 	seedPrices()
 	liftHistory()
 	openSearch()
+	if err := openKBDocs(); err != nil {
+		return fmt.Errorf("could not make the knowledge base's documents: %w", err)
+	}
 	indexHistory()
 	return nil
 }
@@ -759,6 +765,31 @@ func main() {
 	})
 	mux.HandleFunc("GET /evidence/file/{sha256}", func(w http.ResponseWriter, r *http.Request) {
 		serveEvidenceFile(db, &mu, evidence, w, r)
+	})
+	// What a product's runs learned about switching its features on and where
+	// its tests can run. See kb.go.
+	mux.HandleFunc("POST /kb", func(w http.ResponseWriter, r *http.Request) {
+		putKB(db, &mu, w, r)
+	})
+	mux.HandleFunc("POST /kb/stale", func(w http.ResponseWriter, r *http.Request) {
+		staleKB(db, &mu, w, r)
+	})
+	// The same base in words: documents chunked and embedded, and a question
+	// answered with the nearest chunks and their citations (kb_docs.go).
+	mux.HandleFunc("POST /kb/docs", func(w http.ResponseWriter, r *http.Request) {
+		putKBDoc(&mu, w, r)
+	})
+	mux.HandleFunc("GET /kb/docs", func(w http.ResponseWriter, r *http.Request) {
+		getKBDocs(&mu, w, r)
+	})
+	mux.HandleFunc("GET /kb/ask", func(w http.ResponseWriter, r *http.Request) {
+		askKB(&mu, w, r)
+	})
+	mux.HandleFunc("POST /kb/ask", func(w http.ResponseWriter, r *http.Request) {
+		askKB(&mu, w, r)
+	})
+	mux.HandleFunc("GET /kb", func(w http.ResponseWriter, r *http.Request) {
+		getKB(db, &mu, w, r)
 	})
 	mux.HandleFunc("POST /documents", func(w http.ResponseWriter, r *http.Request) {
 		// A phase's artefact — a framework map, the requirements, a report. The
