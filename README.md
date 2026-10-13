@@ -253,6 +253,9 @@ button first.
 | `GET /gates` | what each check decided, and how many rounds it took |
 | `GET /judgements` | every limit crossed, what was observed, what was done |
 | `GET /queue` | what is waiting |
+| `POST /evidence` | a video, screenshot or log that proves one test |
+| `GET /evidence` | the proofs of a ticket or a run, with a link to each file |
+| `GET /evidence/file/{sha256}` | the file itself, with Range |
 | `GET /limits` | the config as the server currently reads it |
 | `GET /` | the page: limits, queue, runs, judgements |
 | `GET /limits.yml` | the config file itself |
@@ -283,6 +286,32 @@ one branch used to be findable by knowing which run, which phase and which
 endpoint to page through, which is another way of saying it was findable by
 already knowing where it was. It is not free: the index is about the size of
 the events it mirrors, and [RECORD.md](RECORD.md) names the measured numbers.
+
+## Evidence
+
+A test that passed is a line in a junit file, and a line in a junit file is the
+agent's word for it. What a reviewer believes is the recording of the browser
+doing the thing, and that recording used to live in a run directory the next run
+of the ticket reset. So the files go to an S3 bucket (MinIO, versioned, a user
+that can write and read but not delete) and this service keeps the index and is
+the only door to them:
+
+```bash
+curl -F ticket=APF-3296 -F run=fa72bb3b -F 'test=Title -- @1.2 Examples' \
+     -F classname=features.x.Title -F feature=features/x.feature \
+     -F status=passed -F kind=video -F file=@rec.webm localhost:8099/evidence
+# 201 {"sha256": "...", "key": "APF-3296/<sha256>.webm", "version_id": "...", "bytes": 281454}
+
+curl 'localhost:8099/evidence?ticket=APF-3296'         # or run=, and &test=
+curl -r 0-99 localhost:8099/evidence/file/<sha256>     # 206: a video can be scrubbed
+```
+
+`test` is the junit testcase name exactly as behave writes it, so a proof joins
+to the coverage row that names the same test. `kind` is one of `video`,
+`screenshot`, `log`; the file is capped at 512 MiB. The key is the hash of the
+bytes, so an upload retried after a timeout is one row and one object, not two.
+Without `AMMIT_EVIDENCE_S3_ENDPOINT`, `_BUCKET`, `_USER` and `_PASSWORD` the
+upload answers 503 rather than accepting a file it has nowhere to put.
 
 ## The page
 
