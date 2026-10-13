@@ -319,6 +319,42 @@ CREATE TABLE IF NOT EXISTS coverage (
 CREATE UNIQUE INDEX IF NOT EXISTS coverage_row ON coverage (run, kind, rid);
 CREATE INDEX IF NOT EXISTS coverage_ticket_kind ON coverage (ticket, kind);
 
+-- What proves each test: a video, a screenshot, a log, by the hash of its bytes.
+--
+-- coverage says which scenario rows prove a requirement; this says what a
+-- person can look at to believe that they did. The files themselves are in
+-- the object store (evidence.go) - this is the index, and the only way to them.
+--
+-- test is the junit testcase name exactly as behave writes it ("Title -- @1.2
+-- Examples"), because that is the name the suite's report and the coverage
+-- row's tests already carry, and a proof filed under any other spelling is a
+-- proof nothing joins to.
+--
+-- Unique on (run, test, kind, sha256): an upload retried after a timeout is
+-- the same proof written again, not a second one. Two different screenshots
+-- of one test are two rows, which is what they are.
+CREATE TABLE IF NOT EXISTS evidence (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         REAL NOT NULL,
+    ticket     TEXT NOT NULL,
+    run        TEXT NOT NULL,
+    test       TEXT NOT NULL,
+    classname  TEXT,
+    feature    TEXT,
+    status     TEXT,
+    kind       TEXT NOT NULL,
+    sha256     TEXT NOT NULL,
+    bytes      INTEGER NOT NULL,
+    mime       TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    version_id TEXT,
+    meta       TEXT,
+    UNIQUE (run, test, kind, sha256)
+);
+CREATE INDEX IF NOT EXISTS evidence_ticket ON evidence (ticket);
+CREATE INDEX IF NOT EXISTS evidence_run_test ON evidence (run, test);
+CREATE INDEX IF NOT EXISTS evidence_sha ON evidence (sha256);
+
 -- What the deploy is doing, and how the last one ended.
 --
 -- The lease says a deploy holds the machine right now. It does not say that
@@ -709,6 +745,20 @@ func main() {
 	})
 	mux.HandleFunc("GET /coverage", func(w http.ResponseWriter, r *http.Request) {
 		getCoverage(db, &mu, w, r)
+	})
+	// The proofs of each test, and the one door to their files. See evidence.go.
+	evidence, evidenceUnconfigured = openEvidenceStore()
+	if evidence == nil {
+		log.Printf("ammit: evidence store off - POST /evidence answers 503: %s", evidenceUnconfigured)
+	}
+	mux.HandleFunc("POST /evidence", func(w http.ResponseWriter, r *http.Request) {
+		postEvidence(db, &mu, evidence, w, r)
+	})
+	mux.HandleFunc("GET /evidence", func(w http.ResponseWriter, r *http.Request) {
+		getEvidence(db, &mu, w, r)
+	})
+	mux.HandleFunc("GET /evidence/file/{sha256}", func(w http.ResponseWriter, r *http.Request) {
+		serveEvidenceFile(db, &mu, evidence, w, r)
 	})
 	mux.HandleFunc("POST /documents", func(w http.ResponseWriter, r *http.Request) {
 		// A phase's artefact — a framework map, the requirements, a report. The

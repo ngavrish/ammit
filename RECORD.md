@@ -174,6 +174,16 @@ key, masks a path or shortens a line. The map's own redaction, done before the
 body is ever sent, is the only redaction there is, and anything a pipeline
 would rather this service did not hold is a thing that has to not be sent.
 
+## Evidence
+
+`POST /evidence` is multipart and takes nine fields and no others: `ticket`,
+`run`, `test`, `classname`, `feature`, `status`, `kind`, `meta` and the file part
+`file`. Anything else is named back in `dropped`.
+
+The file goes to the evidence bucket under `<ticket>/<sha256><ext>` and the row
+keeps the hash, the size, the type, the key and the object's version. The bytes
+are stored verbatim and never in this database; search does not read them.
+
 ## What search reads
 
 `GET /search` indexes the prose and nothing else: the `text`, `note`, `summary`,
