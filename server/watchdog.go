@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS watchdog_drops (
     root     TEXT NOT NULL,      -- the first drop of its chain
     name     TEXT,
     mode     TEXT,
-    phase    TEXT,               -- where a resume starts; '' lets the orchestrator decide
+    phase    TEXT,               -- where a resume starts; '' is read again off the run at resume
     cause    TEXT NOT NULL,      -- an id: stillborn, gate_red_laps, limit:<rule>, waiting, ...
     verdict  TEXT,
     evidence TEXT,               -- JSON list of lines, read from the record
@@ -375,8 +375,19 @@ func forwardPhase(phases []flowPhase, i int) bool {
 // before the frontier that started and ended is done, and a phase the run
 // inherited from the run it replayed is done too. "" when the record cannot
 // say (no flow event): the orchestrator's own resume decides then.
+//
+// A run that got through every phase and still dropped is resumed from a
+// phase too, never from nothing: the orchestrator refuses a resume with
+// nothing left to do (resume.go planResume, "name the phase to go again
+// from"). 65a6d56e (APF-3296) went through all 42 phases and ended UNKNOWN
+// on a push publish had refused; its drop was recorded with no phase, cycle
+// 1's resume was refused at the start, and the cycle waited out
+// timeouts.watchdog_start for a run that could never come.
 func resumeFrom(f *runFacts) string {
 	at := frontierFrom(f)
+	if at == "" {
+		at = redoFrom(f)
+	}
 	// A fan-out carries a branch whose repairs ran out and goes on without
 	// it, so the frontier can be the last phase of a run whose real drop is a
 	// gate halfway up: "the scenarios that ran passed, but a repair loop ran
@@ -463,6 +474,33 @@ func frontierFrom(f *runFacts) string {
 		}
 	}
 	return ""
+}
+
+// redoFrom is where a run that got through every phase goes again from: the
+// first forward phase of its own work that ended failed though the flow went
+// on past it, else the start of its own work - where its replay began, or
+// the flow's first phase. What a replay inherited was done by another run
+// and is not this drop's to redo. "" only when the flow is not on the record.
+func redoFrom(f *runFacts) string {
+	phases := runnablePhases(f.phases)
+	if len(phases) == 0 {
+		return ""
+	}
+	start := 0
+	if f.replayKnown && f.replayFrom != "" {
+		for i, p := range phases {
+			if p.ID == f.replayFrom {
+				start = i
+				break
+			}
+		}
+	}
+	for i := start; i < len(phases); i++ {
+		if r := f.rec[phases[i].ID]; r != nil && r.starts > 0 && r.failed && forwardPhase(phases, i) {
+			return phases[i].ID
+		}
+	}
+	return phases[start].ID
 }
 
 // repairOf is the repair phase that loops back to a gate, "" if none does.
@@ -1354,6 +1392,14 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 				"deployed; the resume is already running as "+run+", not queued again")
 			return
 		}
+		if d.phase == "" {
+			// Recorded before the record could name one: read it again off
+			// the dropped run, which nobody edits, so the resume says where
+			// to go again from rather than asking for a resume of nothing.
+			if f, err := readRunFacts(c.run); err == nil {
+				d.phase = resumeFrom(f)
+			}
+		}
 		q := queueResume(c, d)
 		wdMove(c.id, wdResumed, "deployed_at=?, resume_queue=?", at, q)
 		wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs, fmt.Sprintf(
@@ -1375,7 +1421,8 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		}
 		if run == "" {
 			if started > 0 && over(c, conf, "watchdog_start", started) {
-				fail("the resume was started and no run came of it within timeouts.watchdog_start")
+				fail("the resume was started and no run came of it within timeouts.watchdog_start" +
+					startAnswer(d.name, started))
 			}
 			return
 		}
@@ -1460,6 +1507,30 @@ func queueResume(c wdCycle, d *dropFact) int64 {
 	}
 	id, _ := res.LastInsertId()
 	return id
+}
+
+// startAnswer is what the start command answered when the queue started
+// ticket name at started, as "; the start answered: ...", or "" when nothing
+// was recorded. The queue writes it as its judgement's outcome. Without it a
+// resume the orchestrator refused (65a6d56e cycle 1: "got through all 42
+// phases, so there is nothing to resume") reads as a run slow to come, and
+// the next cycle is sent to look for the wrong thing.
+func startAnswer(name string, started float64) string {
+	mu.Lock()
+	defer mu.Unlock()
+	var out sql.NullString
+	if db.QueryRow(`SELECT outcome FROM judgements WHERE scope='queue' AND subject=?
+	                AND at >= ? ORDER BY id LIMIT 1`, name, started-1).Scan(&out) != nil {
+		return ""
+	}
+	answer := strings.TrimSpace(out.String)
+	if answer == "" {
+		return ""
+	}
+	if len(answer) > 400 {
+		answer = answer[:400] + "..."
+	}
+	return "; the start answered: " + answer
 }
 
 // resumeOutcome is the run the resume turned into, whether it has finished
