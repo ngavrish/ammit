@@ -341,39 +341,6 @@ func heaviestTurn(run string) (float64, string, string) {
 	return size, who, phase
 }
 
-// workerBusy asks the machine, not the run: is the worker container visibly
-// burning CPU right now? A branch suite is legally silent for ten minutes -
-// one behave process, browsers rendering, nothing to report - and the
-// run-silence judgement read that honest quiet as a hang. The watched must
-// not testify about its own pulse (a self-reported heartbeat is the same
-// lie in the other direction); the watchdog's own sampler already measures
-// the container every minute, so silence plus a busy machine is work, and
-// silence plus an idle machine is the hang this timeout exists for.
-func workerBusy(conf Config) bool {
-	floor, ok := conf.num("limits", "quiet_cpu")
-	if !ok || floor <= 0 {
-		return false
-	}
-	worker := conf.str("context", "worker", "")
-	if worker == "" {
-		return false
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	var at, cpu float64
-	err := db.QueryRow(`SELECT at, coalesce(json_extract(payload,'$.cpu_pct'),0)
-	                    FROM events WHERE kind='sample'
-	                      AND json_extract(payload,'$.container')=?
-	                    ORDER BY id DESC LIMIT 1`, worker).Scan(&at, &cpu)
-	if err != nil {
-		return false
-	}
-	if float64(time.Now().UnixNano())/1e9-at > 180 {
-		return false
-	}
-	return cpu >= floor
-}
-
 // workerUp asks the docker daemon whether the worker container is running.
 // Best effort with a short leash: a daemon that cannot answer in five seconds
 // is treated as "unknown", and unknown keeps the certificate unsigned - the
@@ -561,6 +528,26 @@ func sessionQuiet(run, session string) float64 {
 		return -1
 	}
 	return float64(time.Now().UnixNano())/1e9 - last
+}
+
+// testRunning: a test item opened in this run and not yet closed, no older than
+// the longest one test module may take. It is the one honest reason for a session
+// to say nothing for longer than timeouts.turn: a suite run inside a single tool
+// call. Container CPU was the stand-in for it, and the stand-in lied: browsers of
+// other claims and the hung tool itself kept the runner above quiet_cpu, so a
+// reporting session that waited 53 minutes on a tool that never answered was
+// "busy" the whole time and timeouts.turn never fired (APF-3296, run 58344b33).
+func testRunning(conf Config, run string) bool {
+	limit, ok := conf.num("timeouts", "module")
+	if !ok || limit <= 0 {
+		limit = 1200
+	}
+	for _, age := range openSpans(run, "item_start", "item_end", "session") {
+		if age <= limit {
+			return true
+		}
+	}
+	return false
 }
 
 func openSpans(run, startKind, endKind, column string) map[string]float64 {
