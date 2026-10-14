@@ -1,6 +1,161 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+)
+
+// loadRunRecord writes the record of run 65a6d56e (APF-3296), as ammit holds
+// it, into the test database: its runs row, its flow and every phase_start,
+// phase_end, gate, replay, run_start and run_end event it reported.
+func loadRunRecord(t *testing.T, run string) {
+	t.Helper()
+	flow, err := os.ReadFile("testdata/watchdog_65a6d56e_flow.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("testdata/watchdog_65a6d56e_events.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows [][]any
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO runs (run, name, started, finished, verdict, summary)
+	                      VALUES (?,?,?,?,?,?)`, run, "APF-3296", 1791988110.009336,
+		1791988557.9482317, "UNKNOWN", "[exit 0]"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO flows (run, at, mode, phases) VALUES (?,?,?,?)`,
+		run, 1791988110.0, "functional-tester", string(flow)); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		kind, phase, branch := r[1].(string), r[2].(string), r[3].(string)
+		p := map[string]any{"kind": kind, "run": run, "phase": phase}
+		switch kind {
+		case "gate", "run_end":
+			p["verdict"] = r[4]
+		case "replay":
+			p["from_phase"] = r[5]
+		case "run_start":
+			p["name"] = "APF-3296"
+			p["tags"] = map[string]string{"mode": "functional-tester"}
+		}
+		b, _ := json.Marshal(p)
+		if _, err := db.Exec(`INSERT INTO events (at, kind, run, phase, branch, payload)
+		                      VALUES (?,?,?,?,?,?)`, r[0], kind, run, phase, branch, string(b)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A run that got through every phase and still dropped names a phase to go
+// again from. 65a6d56e replayed APF-3296 from foldgate, went through all 42
+// phases and ended UNKNOWN on a push publish had refused; its drop was
+// recorded with no phase, the resume asked for one with no from_phase, and
+// the orchestrator refused it: "got through all 42 phases, so there is
+// nothing to resume: name the phase to go again from". Its own work began at
+// foldgate, so that is where it goes again from.
+func TestRunThroughEveryPhaseResumesFromWhereItsWorkBegan(t *testing.T) {
+	const run = "65a6d56e-5ed9-4b35-8960-dc2d5dcc10ca"
+	if err := openDB(t.TempDir() + "/ammit.db"); err != nil {
+		t.Fatal(err)
+	}
+	loadRunRecord(t, run)
+	f, err := readRunFacts(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := frontierFrom(f); got != "" {
+		t.Fatalf("frontierFrom = %q; the record should show a run through every phase", got)
+	}
+	d, why := classifyDrop(f, Config{})
+	if d == nil {
+		t.Fatalf("65a6d56e is not a drop: %s", why)
+	}
+	if d.phase != "foldgate" {
+		t.Errorf("drop of 65a6d56e resumes from %q, want foldgate (where its replay began)", d.phase)
+	}
+
+	// Not a replay: its own work is the whole flow.
+	f.replayKnown, f.replayFrom = false, ""
+	if got, first := resumeFrom(f), runnablePhases(f.phases)[0].ID; got != first {
+		t.Errorf("a run through every phase that is no replay resumes from %q, want %s", got, first)
+	}
+	// A forward phase of its own work that ended failed, though the flow went
+	// on, is where it goes again from.
+	f.replayKnown, f.replayFrom = true, "foldgate"
+	f.rec["publish"].failed = true
+	if got := resumeFrom(f); got != "publish" {
+		t.Errorf("with publish ended failed the resume is from %q, want publish", got)
+	}
+	// No flow on the record: the orchestrator decides, as before.
+	if got := resumeFrom(&runFacts{rec: map[string]*phaseRecord{}}); got != "" {
+		t.Errorf("with no flow the resume is from %q, want \"\"", got)
+	}
+}
+
+// A drop already recorded with no phase - the chain of 65a6d56e, recorded
+// before the watchdog could name one - is resumed from the phase the record
+// names, read again off the dropped run when its resume is queued.
+func TestDeployedCycleOfADropWithNoPhaseResumesFromANamedPhase(t *testing.T) {
+	const run = "65a6d56e-5ed9-4b35-8960-dc2d5dcc10ca"
+	if err := openDB(t.TempDir() + "/ammit.db"); err != nil {
+		t.Fatal(err)
+	}
+	loadRunRecord(t, run)
+	if _, err := db.Exec(`INSERT INTO watchdog_drops (run, root, name, mode, phase, cause, verdict, evidence, at)
+	                      VALUES (?,?,?,?,?,?,?,?,?)`, run, run, "APF-3296", "functional-tester", "",
+		"verdict:unknown", "UNKNOWN", "[]", 1791988571.1353147); err != nil {
+		t.Fatal(err)
+	}
+	d, ok := dropOfRun(run)
+	if !ok || d.phase != "" {
+		t.Fatalf("the recorded drop is %+v (%v), want one with no phase", d, ok)
+	}
+	// Cycle 1 as it stood: #699 merged at 14:48:07Z, deployed at 14:54:40Z.
+	res, err := db.Exec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, merged_at,
+	                       started, entered, updated) VALUES (?,?,?,?,?,?,?,?,?)`,
+		run, run, 1, wdDeploying, "watchdog/65a6d56e-1", 1791989287.0,
+		1791988571.1387255, 1791989311.5, 1791989311.5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle, _ := res.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO deploys (at, status) VALUES (?, 'success')`,
+		1791989680.3011382); err != nil {
+		t.Fatal(err)
+	}
+	stepCycle(wdCycles(`id=?`, cycle)[0], Config{}, 3)
+	c := wdCycles(`id=?`, cycle)[0]
+	if c.state != wdResumed {
+		t.Fatalf("cycle 1 is %s after its deploy, want %s", c.state, wdResumed)
+	}
+	var payload string
+	if err := db.QueryRow(`SELECT payload FROM queue WHERE id=?`, c.resumeQueue.Int64).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]string
+	if err := json.Unmarshal([]byte(payload), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["from_phase"] != "foldgate" || body["rerun"] != "resume" || body["source_run"] != run {
+		t.Errorf("the resume queued is %s, want rerun=resume from_phase=foldgate source_run=%s",
+			payload, run)
+	}
+	if got := startAnswer("APF-3296", 1791989693.6470208); got != "" {
+		t.Errorf("startAnswer with nothing recorded = %q, want \"\"", got)
+	}
+	judge("queue", "", "APF-3296", "queue.parallel", 1, 1, "started",
+		"run 65a6d56e got through all 42 phases, so there is nothing to resume")
+	if got := startAnswer("APF-3296", wdNow()-5); !strings.Contains(got, "nothing to resume") {
+		t.Errorf("startAnswer = %q, want the orchestrator's refusal", got)
+	}
+}
 
 // The ids and times below are read off the record of the APF-3296 chain that
 // began with run db62b413 (bugsrules, limit:loops.laps_bugsfix).

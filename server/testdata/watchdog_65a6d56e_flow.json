@@ -1,0 +1,619 @@
+[
+  {
+    "agents": [
+      "branch"
+    ],
+    "fanout_over": "",
+    "id": "branch",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "nodefix"
+    ],
+    "fanout_over": "",
+    "id": "branchfix",
+    "loops_to": "branch",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "frameworkmap"
+    ],
+    "fanout_over": "",
+    "id": "map",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "nodefix"
+    ],
+    "fanout_over": "",
+    "id": "mapfix",
+    "loops_to": "map",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "planner",
+      "analyst"
+    ],
+    "fanout_over": "",
+    "id": "planning",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "planrules"
+    ],
+    "fanout_over": "",
+    "id": "planrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "planrevise",
+      "analyticsrevise"
+    ],
+    "fanout_over": "",
+    "id": "planrevise",
+    "loops_to": "planrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "envplan"
+    ],
+    "fanout_over": "",
+    "id": "envplan",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "envcheck"
+    ],
+    "fanout_over": "",
+    "id": "env",
+    "loops_to": "",
+    "only_if": "docker"
+  },
+  {
+    "agents": [
+      "envrules"
+    ],
+    "fanout_over": "",
+    "id": "envrules",
+    "loops_to": "",
+    "only_if": "docker"
+  },
+  {
+    "agents": [
+      "envd"
+    ],
+    "fanout_over": "",
+    "id": "envd",
+    "loops_to": "envrules",
+    "only_if": "docker red"
+  },
+  {
+    "agents": [
+      "auditscan",
+      "rules",
+      "ticketdiff"
+    ],
+    "fanout_over": "",
+    "id": "funcreqscan",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "nodefix"
+    ],
+    "fanout_over": "",
+    "id": "funcreqscanfix",
+    "loops_to": "funcreqscan",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "axes"
+    ],
+    "fanout_over": "",
+    "id": "axes",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "funcreq"
+    ],
+    "fanout_over": "requirement_inventory",
+    "id": "funcreqs",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "funcreqfold"
+    ],
+    "fanout_over": "",
+    "id": "funcreqfold",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "nodefix"
+    ],
+    "fanout_over": "",
+    "id": "funcreqfoldfix",
+    "loops_to": "funcreqfold",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "audit"
+    ],
+    "fanout_over": "",
+    "id": "funcreqaudit",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "claims"
+    ],
+    "fanout_over": "",
+    "id": "claims",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "funcreqrules"
+    ],
+    "fanout_over": "",
+    "id": "funcreqrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "funcreqrevise"
+    ],
+    "fanout_over": "",
+    "id": "funcreqrevise",
+    "loops_to": "funcreqrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "claimsstale"
+    ],
+    "fanout_over": "",
+    "id": "claimsstale",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "claimsredo"
+    ],
+    "fanout_over": "",
+    "id": "claimsredo",
+    "loops_to": "claimsstale",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "envplanrules"
+    ],
+    "fanout_over": "",
+    "id": "envplanrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "envplanfix"
+    ],
+    "fanout_over": "",
+    "id": "envplanfix",
+    "loops_to": "envplanrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "envprep"
+    ],
+    "fanout_over": "",
+    "id": "envprep",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "envpreprules"
+    ],
+    "fanout_over": "",
+    "id": "envpreprules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "envprepfix"
+    ],
+    "fanout_over": "",
+    "id": "envprepfix",
+    "loops_to": "envpreprules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "implement"
+    ],
+    "fanout_over": "claims",
+    "id": "implementing",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "implrules"
+    ],
+    "fanout_over": "claims",
+    "id": "implrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "design",
+      "implement"
+    ],
+    "fanout_over": "claims",
+    "id": "implrulefix",
+    "loops_to": "implrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "mapfresh"
+    ],
+    "fanout_over": "claims",
+    "id": "mapfresh",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "nodefix"
+    ],
+    "fanout_over": "claims",
+    "id": "mapfreshfix",
+    "loops_to": "mapfresh",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "buildgate"
+    ],
+    "fanout_over": "claims",
+    "id": "implgate",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "heal"
+    ],
+    "fanout_over": "claims",
+    "id": "gatefix",
+    "loops_to": "implgate",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "datathread"
+    ],
+    "fanout_over": "",
+    "id": "thread",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "threadrules"
+    ],
+    "fanout_over": "",
+    "id": "threadrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "datathread"
+    ],
+    "fanout_over": "",
+    "id": "threadfix",
+    "loops_to": "threadrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "datacontract"
+    ],
+    "fanout_over": "",
+    "id": "contract",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "contractrules"
+    ],
+    "fanout_over": "",
+    "id": "contractrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "datacontract"
+    ],
+    "fanout_over": "",
+    "id": "contractfix",
+    "loops_to": "contractrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "datalineage"
+    ],
+    "fanout_over": "",
+    "id": "lineage",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "lineagerules"
+    ],
+    "fanout_over": "",
+    "id": "lineagerules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "datalineage"
+    ],
+    "fanout_over": "",
+    "id": "lineagefix",
+    "loops_to": "lineagerules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "run"
+    ],
+    "fanout_over": "claims",
+    "id": "branchrun",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "standgate"
+    ],
+    "fanout_over": "claims",
+    "id": "standgate",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "standfix"
+    ],
+    "fanout_over": "claims",
+    "id": "standfix",
+    "loops_to": "branchrun",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "implrevise"
+    ],
+    "fanout_over": "claims",
+    "id": "branchheal",
+    "loops_to": "branchrun",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "mapmerge"
+    ],
+    "fanout_over": "",
+    "id": "mapmerge",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "nodefix"
+    ],
+    "fanout_over": "",
+    "id": "mapmergefix",
+    "loops_to": "mapmerge",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "coveragegate"
+    ],
+    "fanout_over": "",
+    "id": "coverage",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "coveragefix"
+    ],
+    "fanout_over": "",
+    "id": "coveragefix",
+    "loops_to": "coverage",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "bugs"
+    ],
+    "fanout_over": "",
+    "id": "reporting",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "bugsrules"
+    ],
+    "fanout_over": "",
+    "id": "bugsrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "bugs"
+    ],
+    "fanout_over": "",
+    "id": "bugsfix",
+    "loops_to": "bugsrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "merge"
+    ],
+    "fanout_over": "",
+    "id": "merge",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "reportrules"
+    ],
+    "fanout_over": "",
+    "id": "reportrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "reportrevise"
+    ],
+    "fanout_over": "",
+    "id": "reportrevise",
+    "loops_to": "reportrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "signoff"
+    ],
+    "fanout_over": "",
+    "id": "signoff",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "nodefix"
+    ],
+    "fanout_over": "",
+    "id": "signofffix",
+    "loops_to": "signoff",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "fold"
+    ],
+    "fanout_over": "",
+    "id": "fold",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "foldgate"
+    ],
+    "fanout_over": "",
+    "id": "foldgate",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "heal"
+    ],
+    "fanout_over": "",
+    "id": "foldfix",
+    "loops_to": "foldgate",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "publish"
+    ],
+    "fanout_over": "",
+    "id": "publish",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "publishrules"
+    ],
+    "fanout_over": "",
+    "id": "publishrules",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "publish"
+    ],
+    "fanout_over": "",
+    "id": "publishfix",
+    "loops_to": "publishrules",
+    "only_if": "red"
+  },
+  {
+    "agents": [
+      "notify"
+    ],
+    "fanout_over": "",
+    "id": "notifying",
+    "loops_to": "",
+    "only_if": ""
+  },
+  {
+    "agents": [
+      "nodefix"
+    ],
+    "fanout_over": "",
+    "id": "notifyfix",
+    "loops_to": "notifying",
+    "only_if": "red"
+  }
+]
