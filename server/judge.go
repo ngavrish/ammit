@@ -656,7 +656,7 @@ func weigh(conf Config) {
 			// action was going to work it worked, and if it was not, repeating it
 			// is only more damage.
 			if quiet, agent, phase := quietFor(r.run); quiet > limit &&
-				!workerBusy(conf) &&
+				!testRunning(conf, r.run) &&
 				timesJudged("timeouts.turn", r.run) < 2 &&
 				!recently("timeouts.turn", r.run, limit) {
 				// When a whole run goes quiet, the last thing that spoke is the
