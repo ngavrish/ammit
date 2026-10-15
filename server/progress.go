@@ -3,6 +3,9 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,8 +27,9 @@ import (
 const progressDefault = 600
 
 // progressLoop never returns. One round per period; a round reads, writes one
-// event per run, and sleeps.
-func progressLoop(confPath string) {
+// event per run - and the same lines to logPath, a plain file a person can
+// tail without a query or a page - and sleeps.
+func progressLoop(confPath, logPath string) {
 	for {
 		every := float64(progressDefault)
 		if conf := loadConfig(confPath); len(conf) > 0 {
@@ -35,8 +39,31 @@ func progressLoop(confPath string) {
 		}
 		time.Sleep(time.Duration(every) * time.Second)
 		for _, r := range openRuns() {
-			store(event{"kind": "progress", "run": r.run, "text": progressText(r)})
+			text := progressText(r)
+			store(event{"kind": "progress", "run": r.run, "text": text})
+			appendProgress(logPath, text)
 		}
+	}
+}
+
+// appendProgress adds one stamped block to the progress log. A log that cannot
+// be written is said once per round and never stops the round.
+func appendProgress(path, text string) {
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(filepath.Clean(path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		log.Printf("ammit: progress log %s: %v", path, err)
+		return
+	}
+	stamp := time.Now().UTC().Format("2006-01-02 15:04:05Z")
+	_, werr := fmt.Fprintf(f, "%s %s\n", stamp, strings.ReplaceAll(text, "\n", "\n    "))
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		log.Printf("ammit: progress log %s: %v", path, werr)
 	}
 }
 
