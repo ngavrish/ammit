@@ -611,7 +611,8 @@ func main() {
 
 	// Progress on the clock: one event per open run every timeouts.progress
 	// seconds, whether or not anything happened (progress.go).
-	go progressLoop(confPath)
+	go progressLoop(confPath, env("AMMIT_PROGRESS_LOG",
+		strings.TrimSuffix(dbPath, "/"+lastSegment(dbPath))+"/progress.log"))
 
 	// Readings on their own thread. Judging must never wait for a machine
 	// reading: one is a call out to a daemon that answers when it feels like it,
