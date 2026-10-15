@@ -152,6 +152,7 @@ rule is the rule:
 |---|---|
 | `sample` | `container`, `memory_mb`, `memory_pct`, `cpu_pct`, `pids` |
 | `netprobe` | `host`, `latency_ms`, `ok` |
+| `progress` | `text` where the run is, for how long, its last red and what each agent is waiting on, every `timeouts.progress` seconds |
 | `watchdog` | `state` the step (`detected`, `fixing`, `ci`, `merging`, `deploying`, `resumed`, `done`, `dropped`, `failed`, `left`, `exhausted`, `recorded`), `cause` the drop's id, `cycle` and `cap` how many of `loops.laps_watchdog` the chain has taken, `pr` the fix's PR urls, `text` the evidence and what happened |
 
 The watchdog keeps its own state in three tables, `watchdog_drops` (one row per

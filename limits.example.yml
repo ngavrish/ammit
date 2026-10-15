@@ -16,6 +16,12 @@ timeouts:
   request: 600             # a wait for the model itself; nothing observed has passed 3 min
   request_tool: 1800       # a wait that covers a tool the agent asked for — a suite run is twenty minutes
   turn: 600
+  # A tool call that only waits (sleep 60+, gh run/pr watch, a polling loop)
+  # is held to this, not to request_tool's hour - unless a test is running.
+  wait: 600
+  # One progress event per open run this often, whether or not anything
+  # happened: where it is, for how long, its last red, what it waits on.
+  progress: 600
   # The two sizes of test work. What a module is belongs to the stack — a
   # .feature file here, a test file or a class elsewhere — so the client says
   # what kind of thing it started and the limit is looked up under that name.
