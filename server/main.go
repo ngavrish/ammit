@@ -452,7 +452,7 @@ var reanimations = map[string]int{}
 // anyone wants to debug.
 var reserved = map[string]bool{
 	"run": true, "phase": true, "session": true, "request": true,
-	"request_tool": true, "turn": true,
+	"request_tool": true, "turn": true, "wait": true, "progress": true,
 }
 
 func rows2json(w http.ResponseWriter, query string, args ...any) {
@@ -608,6 +608,10 @@ func main() {
 	// The answers table replays history on its own thread, a slice at a time:
 	// serving starts now, and the live path takes over when it has caught up.
 	go backfillAnswers()
+
+	// Progress on the clock: one event per open run every timeouts.progress
+	// seconds, whether or not anything happened (progress.go).
+	go progressLoop(confPath)
 
 	// Readings on their own thread. Judging must never wait for a machine
 	// reading: one is a call out to a daemon that answers when it feels like it,

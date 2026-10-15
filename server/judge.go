@@ -714,6 +714,15 @@ func weigh(conf Config) {
 				rule, against := "timeouts.request", limit
 				if hasTool && afterTool(r.run, request) {
 					rule, against = "timeouts.request_tool", tool
+					// A wait dressed as a tool call gets the turn's limit, not
+					// the browser suite's hour (progress.go, waitingCall) -
+					// unless a test is running, which is what the wait may
+					// be for, and a test has limits of its own.
+					if wait, ok := conf.num("timeouts", "wait"); ok && wait > 0 && !testRunning(conf, r.run) {
+						if waiting, _ := waitingCall(r.run, request); waiting {
+							rule, against = "timeouts.wait", wait
+						}
+					}
 				}
 				if against <= 0 || age <= against || recently(rule, request, against) {
 					continue

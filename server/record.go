@@ -106,6 +106,10 @@ var perKind = map[string][]string{
 	// loops.laps_watchdog this chain has taken, pr the fix's PR urls, text
 	// the evidence and what happened, as prose.
 	"watchdog": {"state", "cause", "cycle", "cap", "pr", "text"},
+	// Written by this service every timeouts.progress seconds per open run
+	// (progress.go): text is where the run is, for how long, its last red
+	// and what each agent is waiting on, as prose.
+	"progress": {"text"},
 }
 
 // documentFields is the whole of POST /documents. The body is stored byte for
