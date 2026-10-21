@@ -1214,6 +1214,29 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, c.prs, why)
 		return
 	}
+	// So does the other: a later run of the ticket supersedes the drop. A
+	// person who stops a run and starts its ticket over has answered it, and
+	// until this cycle queues a resume of its own, a run of the ticket that
+	// started after the cycle and does not replay the dropped run is that
+	// answer. The resume would land in the directory the new run is using -
+	// /runs/<name> is one per ticket. 2026-10-21: 03405ee1 (APF-3301) was
+	// stopped by a .cancel no judgement wrote, the drop was recorded at
+	// 22:17:02, and a fresh APF-3301 run b6c05e40 started at 22:17:05; the
+	// chain went on fixing, to merge and resume 03405ee1 on top of it.
+	// A replay of the dropped run is not this: the cycle follows it below.
+	switch c.state {
+	case wdFixing, wdCI, wdMerging, wdDeploying:
+		if replayOf(d.name, c.run, c.started) == "" {
+			if later := supersededBy(d.name, c.run, c.started); later != "" {
+				why := "superseded by a later run " + later + " of " + d.name +
+					": the ticket was started over, so the dropped run is not resumed"
+				withdraw(c.fixQueue)
+				wdMove(c.id, wdLeft, "why=?", why)
+				wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, c.prs, why)
+				return
+			}
+		}
+	}
 	fail := func(why string) {
 		wdMove(c.id, wdFailed, "why=?", why)
 		wdSay(c.run, d.phase, wdFailed, d.cause, c.cycle, limit, c.prs, why)
@@ -1549,6 +1572,23 @@ func replayOf(name, source string, after float64) string {
 	db.QueryRow(`SELECT r.run FROM runs r JOIN events e ON e.run = r.run AND e.kind = 'replay'
 	             WHERE r.name = ? AND json_extract(e.payload, '$.source_run') = ? AND r.started > ?
 	             ORDER BY r.started LIMIT 1`, name, source, after).Scan(&run)
+	return run
+}
+
+// supersededBy is a run of the ticket that started after the cycle did and is
+// not a replay of source: the ticket started over by somebody else, which
+// classifyDrop calls a supersede when it sees it before the drop is recorded.
+func supersededBy(name, source string, after float64) string {
+	mu.Lock()
+	defer mu.Unlock()
+	var run string
+	if err := db.QueryRowContext(bg, `SELECT r.run FROM runs r
+	             WHERE r.name = ? AND r.run <> ? AND r.started > ?
+	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run
+	                   AND e.kind = 'replay' AND json_extract(e.payload, '$.source_run') = ?)
+	             ORDER BY r.started LIMIT 1`, name, source, after, source).Scan(&run); err != nil {
+		return ""
+	}
 	return run
 }
 
