@@ -336,3 +336,91 @@ func TestMovingCycleOfAHostRunIsLeftNotCycledOn(t *testing.T) {
 		t.Errorf("a stack run's fixing cycle went to %s, want it still fixing", c.state)
 	}
 }
+
+// A drop whose ticket was started over is answered by the new run, and the
+// moving chain ends rather than resuming the old run on top of it. Read off
+// APF-3301: 03405ee1 stopped by a .cancel no judgement wrote, its drop recorded
+// at 1792621022.59 with cycle 1 fixing, and a fresh run b6c05e40 - no replay
+// event - started at 1792621025.61. A replay of the dropped run is still the
+// resume the cycle follows, a replay of another run is not a restart
+// (TestFixingCycleFollowsAResumeStartedOutsideIt), and a ticket nobody
+// restarted keeps its cycle.
+func TestMovingCycleOfASupersededRunIsLeftNotResumed(t *testing.T) {
+	const (
+		dropped = "03405ee1-840f-498b-941b-c681819bc1f7"
+		fresh   = "b6c05e40-0a55-471d-a7bf-6164d73c7e1d"
+		at      = 1792621022.5935090
+	)
+	if err := openDB(t.TempDir() + "/ammit.db"); err != nil {
+		t.Fatal(err)
+	}
+	mustExec := func(q string, args ...any) int64 {
+		t.Helper()
+		res, err := db.Exec(q, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := res.LastInsertId()
+		return id
+	}
+	drop := func(run, name string, started float64) int64 {
+		mustExec(`INSERT INTO runs (run, name, started, finished, verdict) VALUES (?,?,?,?,?)`,
+			run, name, started, started+440, "BLOCKED")
+		mustExec(`INSERT INTO watchdog_drops (run, root, name, mode, phase, cause, verdict, evidence, at)
+		          VALUES (?,?,?,?,?,?,?,?,?)`, run, run, name, "functional-tester",
+			"envplanrules", "phase_failed", "BLOCKED", "[]", started+452)
+		fix := mustExec(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?)`,
+			"WD-"+run[:8]+"-1", "{}", started+452)
+		return mustExec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, fix_queue,
+		                   started, entered, updated) VALUES (?,?,?,?,?,?,?,?,?)`,
+			run, run, 1, wdFixing, "watchdog/"+run[:8]+"-1", fix,
+			started+452, started+452, started+452)
+	}
+
+	cycle := drop(dropped, "APF-3301", at-451.7)
+	mustExec(`INSERT INTO runs (run, name, started) VALUES (?,?,?)`, fresh, "APF-3301",
+		1792621025.614544)
+	// Between its run_start and its first phase a run may still be about to
+	// say it is a replay: not yet read as the ticket started over.
+	stepCycle(wdCycles(`id=?`, cycle)[0], Config{}, 3)
+	if c := wdCycles(`id=?`, cycle)[0]; c.state != wdFixing {
+		t.Fatalf("cycle 1 of %s went to %s before %s began a phase, want it still fixing",
+			dropped, c.state, fresh)
+	}
+	mustExec(`INSERT INTO events (at, kind, run, phase, payload) VALUES (?, 'phase_start', ?, ?, ?)`,
+		1792621031.0, fresh, "branch", `{"kind":"phase_start","run":"`+fresh+`","phase":"branch"}`)
+	stepCycle(wdCycles(`id=?`, cycle)[0], Config{}, 3)
+	c := wdCycles(`id=?`, cycle)[0]
+	if c.state != wdLeft {
+		t.Fatalf("cycle 1 of %s is %s after %s started over, want %s", dropped, c.state, fresh, wdLeft)
+	}
+	if !strings.Contains(c.why, fresh) {
+		t.Errorf("the cycle's why does not name the run that superseded it: %q", c.why)
+	}
+	var queued string
+	if err := db.QueryRow(`SELECT state FROM queue WHERE id=?`, c.fixQueue.Int64).Scan(&queued); err != nil {
+		t.Fatal(err)
+	}
+	if queued != "done" {
+		t.Errorf("the fix run still waiting to start is %s, want withdrawn (done)", queued)
+	}
+
+	// A replay of the dropped run is the resume, not a supersede.
+	const replayed, replay = "11111111-0000-4000-8000-000000000001", "11111111-0000-4000-8000-000000000002"
+	followed := drop(replayed, "APF-0001", at)
+	mustExec(`INSERT INTO runs (run, name, started) VALUES (?,?,?)`, replay, "APF-0001", at+900)
+	mustExec(`INSERT INTO events (at, kind, run, payload) VALUES (?, 'replay', ?, ?)`, at+900, replay,
+		`{"kind":"replay","run":"`+replay+`","from_phase":"envplanrules","source_run":"`+replayed+`"}`)
+	stepCycle(wdCycles(`id=?`, followed)[0], Config{}, 3)
+	if c := wdCycles(`id=?`, followed)[0]; c.state != wdResumed || c.resumedRun != replay {
+		t.Errorf("a replayed drop's cycle is %s following %q, want %s following %s",
+			c.state, c.resumedRun, wdResumed, replay)
+	}
+
+	// A ticket nobody started over keeps its cycle.
+	alone := drop("22222222-0000-4000-8000-000000000001", "APF-0002", at)
+	stepCycle(wdCycles(`id=?`, alone)[0], Config{}, 3)
+	if c := wdCycles(`id=?`, alone)[0]; c.state != wdFixing {
+		t.Errorf("a cycle with no later run of its ticket went to %s, want it still fixing", c.state)
+	}
+}
