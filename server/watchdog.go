@@ -1216,9 +1216,8 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 	}
 	// So does the other: a later run of the ticket supersedes the drop. A
 	// person who stops a run and starts its ticket over has answered it, and
-	// until this cycle queues a resume of its own, a run of the ticket that
-	// started after the cycle and does not replay the dropped run is that
-	// answer. The resume would land in the directory the new run is using -
+	// until this cycle queues a resume of its own, a fresh run of the ticket
+	// - started after the cycle, a replay of nothing - is that answer. The resume would land in the directory the new run is using -
 	// /runs/<name> is one per ticket. 2026-10-21: 03405ee1 (APF-3301) was
 	// stopped by a .cancel no judgement wrote, the drop was recorded at
 	// 22:17:02, and a fresh APF-3301 run b6c05e40 started at 22:17:05; the
@@ -1575,18 +1574,22 @@ func replayOf(name, source string, after float64) string {
 	return run
 }
 
-// supersededBy is a run of the ticket that started after the cycle did and is
-// not a replay of source: the ticket started over by somebody else, which
-// classifyDrop calls a supersede when it sees it before the drop is recorded.
+// supersededBy is a fresh run of the ticket that started after the cycle did:
+// the ticket started over, which classifyDrop calls a supersede when it sees
+// it before the drop is recorded. Fresh is no replay event at all - a replay,
+// of the dropped run or of any other, continues a run rather than starting
+// the ticket over - read once the run has begun a phase, because its replay
+// event lands just after its run_start and a run read between the two would
+// look fresh.
 func supersededBy(name, source string, after float64) string {
 	mu.Lock()
 	defer mu.Unlock()
 	var run string
 	if err := db.QueryRowContext(bg, `SELECT r.run FROM runs r
 	             WHERE r.name = ? AND r.run <> ? AND r.started > ?
-	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run
-	                   AND e.kind = 'replay' AND json_extract(e.payload, '$.source_run') = ?)
-	             ORDER BY r.started LIMIT 1`, name, source, after, source).Scan(&run); err != nil {
+	               AND EXISTS (SELECT 1 FROM events e WHERE e.run = r.run AND e.kind = 'phase_start')
+	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run AND e.kind = 'replay')
+	             ORDER BY r.started LIMIT 1`, name, source, after).Scan(&run); err != nil {
 		return ""
 	}
 	return run

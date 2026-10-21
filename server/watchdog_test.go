@@ -342,7 +342,9 @@ func TestMovingCycleOfAHostRunIsLeftNotCycledOn(t *testing.T) {
 // APF-3301: 03405ee1 stopped by a .cancel no judgement wrote, its drop recorded
 // at 1792621022.59 with cycle 1 fixing, and a fresh run b6c05e40 - no replay
 // event - started at 1792621025.61. A replay of the dropped run is still the
-// resume the cycle follows, and a ticket nobody restarted keeps its cycle.
+// resume the cycle follows, a replay of another run is not a restart
+// (TestFixingCycleFollowsAResumeStartedOutsideIt), and a ticket nobody
+// restarted keeps its cycle.
 func TestMovingCycleOfASupersededRunIsLeftNotResumed(t *testing.T) {
 	const (
 		dropped = "03405ee1-840f-498b-941b-c681819bc1f7"
@@ -378,6 +380,15 @@ func TestMovingCycleOfASupersededRunIsLeftNotResumed(t *testing.T) {
 	cycle := drop(dropped, "APF-3301", at-451.7)
 	mustExec(`INSERT INTO runs (run, name, started) VALUES (?,?,?)`, fresh, "APF-3301",
 		1792621025.614544)
+	// Between its run_start and its first phase a run may still be about to
+	// say it is a replay: not yet read as the ticket started over.
+	stepCycle(wdCycles(`id=?`, cycle)[0], Config{}, 3)
+	if c := wdCycles(`id=?`, cycle)[0]; c.state != wdFixing {
+		t.Fatalf("cycle 1 of %s went to %s before %s began a phase, want it still fixing",
+			dropped, c.state, fresh)
+	}
+	mustExec(`INSERT INTO events (at, kind, run, phase, payload) VALUES (?, 'phase_start', ?, ?, ?)`,
+		1792621031.0, fresh, "branch", `{"kind":"phase_start","run":"`+fresh+`","phase":"branch"}`)
 	stepCycle(wdCycles(`id=?`, cycle)[0], Config{}, 3)
 	c := wdCycles(`id=?`, cycle)[0]
 	if c.state != wdLeft {
