@@ -379,7 +379,7 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(bad, "\n"), http.StatusBadRequest)
 			return
 		}
-		if err := os.WriteFile(confPath, body, 0o644); err != nil { //nolint:gosec // G306: limits.yml is a bind mount from the harness repo; 0o600 from root would lock git on the host out of it
+		if err := os.WriteFile(confPath, body, 0o600); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -418,7 +418,7 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(bad, "\n"), http.StatusBadRequest)
 			return
 		}
-		if err := os.WriteFile(confPath, []byte(after), 0o644); err != nil { //nolint:gosec // G306: limits.yml is a bind mount from the harness repo; 0o600 from root would lock git on the host out of it
+		if err := os.WriteFile(confPath, []byte(after), 0o600); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -547,9 +547,8 @@ func parseConfig(raw string) Config {
 // it more.
 const runCeiling = 14400
 
-// limitsBroken is what an edit through the page would break, the same rules
-// agentic-v-model's engine/tools/limits_lock.py holds a commit to: no key or
-// section of the file on disk goes missing, no number is zero or below (zero
+// limitsBroken is what an edit through the page or the API would break: no key
+// or section of the limits ammit holds goes missing, no number is zero or below (zero
 // switches a limit off - laps_watchdog 0 stopped this watchdog for 14 hours on
 // 2026-10-11), and timeouts.run stays within four hours.
 func limitsBroken(confPath, after string) []string {
