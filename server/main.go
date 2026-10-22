@@ -1399,6 +1399,7 @@ func main() {
 	// stays so a deployment that still points at a Grafana can, but the default
 	// is us.
 	serveUI(mux, confPath, env("AMMIT_CHARTS_URL", "/charts"))
+	serveProduct(mux, env("AMMIT_PRODUCT", "/data/config/product.yml"))
 
 	log.Printf("ammit: listening on :%s, limits from %s, db %s%s", port, confPath, dbPath,
 		map[bool]string{true: " (dry run)", false: ""}[dryRun])
