@@ -115,8 +115,12 @@ func pumpQueue(conf Config) {
 	err := db.QueryRow(`SELECT id, name, coalesce(payload,'') FROM queue
 	                    WHERE state='waiting' ORDER BY requested LIMIT 1`).
 		Scan(&id, &name, &payload)
+	// Not into a deploy that is going or waiting (deploys.go, deployClear):
+	// the item stays waiting, rather than being started, refused by the
+	// orchestrator, and left running with no run behind it.
+	deployOK, _ := lastDeployClear()
 	mu.Unlock()
-	if err != nil || float64(active) >= slots {
+	if err != nil || float64(active) >= slots || !deployOK {
 		return
 	}
 	ctx := map[string]string{"name": name, "payload": payload}

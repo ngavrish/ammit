@@ -86,20 +86,59 @@ func getDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	clear, why := true, ""
-	switch status.String {
-	case "running":
-		clear, why = false, "a deploy is running: the stack is being replaced"
-	case "failure":
-		clear, why = false, "the last deploy failed: the containers and the "+
-			"catalog on disk may be from different commits"
-	case "cancelled":
-		clear, why = false, "the last deploy was cancelled partway"
-	}
+	age := time.Since(time.Unix(int64(at), 0)).Seconds()
+	clear, why := deployClear(status.String, age)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"known": true, "clear": clear, "why": why,
 		"at": at, "run": run.String, "status": status.String,
 		"detail": detail.String, "shas": shas.String,
-		"age_seconds": time.Since(time.Unix(int64(at), 0)).Seconds(),
+		"age_seconds": age,
 	})
+}
+
+// yieldHold is how long a deploy that stood aside for a live run keeps new
+// runs from starting. The deploy job comes back every few minutes while a run
+// holds it off and says "yielded" again each time, so a fresh yield means a
+// deploy is waiting. An hour with no word from it is a job that has stopped
+// asking, and that holds nothing.
+const yieldHold = 3600.0
+
+// deployClear is whether a run may start after the deploy last said status,
+// age seconds ago, and why not when it may not.
+//
+// "yielded" used to be clear, and that starved the deploy: it stands aside for
+// a live run, the run ends, and the next one - a retry, a resume, a watchdog
+// fix run - starts thirty seconds later, long before the deploy comes back to
+// look. On 2026-10-21 eleven deploys in a row yielded, 22:00 to 23:54, to
+// APF-3301's back-to-back runs, and the watchdog cycle that had merged
+// ammit#103 failed as "no deploy reported success after the merge within
+// timeouts.watchdog_deploy" (run 03405ee1, cycle 1).
+func deployClear(status string, age float64) (bool, string) {
+	switch status {
+	case "running":
+		return false, "a deploy is running: the stack is being replaced"
+	case "failure":
+		return false, "the last deploy failed: the containers and the " +
+			"catalog on disk may be from different commits"
+	case "cancelled":
+		return false, "the last deploy was cancelled partway"
+	case "yielded":
+		if age < yieldHold {
+			return false, "a deploy is waiting for the live run to end: a run " +
+				"started now would make it stand aside again"
+		}
+	}
+	return true, ""
+}
+
+// lastDeployClear is deployClear for the last thing the deploy said; nothing
+// said is clear, as it is for GET /deploy. The caller holds mu.
+func lastDeployClear() (bool, string) {
+	var at float64
+	var status string
+	if db.QueryRow(`SELECT at, status FROM deploys ORDER BY at DESC LIMIT 1`).
+		Scan(&at, &status) != nil {
+		return true, ""
+	}
+	return deployClear(status, time.Since(time.Unix(int64(at), 0)).Seconds())
 }
