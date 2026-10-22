@@ -7,9 +7,8 @@ import (
 
 // The watchdog's merge of PR #631 (chain 0effa7ec, cycle 2) was refused as
 // "{worker} was never filled — watchdog_merge would have been a no-op": the
-// call passed {pr}, {run} and {name}, and {worker} lives in limits.yml's
-// context block. The templates below are the ones agentic-v-model's
-// deploy/limits.yml configures.
+// call passed {pr}, {run} and {name}, and {worker} lives in the limits'
+// context block. The templates below are the ones the stack's limits hold.
 func TestCommandsAreFilledFromTheContextBlock(t *testing.T) {
 	was := dryRun
 	dryRun = true
