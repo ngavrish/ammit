@@ -97,7 +97,9 @@ func serveProduct(mux *http.ServeMux, path string) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-		w.Write(body)
+		if _, err := w.Write(body); err != nil {
+			log.Printf("ammit: product not sent: %v", err)
+		}
 	})
 	mux.HandleFunc("GET /product", func(w http.ResponseWriter, r *http.Request) {
 		body, ok := read(w, r)
