@@ -1401,7 +1401,8 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		}
 		if !ok {
 			if over(c, conf, "watchdog_deploy", c.mergedAt.Float64) {
-				fail("no deploy reported success after the merge within timeouts.watchdog_deploy")
+				fail("no deploy reported success after the merge within timeouts.watchdog_deploy" +
+					deploysSaid(c.mergedAt.Float64))
 			}
 			return
 		}
@@ -1506,6 +1507,58 @@ func deployedAfter(merged float64) (float64, bool) {
 	err := db.QueryRow(`SELECT at FROM deploys WHERE status='success' AND at > ?
 	                    ORDER BY at LIMIT 1`, merged).Scan(&at)
 	return at, err == nil
+}
+
+// deploysSaid is what the deploys after the merge said instead of success, as
+// "; ..." for the cycle's why, or "" when none said anything.
+//
+// A deploy that leaves a repository behind its origin reports failure and
+// names it (chiron-actions deploy.yml). Until it did, it reported success: on
+// 2026-10-22 the agentic-v-model checkout sat dirty and behind, the deploy
+// after agentic-v-model#775's merge said success, and run 4e003873 resumed
+// onto the gate #775 had fixed and dropped the same way (chain f47e4c53,
+// cycle 1). Now that deploy is a failure, the cycle waits it out, and the why
+// it fails with is the deploy's own words, so the next cycle starts from
+// "agentic-v-model is behind with uncommitted changes" instead of re-deriving
+// it from a run that never had the fix.
+func deploysSaid(merged float64) string {
+	mu.Lock()
+	defer mu.Unlock()
+	rows, err := db.Query(`SELECT coalesce(run,''), status, coalesce(detail,'') FROM deploys
+	                       WHERE at > ? AND status <> 'success' AND status <> 'running'
+	                       ORDER BY at`, merged)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	var order []string
+	var lastRun, lastStatus, lastDetail string
+	for rows.Next() {
+		var run, status, detail string
+		if rows.Scan(&run, &status, &detail) != nil {
+			continue
+		}
+		if counts[status] == 0 {
+			order = append(order, status)
+		}
+		counts[status]++
+		if detail != "" {
+			lastRun, lastStatus, lastDetail = run, status, detail
+		}
+	}
+	if len(order) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(order))
+	for _, s := range order {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[s], s))
+	}
+	said := "; the deploys after it: " + strings.Join(parts, ", ")
+	if lastDetail != "" {
+		said += fmt.Sprintf("; the last to say why (%s, run %s): %s", lastStatus, lastRun, lastDetail)
+	}
+	return said
 }
 
 // queueResume queues the dropped ticket to continue from the phase that
