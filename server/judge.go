@@ -407,7 +407,7 @@ func weigh(conf Config) {
 					quiet = up
 				}
 				if quiet > hb {
-					action := conf.str("actions", "on_heartbeat_gone", "restart_worker")
+					action := conf.str("actions", "on_heartbeat_gone", "stop_run")
 					// A run on the host (run_start tags.where = local) has no
 					// process in the runner container, so restarting that
 					// container reanimates nothing of it - and kills whatever
@@ -669,7 +669,7 @@ func weigh(conf Config) {
 				if agent == "" {
 					// Nothing to aim at: whatever spoke last did not name an
 					// agent. Then, and only then, the blunt instrument.
-					action = conf.str("actions", "on_turn_timeout_blind", "restart_worker")
+					action = conf.str("actions", "on_turn_timeout_blind", "stop_run")
 				}
 				judge("turn", r.run, strings.TrimSpace(agent+" "+phase), "timeouts.turn",
 					limit, quiet, action, act(action, conf, ctx))
@@ -728,7 +728,7 @@ func weigh(conf Config) {
 					continue
 				}
 				limit = against
-				action := conf.str("actions", "on_request_timeout", "restart_worker")
+				action := conf.str("actions", "on_request_timeout", "stop_run")
 				// Who to aim at, not just what is late. Without this the command
 				// went out with "{agent}" in it, unsubstituted, and asked the
 				// worker to retry a session by that literal name — which matched
