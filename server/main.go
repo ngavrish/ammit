@@ -784,6 +784,9 @@ func main() {
 	mux.HandleFunc("POST /kb/docs", func(w http.ResponseWriter, r *http.Request) {
 		putKBDoc(&mu, w, r)
 	})
+	mux.HandleFunc("DELETE /kb/docs", func(w http.ResponseWriter, r *http.Request) {
+		forgetKB(db, &mu, w, r)
+	})
 	mux.HandleFunc("GET /kb/docs", func(w http.ResponseWriter, r *http.Request) {
 		getKBDocs(&mu, w, r)
 	})

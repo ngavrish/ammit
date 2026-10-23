@@ -223,3 +223,61 @@ func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"project": project, "entries": out})
 }
+
+// forgetKB deletes an entry and its documents outright: DELETE /kb/docs with
+// {project, topic, why, run}. Stale was not enough. On 2026-10-23 four entries
+// said APF-3122's UAT job did not exist - a principal without CAN_VIEW had
+// listed the jobs and seen none - and the ticket named the job's task; marked
+// stale, they still came back to every question about that flag. Something
+// the ticket or its discussion contradicts is not kept at all.
+func forgetKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Project string `json:"project"`
+		Topic   string `json:"topic"`
+		Why     string `json:"why"`
+		Run     string `json:"run"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Project == "" || in.Topic == "" || in.Why == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "need project, topic and why"})
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	tx, err := db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	var n int64
+	res, err := tx.ExecContext(r.Context(), `DELETE FROM kb WHERE project = ? AND topic = ?`, in.Project, in.Topic)
+	if err == nil {
+		k, _ := res.RowsAffected()
+		n += k
+	}
+	for _, topic := range []string{in.Topic, "entry:" + in.Topic} {
+		docs := `SELECT id FROM kb_docs WHERE project = ? AND topic = ?`
+		for _, q := range []string{
+			`DELETE FROM kb_fts WHERE chunk IN (SELECT id FROM kb_chunks WHERE doc IN (` + docs + `))`,
+			`DELETE FROM kb_chunks WHERE doc IN (` + docs + `)`,
+		} {
+			if _, err := tx.ExecContext(r.Context(), q, in.Project, topic); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+		res, err := tx.ExecContext(r.Context(), `DELETE FROM kb_docs WHERE project = ? AND topic = ?`, in.Project, topic)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		k, _ := res.RowsAffected()
+		n += k
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	log.Printf("kb: forgot %q in %s (%d row(s)) by %s: %s", in.Topic, in.Project, n, in.Run, in.Why)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": n})
+}
