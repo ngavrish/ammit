@@ -1035,7 +1035,10 @@ func main() {
 		rows2json(w, `SELECT r.*, `+spentExpr+` AS usd,
 		                (SELECT e.phase FROM events e
 		                  WHERE e.run = r.run AND e.phase IS NOT NULL AND e.phase <> ''
-		                  ORDER BY e.at DESC LIMIT 1) AS phase
+		                  ORDER BY e.at DESC LIMIT 1) AS phase,
+		                (SELECT `+whereOf("e.payload")+` FROM events e
+		                  WHERE e.run = r.run AND e.kind = 'run_start'
+		                  ORDER BY e.at LIMIT 1) AS "where"
 		              FROM runs r ORDER BY r.started DESC LIMIT 50`)
 	})
 	// The stack lease: POST to take it, DELETE to give it back, GET to ask.
