@@ -108,7 +108,7 @@ func pumpQueue(conf Config) {
 	db.QueryRow(`SELECT count(*) FROM runs r WHERE r.finished IS NULL AND r.started > ?
 	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run
 	                 AND e.kind = 'run_start'
-	                 AND json_extract(e.payload, '$.tags.where') = 'local')`,
+	                 AND `+whereOf("e.payload")+` = 'local')`,
 		float64(time.Now().Add(-24*time.Hour).UnixNano())/1e9).Scan(&active)
 	var id int64
 	var name, payload string

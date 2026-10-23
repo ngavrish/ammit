@@ -985,13 +985,23 @@ func withContext(conf Config, ctx map[string]string) map[string]string {
 	return all
 }
 
-// hostRun is a run whose run_start says tags.where = local: it runs on the
+// whereOf is the stand a run_start payload names: tags.where as the host
+// runner writes it, or tags.resolved.where / tags.params.where as the
+// orchestrator's snapshot of the run's parameters writes it (orchestrator
+// #777). Read only as tags.where, APF-3239's host run of 2026-10-23 counted
+// as a stack run and held the docker stand's deploy and its next run.
+func whereOf(payload string) string {
+	return `coalesce(json_extract(` + payload + `, '$.tags.where'), json_extract(` + payload +
+		`, '$.tags.resolved.where'), json_extract(` + payload + `, '$.tags.params.where'))`
+}
+
+// hostRun is a run whose run_start says where = local: it runs on the
 // host, not in the runner container.
 func hostRun(run string) bool {
 	mu.Lock()
 	defer mu.Unlock()
 	var n int
 	db.QueryRow(`SELECT count(*) FROM events WHERE run = ? AND kind = 'run_start'
-	               AND json_extract(payload, '$.tags.where') = 'local'`, run).Scan(&n)
+	               AND `+whereOf("payload")+` = 'local'`, run).Scan(&n)
 	return n > 0
 }
