@@ -675,7 +675,7 @@ func waitingOn(run string, conf Config) (quiet, limit float64, rule, phase strin
 		since = last.Float64
 	}
 	quiet = wdNow() - since
-	if up := wdNow() - _upSince; up < quiet {
+	if up := wdNow() - upSince(); up < quiet {
 		quiet = up
 	}
 	return quiet, limit, rule, phase, quiet > limit

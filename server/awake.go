@@ -25,13 +25,14 @@ import (
 // awake() - called after a pulse is read, not before - treats a gap in it
 // longer than absence as our own sleep, exactly as the round guard and a
 // restart do: nothing older than it is ours to judge.
-var (
-	awakeMu sync.Mutex
-	_seen   = nowWall()
-	// absence is the gap in our own running that counts as having been away.
-	// main sets it to the round guard's own measure, three ticks.
-	absence = 60.0
-)
+var awakeMu sync.Mutex
+
+// _seen is the last moment this process is known to have been running.
+var _seen = nowWall()
+
+// absence is the gap in our own running that counts as having been away.
+// main sets it to the round guard's own measure, three ticks.
+var absence = 60.0
 
 // awake is how many seconds this process has watched without a break, as of
 // now. A gap since it last ran longer than absence re-arms the clock first.

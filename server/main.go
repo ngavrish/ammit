@@ -650,6 +650,10 @@ func main() {
 		// by time.Since, and this guard - the one written for exactly that
 		// case - never fired. See _upSince.
 		last := nowWall()
+		// The same measure of absence, checked where an age is read rather
+		// than only here between rounds: see awake.go.
+		absence = float64(tick) * 3
+		go keepAwake()
 		// Armed until the daemon answers once: see sweepCrashed.
 		swept := false
 		for {
@@ -672,7 +676,7 @@ func main() {
 				// judge, and a run that really did die while we slept still
 				// earns its judgement - on a pulse measured awake, one
 				// timeouts.heartbeat later.
-				_upSince = nowWall()
+				rearm()
 				last = nowWall()
 				time.Sleep(time.Duration(tick) * time.Second)
 				continue
