@@ -341,7 +341,6 @@ var _upSince = nowWall()
 func nowWall() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 func weigh(conf Config) {
-	up := nowWall() - _upSince
 	for _, r := range openRuns() {
 		age := float64(time.Now().UnixNano())/1e9 - r.started
 		// The fast pulse check, ahead of the slow work-silence one. The runner
@@ -387,7 +386,14 @@ func weigh(conf Config) {
 			// process to reanimate, so this closes the row rather than firing
 			// a hand at it - the same treatment, and for the same reason, as
 			// the corpse below. Measured awake, like everything else here.
-			if pulse := heartbeatAge(r.run); pulse < 0 {
+			//
+			// The uptime is read AFTER the pulse, and by awake(), not once at
+			// the top of the round: a sleep that falls inside the round, past
+			// the round guard and before this read, is still our sleep. Run
+			// df4cd16a was shot for exactly that one - see awake.go.
+			pulse := heartbeatAge(r.run)
+			up := awake()
+			if pulse < 0 {
 				born := age
 				if up < born {
 					born = up
@@ -401,7 +407,7 @@ func weigh(conf Config) {
 					continue
 				}
 			}
-			if pulse := heartbeatAge(r.run); pulse >= 0 {
+			if pulse >= 0 {
 				quiet := pulse
 				if up < quiet {
 					quiet = up
