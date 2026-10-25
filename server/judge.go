@@ -415,9 +415,21 @@ func weigh(conf Config) {
 					// run missed a beat, restart_worker hit
 					// agentic-v-model-agent-runner-1, and APF-3296's stack run
 					// ce792911 died two hours in.
-					if action == "restart_worker" && hostRun(r.run) {
+					// A host run's pulse comes from the host runner. No hand of
+					// ours reaches that process: restart_worker restarts the
+					// stack's container and stop_run writes .cancel into it,
+					// where the host run has no directory - "exit status 2",
+					// judged 347 times on APF-3239 (runs 17486548, 473bf5aa)
+					// while the row stayed open for hours over a runner whose
+					// event loop had stopped turning. The pulse is gone and
+					// nothing here can bring it back: close the row, say so,
+					// and the watchdog resumes it once the host runner is up.
+					if hostRun(r.run) {
 						judge("run", r.run, r.name, "timeouts.heartbeat", hb, quiet,
-							"none", "a host run: the runner container is not its worker, left alone")
+							"close", "a host run: no hand reaches its runner, the row is closed")
+						finish(r.run, "BLOCKED", fmt.Sprintf(
+							"ammit: the host runner stopped beating %.0fs ago - its process "+
+								"is wedged or gone; restart the host stand and resume", quiet))
 						continue
 					}
 					ctx := map[string]string{"run": r.run, "name": r.name,
