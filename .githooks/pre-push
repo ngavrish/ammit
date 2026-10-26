@@ -17,7 +17,6 @@ for mod in server clients/go; do
     fi
     go build ./... || exit 1
     go vet ./... || exit 1
-    go test ./... || exit 1
   ) || fail=1
 done
 

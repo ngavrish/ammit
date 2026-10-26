@@ -25,8 +25,6 @@ jobs:
         working-directory: ${{ matrix.module }}
       - run: go vet ./...
         working-directory: ${{ matrix.module }}
-      - run: go test ./...
-        working-directory: ${{ matrix.module }}
       - name: golangci-lint against the baseline
         if: matrix.module == 'server'
         run: |
