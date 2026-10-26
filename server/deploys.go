@@ -97,11 +97,14 @@ func getDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Reques
 }
 
 // yieldHold is how long a deploy that stood aside for a live run keeps new
-// runs from starting. The deploy job comes back every few minutes while a run
-// holds it off and says "yielded" again each time, so a fresh yield means a
-// deploy is waiting. An hour with no word from it is a job that has stopped
-// asking, and that holds nothing.
-const yieldHold = 3600.0
+// runs from starting. A deploy that yields now waits in its own job and says
+// "yielded" every thirty seconds until the run ends (chiron-actions #6), so a
+// fresh yield means a deploy is waiting. Two minutes with no word from it is a
+// job that has ended, and that holds nothing. It was an hour, on the belief
+// that the schedule came back every few minutes: GitHub delivered the next
+// tick more than half an hour late, and APF-3122's resume was refused from
+// 12:51 on 2026-10-26 with nothing live on the stand.
+const yieldHold = 120.0
 
 // deployClear is whether a run may start after the deploy last said status,
 // age seconds ago, and why not when it may not.
