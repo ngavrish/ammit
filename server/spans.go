@@ -414,6 +414,22 @@ func heartbeatAge(run string) float64 {
 	return float64(time.Now().UnixNano())/1e9 - at
 }
 
+// runnerEventAge is how long ago the run's runner last sent anything at all.
+// A host runner that sees the network drop probes it (netprobe) and keeps
+// working, but its heartbeat pauses with the outage; APF-3239 (run
+// 298dfc86) was closed as "stopped beating" at 10:56 while its bugsrules
+// phase ended at 10:56:13. Any event is the runner's own word that it lives.
+func runnerEventAge(run string) float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	var at float64
+	err := db.QueryRow(`SELECT at FROM events WHERE run=? ORDER BY id DESC LIMIT 1`, run).Scan(&at)
+	if err != nil {
+		return -1
+	}
+	return float64(time.Now().UnixNano())/1e9 - at
+}
+
 func quietFor(run string) (float64, string, string) {
 	mu.Lock()
 	defer mu.Unlock()

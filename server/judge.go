@@ -425,6 +425,11 @@ func weigh(conf Config) {
 					// nothing here can bring it back: close the row, say so,
 					// and the watchdog resumes it once the host runner is up.
 					if hostRun(r.run) {
+						// Any event from the host runner is a pulse: its heartbeat
+						// pauses through a network outage while it works on.
+						if ev := runnerEventAge(r.run); ev >= 0 && ev <= hb {
+							continue
+						}
 						judge("run", r.run, r.name, "timeouts.heartbeat", hb, quiet,
 							"close", "a host run: no hand reaches its runner, the row is closed")
 						finish(r.run, "BLOCKED", fmt.Sprintf(
