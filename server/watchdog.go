@@ -987,6 +987,23 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 	startCycle(d, root, conf, limit)
 }
 
+// handStopped is whether a person stopped the run (a hand judgement that stops).
+func handStopped(run string) bool {
+	if run == "" {
+		return false
+	}
+	f, err := readRunFacts(run)
+	if err != nil {
+		return false
+	}
+	for _, j := range f.judgements {
+		if j.scope == "hand" && stops(j.action) {
+			return true
+		}
+	}
+	return false
+}
+
 // startCycle opens the next cycle of a chain on a drop, or announces that the
 // chain has had every cycle it may take.
 // TicketBudgetRule is the limit that closes a ticket's whole chain of runs.
@@ -1288,6 +1305,16 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			return
 		}
 		if ended, run := fixEnded(c); ended {
+			// A person stopped the fix: the chain is closed, not failed into
+			// its next cycle. 2026-10-27: each WD-96356896 fix stopped by hand
+			// (its cause already fixed) queued the next cycle, which held the
+			// deploy that carried the fix.
+			if handStopped(run) {
+				why := "the fix run " + orDash(run) + " was stopped by a person; the chain is closed"
+				wdMove(c.id, wdLeft, "why=?", why)
+				wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, nil, why)
+				return
+			}
 			fail(fmt.Sprintf("the fix run %s ended without a PR on %s", orDash(run), c.branch))
 			return
 		}
