@@ -529,7 +529,10 @@ func weigh(conf Config) {
 		// more time is a person's decision, not a fix.
 		if limit, ok := conf.num("timeouts", "ticket"); ok && limit > 0 && !strings.HasPrefix(r.name, "WD-") {
 			root, began := chainStart(r.run, r.started)
-			if spent := nowWall() - began; spent > limit {
+			// timeouts.ticket_since: chains that began before the limit was
+			// switched on finish under the terms they started with.
+			since, _ := conf.num("timeouts", "ticket_since")
+			if spent := nowWall() - began; began >= since && spent > limit {
 				judge("run", r.run, r.name, TicketBudgetRule, limit, spent, "stopped",
 					"the ticket's chain is over its budget")
 				finish(r.run, "BLOCKED", fmt.Sprintf(
