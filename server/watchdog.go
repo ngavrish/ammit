@@ -543,9 +543,12 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 	// resume all happen in the runner, which never ran it. 2026-10-12: the
 	// APF-2327 host run 28a6a227, closed by the session that owned it,
 	// queued WD-28a6a227-1 into the runner's only slot.
-	if hostRun(f.run) {
-		return nil, "a run on the host, not in the runner"
-	}
+	// A run on the host is answered too, since the host stand has its own
+	// orchestrator: the fix is a pull request on the stack's code, made in
+	// the runner like any other, and the resume goes to the host's
+	// orchestrator (queueResume, host_starter). Until 2026-10-27 host runs
+	// were skipped here, and every BLOCKED run of APF-3239 on the host stand
+	// sat unanswered until a person looked.
 	if !f.runStart && f.name == f.run {
 		return nil, "no run_start: a row made by a stray event, not a run"
 	}
@@ -1215,14 +1218,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 	// #91 stopped new host-run chains at 00:34, but the chain of APF-2327's
 	// host run 28a6a227, opened at 00:30, failed cycle 1 into cycle 2
 	// (WD-28a6a227-2) at 00:35 because this step never asked again.
-	if hostRun(c.run) {
-		why := "a run on the host, not in the runner: not a drop the stack answers"
-		withdraw(c.fixQueue)
-		withdraw(c.resumeQueue)
-		wdMove(c.id, wdLeft, "why=?", why)
-		wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, c.prs, why)
-		return
-	}
+
 	// So does the other: a later run of the ticket supersedes the drop. A
 	// person who stops a run and starts its ticket over has answered it, and
 	// until this cycle queues a resume of its own, a fresh run of the ticket
@@ -1570,11 +1566,32 @@ func deploysSaid(merged float64) string {
 	return said
 }
 
+// runParams is what the run was started with (run_start tags.params).
+func runParams(run string) map[string]any {
+	mu.Lock()
+	var raw string
+	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.params'),'') FROM events
+	             WHERE run=? AND kind='run_start' ORDER BY id LIMIT 1`, run).Scan(&raw)
+	mu.Unlock()
+	var out map[string]any
+	if raw == "" || json.Unmarshal([]byte(raw), &out) != nil {
+		return nil
+	}
+	return out
+}
+
 // queueResume queues the dropped ticket to continue from the phase that
 // dropped, with the dropped run as the source of its artefacts. Through the
 // queue, so it waits behind any live run: the runner has one clone.
 func queueResume(c wdCycle, d *dropFact) int64 {
-	body := map[string]string{"key": d.name, "rerun": "resume", "source_run": c.run}
+	body := map[string]any{"key": d.name, "rerun": "resume", "source_run": c.run}
+	// A host run resumes where it ran: its own params (where, endpoints,
+	// gates) go with it, and the queue starts it through host_starter.
+	if params := runParams(c.run); hostRun(c.run) && params != nil {
+		for k, v := range params {
+			body[k] = v
+		}
+	}
 	if d.mode != "" {
 		body["mode"] = d.mode
 	}
