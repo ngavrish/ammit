@@ -958,6 +958,12 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 	if !recordDrop(d, root) {
 		return
 	}
+	// A chain stopped by its ticket budget is announced, not fixed: no cycle.
+	if d.cause == "limit:"+TicketBudgetRule {
+		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
+			"the ticket is over timeouts.ticket; no fix is queued - more time is a person's decision")
+		return
+	}
 	if parent != 0 {
 		wdMove(parent, wdAgain, "why=?", "the resumed run "+d.run+" dropped: "+d.cause)
 	}
@@ -970,6 +976,9 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 
 // startCycle opens the next cycle of a chain on a drop, or announces that the
 // chain has had every cycle it may take.
+// TicketBudgetRule is the limit that closes a ticket's whole chain of runs.
+const TicketBudgetRule = "timeouts.ticket"
+
 func startCycle(d *dropFact, root string, conf Config, limit float64) {
 	for _, c := range wdCycles(`root=? AND state IN ('`+strings.Join(wdMoving, "','")+`')`, root) {
 		// One cycle per chain at a time. A drop that arrives while one is

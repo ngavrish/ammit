@@ -727,3 +727,33 @@ func lastHeard(run string) (float64, bool) {
 	}
 	return at, true
 }
+
+// chainStart is when the ticket's chain of runs began: a resume names the run
+// it continues (run_start tags.resolved.source_run), and the chain is followed
+// back to the run that named none. A limit on a ticket is a limit on the
+// chain - timeouts.run measured one run, every resume and every watchdog cycle
+// started that clock again, and APF-3301 (2026-10-27) ran from 02:18 to past
+// 07:00 against a four-hour limit that nothing ever reached. Bounded, so a
+// loop in the record cannot hang the judge.
+func chainStart(run string, started float64) (string, float64) {
+	root := run
+	for hop := 0; hop < 64; hop++ {
+		var src string
+		mu.Lock()
+		db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.resolved.source_run'),'')
+		             FROM events WHERE run=? AND kind='run_start' ORDER BY id ASC LIMIT 1`,
+			root).Scan(&src)
+		if src == "" || src == root {
+			mu.Unlock()
+			return root, started
+		}
+		var at float64
+		err := db.QueryRow(`SELECT started FROM runs WHERE run=?`, src).Scan(&at)
+		mu.Unlock()
+		if err != nil {
+			return root, started
+		}
+		root, started = src, at
+	}
+	return root, started
+}

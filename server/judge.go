@@ -524,6 +524,21 @@ func weigh(conf Config) {
 			ctx[k] = v
 		}
 
+		// The ticket's budget, over its whole chain of runs (chainStart). Past
+		// it the run is closed and the watchdog records it without a cycle:
+		// more time is a person's decision, not a fix.
+		if limit, ok := conf.num("timeouts", "ticket"); ok && limit > 0 && !strings.HasPrefix(r.name, "WD-") {
+			root, began := chainStart(r.run, r.started)
+			if spent := nowWall() - began; spent > limit {
+				judge("run", r.run, r.name, TicketBudgetRule, limit, spent, "stopped",
+					"the ticket's chain is over its budget")
+				finish(r.run, "BLOCKED", fmt.Sprintf(
+					"ammit: %s is over its ticket budget - %.1fh since its chain began with run %s, "+
+						"against timeouts.ticket = %.1fh. More time is a person's decision",
+					r.name, spent/3600, shortRun(root), limit/3600))
+				continue
+			}
+		}
 		if limit, ok := conf.numFor("timeouts", "run", mode); ok && age > limit {
 			action := conf.str("actions", "on_run_timeout", "stop_run")
 			judge("run", r.run, r.name, "timeouts.run", limit, age, action,
