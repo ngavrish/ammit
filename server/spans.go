@@ -423,7 +423,14 @@ func runnerEventAge(run string) float64 {
 	mu.Lock()
 	defer mu.Unlock()
 	var at float64
-	err := db.QueryRow(`SELECT at FROM events WHERE run=? ORDER BY id DESC LIMIT 1`, run).Scan(&at)
+	// Not the watchdog's own instruments: samples, probes, progress lines and
+	// service logs keep arriving for a run nobody runs any more, and counted
+	// as the runner's word they kept WD-9c5e5b68-1 open eighty minutes after
+	// its last heartbeat, holding the docker deploy behind a corpse
+	// (2026-10-27).
+	err := db.QueryRow(`SELECT at FROM events WHERE run=?
+	                    AND kind NOT IN ('sample','netprobe','progress','service_log')
+	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
 	if err != nil {
 		return -1
 	}
