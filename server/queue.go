@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -123,6 +124,23 @@ func pumpQueue(conf Config) {
 	mu.Unlock()
 	if err != nil || float64(active) >= slots || !deployOK {
 		return
+	}
+	// A resume that waited in line past the ticket's verdict is not wanted any
+	// more: a run of the ticket that ended PASS or FAIL after the row was
+	// queued answered it. 2026-10-27: a keeper resume of APF-3301 queued at
+	// 11:46 started at 12:0x, after the ticket had ended FAIL at 11:51.
+	if strings.Contains(payload, `"rerun":"resume"`) {
+		var done int
+		mu.Lock()
+		db.QueryRow(`SELECT count(*) FROM runs WHERE name=? AND verdict IN ('PASS','FAIL')
+		             AND finished > (SELECT requested FROM queue WHERE id=?)`, name, id).Scan(&done)
+		if done > 0 {
+			db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=?`, nowWall(), id)
+			mu.Unlock()
+			log.Printf("ammit: queue row %d (%s) withdrawn: the ticket ended PASS/FAIL after it was queued", id, name)
+			return
+		}
+		mu.Unlock()
 	}
 	ctx := map[string]string{"name": name, "payload": payload}
 	for k, v := range conf["context"] {
