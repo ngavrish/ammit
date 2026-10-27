@@ -540,8 +540,12 @@ func weigh(conf Config) {
 			// switched on finish under the terms they started with.
 			since, _ := conf.num("timeouts", "ticket_since")
 			if spent := nowWall() - began; began >= since && spent > limit {
-				judge("run", r.run, r.name, TicketBudgetRule, limit, spent, "stopped",
-					"the ticket's chain is over its budget")
+				// The row is not the run. Closing it alone left the process
+				// working on: run f69603e4 of APF-3122 (2026-10-27) was closed
+				// over budget and its host step went on, and the stand answered
+				// the next start with "already running". stop_run reaches it.
+				judge("run", r.run, r.name, TicketBudgetRule, limit, spent, "stop_run",
+					"the ticket's chain is over its budget: "+act("stop_run", conf, ctx))
 				finish(r.run, "BLOCKED", fmt.Sprintf(
 					"ammit: %s is over its ticket budget - %.1fh since its chain began with run %s, "+
 						"against timeouts.ticket = %.1fh. More time is a person's decision",
