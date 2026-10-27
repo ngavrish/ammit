@@ -691,6 +691,7 @@ func main() {
 				// dropped this round; before pumpQueue, so a fix or a resume
 				// it queues is started in the same round when a slot is free.
 				watchdogTick(conf)
+				keepTick(conf)
 				pumpQueue(conf)
 				cooldown(conf)
 				// Every tick: deciding whether there is anything to archive is one
