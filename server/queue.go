@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -126,6 +127,10 @@ func pumpQueue(conf Config) {
 	ctx := map[string]string{"name": name, "payload": payload}
 	for k, v := range conf["context"] {
 		ctx[k] = v
+	}
+	// A run of the host stand starts on the host's orchestrator.
+	if host := ctx["host_starter"]; host != "" && strings.Contains(payload, `"where":"local"`) {
+		ctx["starter"] = host
 	}
 	// The row is running before the run is started, not after. run_start ties
 	// the oldest running, unlinked row of the ticket to the run it became, and
