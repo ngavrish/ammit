@@ -63,6 +63,14 @@ func keepOne(ticket string) {
 	if err != nil {
 		return
 	}
+	// A run a person stopped is not lying: it was put down. 2026-10-27: the
+	// keeper resumed APF-3301's 13c9a745, stopped by hand a minute earlier
+	// because a later run had superseded it.
+	for _, j := range f.judgements {
+		if j.scope == "hand" && stops(j.action) {
+			return
+		}
+	}
 	phase := resumeFrom(f)
 	body := map[string]any{"key": ticket, "rerun": "resume", "source_run": run}
 	if f.mode != "" {
