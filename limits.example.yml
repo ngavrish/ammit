@@ -144,6 +144,8 @@ commands:
   # the ticket merely became free for another run to claim on top of it.
   # The marker carries the run's id; the runner stops only the run it names.
   stop_run: docker exec {worker} sh -c "echo {run} > /runs/{name}/.cancel"
+  # A host run: the host orchestrator writes the marker into its own run directory.
+  stop_run_host: 'curl -sfS -X POST {host_stopper} -H "Content-Type: application/json" -d ''{"run":"{run}","name":"{name}"}'''
   stop_phase: docker exec {worker} sh -c "touch /runs/{name}/.cancel.phase.{phase}"
   # A file cannot interrupt a process that is waiting on a model, and that is
   # the one wait worth interrupting. These call the worker's control handle, so
@@ -175,6 +177,7 @@ commands:
 context:
   worker: my-pipeline-worker-1
   starter: http://orchestrator:8081/run
+  host_stopper: http://host.docker.internal:8092/cancel
   control: http://agent-runner:9099/cancel
 
 # Loops the runner drives. Ammit does not enforce these - the runner reads them

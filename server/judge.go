@@ -220,6 +220,13 @@ var personCommands = map[string]bool{"approve_report": true}
 const byPerson = "\x00by_person"
 
 func act(name string, conf Config, ctx map[string]string) string {
+	// A run of the host stand has no directory in the stack's runner, so
+	// stop_run's docker exec reaches nothing there: run ee7f58c8 of APF-3122
+	// (2026-10-27) answered every stop with "exit status 2" and went on. Its
+	// stop is the host orchestrator's own POST /cancel (stop_run_host).
+	if name == "stop_run" && conf.str("commands", "stop_run_host", "") != "" && hostRun(ctx["run"]) {
+		name = "stop_run_host"
+	}
 	tmpl := conf.str("commands", name, "")
 	if tmpl == "" {
 		return "no command named " + name
