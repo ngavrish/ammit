@@ -1231,7 +1231,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 	switch c.state {
 	case wdFixing, wdCI, wdMerging, wdDeploying:
 		if replayOf(d.name, c.run, c.started) == "" {
-			if later := supersededBy(d.name, c.run, c.started); later != "" {
+			if later := supersededBy(d.name, c.run, droppedAt(c.run, c.started)); later != "" {
 				why := "superseded by a later run " + later + " of " + d.name +
 					": the ticket was started over, so the dropped run is not resumed"
 				withdraw(c.fixQueue)
@@ -1660,6 +1660,12 @@ func replayOf(name, source string, after float64) string {
 // the ticket over - read once the run has begun a phase, because its replay
 // event lands just after its run_start and a run read between the two would
 // look fresh.
+// A resume of ANOTHER run of the ticket supersedes the drop as much as a fresh
+// start does: only a replay of the dropped run itself is the cycle's own
+// follow-up. APF-3239 (2026-10-27): 69b9c137 never started (ammit was being
+// redeployed), the ticket was resumed from 67a3ec94 as 9a6e5611, and the
+// watchdog, counting every replay out, went on to cycle 2 for a run nobody
+// needed.
 func supersededBy(name, source string, after float64) string {
 	mu.Lock()
 	defer mu.Unlock()
@@ -1667,11 +1673,25 @@ func supersededBy(name, source string, after float64) string {
 	if err := db.QueryRowContext(bg, `SELECT r.run FROM runs r
 	             WHERE r.name = ? AND r.run <> ? AND r.started > ?
 	               AND EXISTS (SELECT 1 FROM events e WHERE e.run = r.run AND e.kind = 'phase_start')
-	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run AND e.kind = 'replay')
-	             ORDER BY r.started LIMIT 1`, name, source, after).Scan(&run); err != nil {
+	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run AND e.kind = 'replay'
+	                               AND json_extract(e.payload,'$.source_run') = ?)
+	             ORDER BY r.started LIMIT 1`, name, source, after, source).Scan(&run); err != nil {
 		return ""
 	}
 	return run
+}
+
+// droppedAt is when the dropped run ended - a run started after that answers
+// the drop, whether or not the cycle had begun - or `or` when it is not known.
+func droppedAt(run string, or float64) float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	var at sql.NullFloat64
+	db.QueryRow(`SELECT finished FROM runs WHERE run=?`, run).Scan(&at)
+	if at.Valid {
+		return at.Float64
+	}
+	return or
 }
 
 // runOutcome is whether a run has finished and how.
