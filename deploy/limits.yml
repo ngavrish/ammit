@@ -38,8 +38,11 @@ actions:
 commands:
   warn: /bin/true
   stop_run: docker exec {worker} sh -c "echo {run} > /runs/{name}/.cancel"
+  # A host run: the host orchestrator writes the marker into its own run directory.
+  stop_run_host: 'curl -sfS -X POST {host_stopper} -H "Content-Type: application/json" -d ''{"run":"{run}","name":"{name}"}'''
   start_run: curl -sS -X POST {starter} -H "Content-Type: application/json" -d {payload}
 
 context:
   worker: my-pipeline-worker-1
   starter: http://orchestrator:8081/api/run
+  host_stopper: http://host.docker.internal:8092/cancel
