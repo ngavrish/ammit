@@ -733,28 +733,30 @@ func main() {
 	// through the gateway's stop, not here. 2026-10-27: a stale watchdog cycle
 	// (WD-9a6e5611-3) sat waiting behind APF-3301 and the only way to take it
 	// out was an UPDATE on the database by hand.
-	withdrawWaiting := func(where string, args ...any) int64 {
+	withdrawWaiting := func(query string, args ...any) int64 {
 		mu.Lock()
 		defer mu.Unlock()
-		res, err := db.Exec(`UPDATE queue SET state='done', finished=? WHERE state='waiting' AND `+where,
-			append([]any{nowWall()}, args...)...)
+		res, err := db.Exec(query, append([]any{nowWall()}, args...)...)
 		if err != nil {
 			return 0
 		}
 		n, _ := res.RowsAffected()
 		return n
 	}
+	const withdrawOne = `UPDATE queue SET state='done', finished=? WHERE state='waiting' AND id=?`
+	const withdrawTicket = `UPDATE queue SET state='done', finished=? WHERE state='waiting' AND name=?`
+	const withdrawAll = `UPDATE queue SET state='done', finished=? WHERE state='waiting'`
 	mux.HandleFunc("DELETE /queue/{id}", func(w http.ResponseWriter, r *http.Request) {
-		n := withdrawWaiting("id=?", r.PathValue("id"))
+		n := withdrawWaiting(withdrawOne, r.PathValue("id"))
 		log.Printf("ammit: queue row %s withdrawn (%d)", r.PathValue("id"), n)
 		writeJSON(w, http.StatusOK, map[string]any{"withdrawn": n})
 	})
 	mux.HandleFunc("DELETE /queue", func(w http.ResponseWriter, r *http.Request) {
 		var n int64
 		if name := r.URL.Query().Get("name"); name != "" {
-			n = withdrawWaiting("name=?", name)
+			n = withdrawWaiting(withdrawTicket, name)
 		} else {
-			n = withdrawWaiting("1=1")
+			n = withdrawWaiting(withdrawAll)
 		}
 		log.Printf("ammit: %d waiting queue row(s) withdrawn", n)
 		writeJSON(w, http.StatusOK, map[string]any{"withdrawn": n})
