@@ -531,6 +531,16 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 	if wdNotDropped[f.verdict] {
 		return nil, "verdict " + f.verdict
 	}
+	// FAIL is the flow's verdict that every red is a confirmed product defect
+	// (red_attribution, the runner's _final_verdict): the ticket is done and
+	// the bugs are its result. Only a FAIL that says its own output is
+	// unverified, or that a repair loop ran out, is work left undone.
+	// 2026-10-27: APF-3239 ended FAIL (6 APF-3277, 2 new) and the watchdog
+	// opened a fix cycle on it.
+	if f.verdict == "FAIL" && !strings.Contains(f.summary, "unverified") &&
+		!strings.Contains(f.summary, "ran out") {
+		return nil, "verdict FAIL: every red a confirmed product defect"
+	}
 	if fix := conf.str("watchdog", "fix_mode", "watchdogfix"); f.mode == fix {
 		return nil, "a watchdog fix run"
 	}
