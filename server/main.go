@@ -728,6 +728,37 @@ func main() {
 		}
 		writeJSON(w, http.StatusAccepted, reply)
 	})
+	// Taking waiting rows out of the line: one by id, or all of them (?name=
+	// narrows to one ticket). A running row is a live run and is stopped
+	// through the gateway's stop, not here. 2026-10-27: a stale watchdog cycle
+	// (WD-9a6e5611-3) sat waiting behind APF-3301 and the only way to take it
+	// out was an UPDATE on the database by hand.
+	withdrawWaiting := func(where string, args ...any) int64 {
+		mu.Lock()
+		defer mu.Unlock()
+		res, err := db.Exec(`UPDATE queue SET state='done', finished=? WHERE state='waiting' AND `+where,
+			append([]any{nowWall()}, args...)...)
+		if err != nil {
+			return 0
+		}
+		n, _ := res.RowsAffected()
+		return n
+	}
+	mux.HandleFunc("DELETE /queue/{id}", func(w http.ResponseWriter, r *http.Request) {
+		n := withdrawWaiting("id=?", r.PathValue("id"))
+		log.Printf("ammit: queue row %s withdrawn (%d)", r.PathValue("id"), n)
+		writeJSON(w, http.StatusOK, map[string]any{"withdrawn": n})
+	})
+	mux.HandleFunc("DELETE /queue", func(w http.ResponseWriter, r *http.Request) {
+		var n int64
+		if name := r.URL.Query().Get("name"); name != "" {
+			n = withdrawWaiting("name=?", name)
+		} else {
+			n = withdrawWaiting("1=1")
+		}
+		log.Printf("ammit: %d waiting queue row(s) withdrawn", n)
+		writeJSON(w, http.StatusOK, map[string]any{"withdrawn": n})
+	})
 	mux.HandleFunc("POST /queue", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Name    string `json:"name"`
