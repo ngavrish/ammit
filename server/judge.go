@@ -437,6 +437,24 @@ func weigh(conf Config) {
 								"is wedged or gone; restart the host stand and resume", quiet))
 						continue
 					}
+					// Past worker_gone the stop has had its chances. stop_run
+					// writes .cancel for a runner that no longer holds the run
+					// (a deploy recreated it, or it died) and nothing ever
+					// writes run_end, so the row stayed open: WD-9c5e5b68-1
+					// (run 7fa1edbb, 2026-10-26) sat "live" for over two hours
+					// with its last heartbeat at 23:16, a gateway stop answered
+					// "done" and changed nothing, and every start gate that asks
+					// ammit whether a run is live refused APF-3301's restart.
+					// The worker_gone check below never saw it: this branch
+					// `continue`s first.
+					if gone, ok := conf.num("timeouts", "worker_gone"); ok && gone > 0 && quiet > gone {
+						judge("run", r.run, r.name, "timeouts.heartbeat", hb, quiet,
+							"close", "no heartbeat past worker_gone; the stop reached nothing")
+						finish(r.run, "BLOCKED", fmt.Sprintf(
+							"ammit: no heartbeat for %.0fs, past worker_gone (%.0fs) - "+
+								"nothing holds this run any more", quiet, gone))
+						continue
+					}
 					ctx := map[string]string{"run": r.run, "name": r.name,
 						"branch": lastBranch(r.run)}
 					for k, v := range conf["context"] {
