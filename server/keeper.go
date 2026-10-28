@@ -70,6 +70,15 @@ func keepOne(ticket string) {
 		if j.scope == "hand" && stops(j.action) {
 			return
 		}
+		// Over budget is a person's decision, read from the judgement and not
+		// from the summary: the runner's run_end lands after ammit's own close
+		// and rewrites it. 2026-10-28 01:28: 5a3d7c35 of APF-3122 was closed
+		// "over its ticket budget", its run_end six seconds later made the
+		// summary "ammit stopped this run before implrulefix", and the keeper
+		// queued a resume fourteen seconds after that.
+		if j.rule == TicketBudgetRule {
+			return
+		}
 	}
 	phase := resumeFrom(f)
 	body := map[string]any{"key": ticket, "rerun": "resume", "source_run": run}
