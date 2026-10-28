@@ -9,7 +9,11 @@
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY server/go.mod server/go.sum ./
-RUN go mod download
+# proxy.golang.org dropped streams on the image builds of 2026-10-28: tried
+# three times, and the source when the proxy does not answer.
+ENV GOPROXY=https://proxy.golang.org,direct
+RUN for i in 1 2 3; do go mod download && break; \
+      [ "$i" = 3 ] && exit 1; echo "go mod download: attempt $i failed" >&2; sleep 10; done
 COPY server/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /ammit .
 
