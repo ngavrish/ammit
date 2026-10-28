@@ -995,6 +995,15 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 	judge("run", d.run, d.name, "watchdog.drop", limit, float64(spentCycles(root)),
 		"watchdog", d.cause+" at "+orDash(d.phase))
 	wdSay(d.run, d.phase, "detected", d.cause, spentCycles(root), limit, nil, text)
+	// watchdog.fix_mode "off": the drop is recorded and said, and no repair
+	// of the engine is queued. A client install runs the engine from images
+	// and has neither its source nor our repositories - a repair run there
+	// asked gh for our pull requests and could do nothing else.
+	if conf.str("watchdog", "fix_mode", "watchdogfix") == "off" {
+		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
+			"engine repairs are off on this install (watchdog.fix_mode: off); the drop is reported, not repaired")
+		return
+	}
 	startCycle(d, root, conf, limit)
 }
 
