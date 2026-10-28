@@ -51,6 +51,11 @@ func keepOne(ticket string) {
 	if busy > 0 || run == "" {
 		return
 	}
+	// Every account spent: wait for the hour the runner named, not restart
+	// into the same refusal every quarter of an hour.
+	if poolBack(run) > wdNow() {
+		return
+	}
 	switch {
 	case verdict == "PASS" || verdict == "FAIL":
 		return
