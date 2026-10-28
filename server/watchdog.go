@@ -971,6 +971,17 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 	if !recordDrop(d, root) {
 		return
 	}
+	// A run stopped because every subscription account is spent is waiting,
+	// not broken: no code fix brings an allowance back sooner. 2026-10-28
+	// 10:24: f61665cb of APF-3122 stopped on a spent pool and WD-f61665cb-1
+	// started within a minute into the same refusal. The keeper resumes it
+	// once the first account is back (poolBack).
+	if back := poolBack(d.run); back > wdNow() {
+		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
+			"every account is spent until "+time.Unix(int64(back), 0).Format("15:04")+
+				"; no fix is queued - the keeper resumes it then")
+		return
+	}
 	// A chain stopped by its ticket budget is announced, not fixed: no cycle.
 	if d.cause == "limit:"+TicketBudgetRule {
 		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
@@ -1877,4 +1888,18 @@ func wdCycleRows(where string, args []any) []map[string]any {
 		}
 	}
 	return cycles
+}
+
+// poolBack is when the runner said the first subscription account is back,
+// from the run's run_end (pool_back, epoch seconds), or 0.
+func poolBack(run string) float64 {
+	if run == "" {
+		return 0
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var back float64
+	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.pool_back'),0) FROM events
+	             WHERE run = ? AND kind = 'run_end' ORDER BY id DESC LIMIT 1`, run).Scan(&back)
+	return back
 }
