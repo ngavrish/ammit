@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -377,6 +378,12 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 		}
 		if bad := limitsBroken(confPath, string(body)); len(bad) > 0 {
 			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(bad, "\n"), http.StatusBadRequest)
+			return
+		}
+		// A fresh install's volume has no config directory yet: the first PUT
+		// is the one that seeds the limits, and it must be able to.
+		if err := os.MkdirAll(filepath.Dir(confPath), 0o700); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if err := os.WriteFile(confPath, body, 0o600); err != nil {
