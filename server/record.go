@@ -32,7 +32,11 @@ var perKind = map[string][]string{
 	// call sites: the bill and the number of steps the flow took. Named here
 	// rather than waved through, because "whatever the caller happens to
 	// know" is not a list.
-	"run_end":       {"verdict", "summary", "seconds", "usd", "steps"},
+	// pool_back: when the runner said the first subscription account is back
+	// (epoch seconds), read by the keeper and the watchdog (poolBack) to wait
+	// instead of restarting into a spent pool. Unlisted, it was dropped here and
+	// both kept restarting APF-3122 every few minutes (2026-10-28).
+	"run_end":       {"verdict", "summary", "seconds", "usd", "steps", "pool_back"},
 	"flow":          {"mode", "phases"},
 	"phase_start":   {},
 	"phase_end":     {"seconds", "failed", "ok", "error", "text"},
