@@ -16,8 +16,10 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"mime"
 	"net/http"
@@ -183,7 +185,7 @@ func serveTickets(mux *http.ServeMux, path string) {
 		mu.Lock()
 		doc, err := load()
 		mu.Unlock()
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			writeJSON(w, http.StatusOK, ticketDoc{Tickets: []Ticket{}})
 			return
 		}
@@ -197,7 +199,7 @@ func serveTickets(mux *http.ServeMux, path string) {
 		mu.Lock()
 		doc, err := load()
 		mu.Unlock()
-		if err != nil && !os.IsNotExist(err) {
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "the tickets ammit holds are unreadable: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
