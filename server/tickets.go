@@ -71,7 +71,7 @@ func parseTickets(body []byte, mediaType string) ([]Ticket, error) {
 	case "application/json":
 		var doc ticketDoc
 		if err := json.Unmarshal(body, &doc); err != nil {
-			return nil, fmt.Errorf("not a tickets document: %v", err)
+			return nil, fmt.Errorf("not a tickets document: %w", err)
 		}
 		out = doc.Tickets
 	case "text/csv", "text/tab-separated-values":
@@ -82,7 +82,7 @@ func parseTickets(body []byte, mediaType string) ([]Ticket, error) {
 		r.FieldsPerRecord = -1
 		rows, err := r.ReadAll()
 		if err != nil {
-			return nil, fmt.Errorf("not a readable table: %v", err)
+			return nil, fmt.Errorf("not a readable table: %w", err)
 		}
 		if len(rows) < 2 {
 			return nil, fmt.Errorf("the table has no rows under its header")
