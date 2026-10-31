@@ -1277,7 +1277,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 	// A replay of the dropped run is not this: the cycle follows it below.
 	switch c.state {
 	case wdFixing, wdCI, wdMerging, wdDeploying:
-		if replayOf(d.name, c.run, c.started) == "" {
+		if replayOf(d.name, c.run, droppedAt(c.run, c.started)) == "" {
 			if later := supersededBy(d.name, c.run, droppedAt(c.run, c.started)); later != "" {
 				why := "superseded by a later run " + later + " of " + d.name +
 					": the ticket was started over, so the dropped run is not resumed"
@@ -1307,7 +1307,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		// cycle 1 was fixing. Not seeing it, the chain spent cycles 1 to 3
 		// fixing a drop that was already past, and 0dd68e70's own drop at
 		// reportrules opened a second chain beside this one.
-		if run := replayOf(d.name, c.run, c.started); run != "" {
+		if run := replayOf(d.name, c.run, droppedAt(c.run, c.started)); run != "" {
 			withdraw(c.fixQueue)
 			wdMove(c.id, wdResumed, "resumed_run=?", run)
 			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, nil,
@@ -1461,20 +1461,32 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 				ok = false
 			}
 		}
+		// The resume may already be going: a person, or the fix run itself,
+		// started it while this cycle waited on the deploy. A second one in the
+		// queue would replay the same run again behind it. Asked before the
+		// deploy is waited on, as wdFixing asks it: the deploy stands aside for
+		// live runs, the replay is one, so a cycle that waits for the deploy
+		// first waits for its own resume to end and then fails on a drop the
+		// resume is already past. 2026-10-31, chain 52d584c8 cycle 2: #965
+		// merged, e93a0c27 replayed 623767f2 from implementing and got past
+		// it, the deploy yielded 80 times, and the cycle failed on
+		// timeouts.watchdog_deploy into cycle 3 for the same drop while
+		// e93a0c27's own drop opened a second chain beside it.
+		if run := replayOf(d.name, c.run, droppedAt(c.run, c.started)); run != "" {
+			if ok {
+				wdMove(c.id, wdResumed, "deployed_at=?, resumed_run=?", at, run)
+			} else {
+				wdMove(c.id, wdResumed, "resumed_run=?", run)
+			}
+			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs,
+				"the resume is already running as "+run+", not queued again")
+			return
+		}
 		if !ok {
 			if over(c, conf, "watchdog_deploy", c.mergedAt.Float64) {
 				fail("no deploy reported success after the merge within timeouts.watchdog_deploy" +
 					deploysSaid(c.mergedAt.Float64))
 			}
-			return
-		}
-		// The resume may already be going: a person, or the fix run itself,
-		// started it while this cycle waited on the deploy. A second one in the
-		// queue would replay the same run again behind it.
-		if run := replayOf(d.name, c.run, c.started); run != "" {
-			wdMove(c.id, wdResumed, "deployed_at=?, resumed_run=?", at, run)
-			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs,
-				"deployed; the resume is already running as "+run+", not queued again")
 			return
 		}
 		if d.phase == "" {
@@ -1495,7 +1507,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		if run == "" {
 			// A resume of this run that began outside the queue is the resume:
 			// the queued one is withdrawn rather than started on top of it.
-			if other := replayOf(d.name, c.run, c.started); other != "" {
+			if other := replayOf(d.name, c.run, droppedAt(c.run, c.started)); other != "" {
 				withdraw(c.resumeQueue)
 				if c.resumedRun == "" {
 					wdUpdate(c.id, "resumed_run=?", other)
@@ -1697,9 +1709,14 @@ func resumeOutcome(c wdCycle) (string, bool, string, float64) {
 	return queueOutcome(c.resumeQueue)
 }
 
-// replayOf is a run of the ticket that replays source and started after the
-// cycle did - the resume, however it was started. Read from the run's own
-// replay event, so it is the run that says what it continues.
+// replayOf is a run of the ticket that replays source and started after
+// `after` - the resume, however it was started. Read from the run's own
+// replay event, so it is the run that says what it continues. Callers pass
+// droppedAt, not the cycle's start: a replay of the dropped run begun after it
+// ended answers its drop whichever cycle was open then. Bounded by the cycle,
+// cycle 3 of chain 52d584c8 could not see e93a0c27, the resume begun under
+// cycle 2, and would have merged, deployed and queued a second resume of
+// 623767f2 into /runs/APF-3122 while e93a0c27's own chain was resuming it.
 func replayOf(name, source string, after float64) string {
 	mu.Lock()
 	defer mu.Unlock()
