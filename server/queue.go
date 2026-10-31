@@ -238,6 +238,17 @@ func pumpQueue(conf Config) {
 	}
 	outcome := queueStart(conf.str("actions", "on_start", "start_run"), conf, ctx)
 	judge("queue", "", name, "queue.parallel", slots, float64(busy+1), "started on "+stand, outcome)
+	// A start the orchestrator refused names no run, and nothing will ever tie
+	// one to the row. Left running it held its stand: WD-b5ba15bd-2 (row 389,
+	// 2026-10-31) was refused "no such ticket" and kept the docker stand from
+	// APF-3469 until the row was deleted by hand, twice.
+	if !strings.Contains(outcome, `"run_id"`) {
+		mu.Lock()
+		db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND ifnull(run,'') = ''`,
+			nowWall(), id)
+		mu.Unlock()
+		log.Printf("ammit: queue row %d (%s) refused on %s, closed: %s", id, name, stand, outcome)
+	}
 }
 
 // standOf is the stand a queued start asks for, by its "place": "local" (the
