@@ -982,6 +982,17 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 				"; no fix is queued - the keeper resumes it then")
 		return
 	}
+	// A workspace that refuses this machine's network is not broken code: no
+	// fix brings the network back. 2026-11-01 00:00-01:30: the corporate VPN
+	// was off, Databricks answered every call with "ingress network policy",
+	// and APF-3469 and APF-3122 went through six watchdog cycles into the same
+	// refusal. Announced; the run is restarted once access answers again.
+	if networkRefused(d) {
+		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
+			"the workspace refuses this machine's network (ingress network policy); "+
+				"no fix is queued - code does not change a network")
+		return
+	}
 	// A chain stopped by its ticket budget is announced, not fixed: no cycle.
 	if d.cause == "limit:"+TicketBudgetRule {
 		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
@@ -1911,4 +1922,26 @@ func poolBack(run string) float64 {
 	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.pool_back'),0) FROM events
 	             WHERE run = ? AND kind = 'run_end' ORDER BY id DESC LIMIT 1`, run).Scan(&back)
 	return back
+}
+
+// networkRefused is a drop whose own record says the remote workspace
+// refused the network the call came from.
+func networkRefused(d *dropFact) bool {
+	const refusal = "ingress network policy"
+	if strings.Contains(strings.Join(d.evidence, "\n"), refusal) {
+		return true
+	}
+	var summary string
+	mu.Lock()
+	db.QueryRow(`SELECT coalesce(summary,'') FROM runs WHERE run=?`, d.run).Scan(&summary)
+	mu.Unlock()
+	if strings.Contains(summary, refusal) {
+		return true
+	}
+	var n int
+	mu.Lock()
+	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND payload LIKE ?`,
+		d.run, "%"+refusal+"%").Scan(&n)
+	mu.Unlock()
+	return n > 0
 }
