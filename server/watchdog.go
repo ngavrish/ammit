@@ -1924,7 +1924,6 @@ func poolBack(run string) float64 {
 	return back
 }
 
-
 // networkRefused is a drop whose own record says the remote workspace
 // refused the network the call came from.
 func networkRefused(d *dropFact) bool {
