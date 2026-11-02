@@ -1335,6 +1335,21 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 				"fix opened "+strings.Join(urlsOf(prs), " "))
 			return
 		}
+		// A fix taken out of the queue before it started is the same answer
+		// as a fix stopped by hand, and it was invisible here: fixEnded reads
+		// the run, and a withdrawn row has none; the watchdog_start rule reads
+		// a start, and a withdrawn row never had one. 2026-11-02: WD-cdffe3d0-1
+		// (queue row 520) was withdrawn at 17:56:44 UTC, nine seconds after
+		// agentic-v-model#1058 merged the fix for its drop, and cycle 1 sat
+		// the whole of timeouts.watchdog_fix to fail into cycle 2 at 19:54:49,
+		// a fix run for a cause already fixed. Cycles 243, 249 and 383 spent
+		// their two hours the same way.
+		if withdrawn, key := fixWithdrawn(c); withdrawn {
+			why := "the fix " + key + " was withdrawn from the queue before it started; the chain is closed"
+			wdMove(c.id, wdLeft, "why=?", why)
+			wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, nil, why)
+			return
+		}
 		if ended, run := fixEnded(c); ended {
 			// A person stopped the fix: the chain is closed, not failed into
 			// its next cycle. 2026-10-27: each WD-96356896 fix stopped by hand
@@ -1568,6 +1583,21 @@ func fixEnded(c wdCycle) (bool, string) {
 	db.QueryRow(`SELECT q.run, r.finished FROM queue q LEFT JOIN runs r ON r.run = q.run
 	             WHERE q.id=?`, c.fixQueue.Int64).Scan(&run, &finished)
 	return finished.Valid, run.String
+}
+
+// fixWithdrawn says whether the fix this cycle queued was taken out of the
+// queue before it started (DELETE /queue): a row closed with no start and no
+// run. A start the orchestrator refused keeps its start and is not this.
+func fixWithdrawn(c wdCycle) (bool, string) {
+	if !c.fixQueue.Valid {
+		return false, ""
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var key string
+	err := db.QueryRow(`SELECT name FROM queue WHERE id=? AND state='done'
+	                    AND started IS NULL AND ifnull(run,'') = ''`, c.fixQueue.Int64).Scan(&key)
+	return err == nil, key
 }
 
 // deployedAfter is the first deploy that reported success after the merge.
