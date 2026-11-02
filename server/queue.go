@@ -242,6 +242,18 @@ func pumpQueue(conf Config) {
 	// one to the row. Left running it held its stand: WD-b5ba15bd-2 (row 389,
 	// 2026-10-31) was refused "no such ticket" and kept the docker stand from
 	// APF-3469 until the row was deleted by hand, twice.
+	// A refusal that asks to be tried again is not a refusal of the row: the
+	// stack is held (a deploy, or a deploy lease such as a regression's) and
+	// will be free later. Closed, the start was lost without a word:
+	// ADHOC-20261102-145843 (row 508) was refused "ui-regression holds the
+	// stack" and closed seven seconds after it was queued. It waits again.
+	if !strings.Contains(outcome, `"run_id"`) && strings.Contains(outcome, "try again") {
+		mu.Lock()
+		db.Exec(`UPDATE queue SET state='waiting', started=NULL WHERE id=? AND ifnull(run,'') = ''`, id)
+		mu.Unlock()
+		log.Printf("ammit: queue row %d (%s) held off on %s, waits again: %s", id, name, stand, outcome)
+		return
+	}
 	if !strings.Contains(outcome, `"run_id"`) {
 		mu.Lock()
 		db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND ifnull(run,'') = ''`,
