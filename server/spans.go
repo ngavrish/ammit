@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -738,6 +739,13 @@ func lastHeard(run string) (float64, bool) {
 func chainStart(run string, started float64) (string, float64) {
 	root := run
 	for hop := 0; hop < 64; hop++ {
+		// A run queued with "fresh_budget": true begins its own chain: it
+		// resumes after a fix to the flow, and the ticket is not charged for
+		// the hours its earlier runs lost to the flow's bugs (the person's
+		// rule, 2026-10-31: a restart after fixes starts the four hours anew).
+		if freshBudget(root) {
+			return root, started
+		}
 		var src string
 		mu.Lock()
 		db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.resolved.source_run'),'')
@@ -756,4 +764,18 @@ func chainStart(run string, started float64) (string, float64) {
 		root, started = src, at
 	}
 	return root, started
+}
+
+// freshBudget is a run whose queue row asked for a budget of its own.
+func freshBudget(run string) bool {
+	var payload string
+	mu.Lock()
+	db.QueryRow(`SELECT coalesce(payload,'') FROM queue WHERE run=? ORDER BY id DESC LIMIT 1`, run).Scan(&payload)
+	mu.Unlock()
+	var p map[string]any
+	if json.Unmarshal([]byte(payload), &p) != nil {
+		return false
+	}
+	fresh, _ := p["fresh_budget"].(bool)
+	return fresh
 }
