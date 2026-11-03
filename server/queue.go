@@ -220,6 +220,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 		}
 		mu.Unlock()
 	}
+	asked := payload // the row as queued, without the stand this attempt picks
 	payload = placed(payload, stand)
 	ctx := map[string]string{"name": name, "payload": payload}
 	for k, v := range conf["context"] {
@@ -256,9 +257,13 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// will be free later. Closed, the start was lost without a word:
 	// ADHOC-20261102-145843 (row 508) was refused "ui-regression holds the
 	// stack" and closed seven seconds after it was queued. It waits again.
+	// It waits as it was queued: the stand this attempt picked goes back out
+	// of the payload. Kept, one held-off try pinned an unpinned row to docker
+	// for good, and the shared queue never sent it to an idle host
+	// (ADHOC-20261103-075702 behind the UI regression's lease, 2026-11-03).
 	if !strings.Contains(outcome, `"run_id"`) && strings.Contains(outcome, "try again") {
 		mu.Lock()
-		db.Exec(`UPDATE queue SET state='waiting', started=NULL WHERE id=? AND ifnull(run,'') = ''`, id)
+		db.Exec(`UPDATE queue SET state='waiting', started=NULL, payload=? WHERE id=? AND ifnull(run,'') = ''`, asked, id)
 		mu.Unlock()
 		log.Printf("ammit: queue row %d (%s) held off on %s, waits again: %s", id, name, stand, outcome)
 		held[stand] = true
