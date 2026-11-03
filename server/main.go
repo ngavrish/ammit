@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -566,6 +567,9 @@ func main() {
 	confPath := env("AMMIT_CONFIG", "/config/limits.yml")
 	port := env("AMMIT_PORT", "8099")
 	tick, _ := strconv.Atoi(env("AMMIT_TICK", "20"))
+	if tick > 0 {
+		_deafAfter.Store(math.Float64bits(float64(tick) * 3))
+	}
 
 	// The drop detector over past runs, read-only: watchdog_history.go.
 	if len(os.Args) > 1 && os.Args[1] == "watchdog-history" {
@@ -672,7 +676,7 @@ func main() {
 				// judge, and a run that really did die while we slept still
 				// earns its judgement - on a pulse measured awake, one
 				// timeouts.heartbeat later.
-				_upSince = nowWall()
+				rearmAbsence()
 				last = nowWall()
 				time.Sleep(time.Duration(tick) * time.Second)
 				continue
@@ -686,6 +690,22 @@ func main() {
 				recordLimits(conf)
 				sweepAbandoned(conf)
 				sweepQueue(conf)
+				// The late-tick guard above measures from one round's start to
+				// the next, so a round that starts on time and then waits on the
+				// writer inside it is not late by that measure - and it judges
+				// the moment the wait ends, before the gateway has delivered what
+				// it held meanwhile. Run 6d42457b: a round waited about 400s, then
+				// read a pulse of 435s against 120 from a runner whose heartbeats
+				// sat in the gateway's queue behind a POST ammit had not answered,
+				// and stop_run went off at a run that was working on three
+				// branches. A round this late by the time it weighs is our
+				// absence too.
+				if stalled := nowWall() - last; stalled > float64(tick)*3 {
+					log.Printf("ammit: this round waited %.0fs before weighing "+
+						"against a %ds tick - the silence was ours; re-arming "+
+						"the absence clock", stalled, tick)
+					rearmAbsence()
+				}
 				weigh(conf)
 				// After weigh, so a run it closed this round is read as
 				// dropped this round; before pumpQueue, so a fix or a resume

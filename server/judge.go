@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -340,7 +342,29 @@ func finish(run, verdict, summary string) {
 //
 // Everything compared with an event timestamp has to be measured the way that
 // timestamp was: by the clock that moves while the machine is suspended.
-var _upSince = nowWall()
+//
+// Held as float bits in an atomic because it is moved from more than one
+// goroutine: the judge loop on a late tick, and store() when a record waited
+// so long for the writer that this process was deaf while it waited.
+var _upSinceBits atomic.Uint64
+
+func init() { _upSinceBits.Store(math.Float64bits(nowWall())) }
+
+// upSince is the moment from which this process has been listening.
+func upSince() float64 { return math.Float64frombits(_upSinceBits.Load()) }
+
+// rearmAbsence moves upSince to now: everything older was silence this process
+// could not have heard, so it is not silence it may judge.
+func rearmAbsence() { _upSinceBits.Store(math.Float64bits(nowWall())) }
+
+// _deafAfter is how long a record may wait for the writer before that wait
+// counts as our absence: three ticks, the same lateness that marks a round as
+// suspended. Set from AMMIT_TICK in main.
+var _deafAfter atomic.Uint64
+
+func init() { _deafAfter.Store(math.Float64bits(60)) }
+
+func deafAfter() float64 { return math.Float64frombits(_deafAfter.Load()) }
 
 // nowWall is the time every age here is measured in: seconds since the epoch,
 // the same scale the events carry, and the clock that keeps counting while
@@ -348,7 +372,7 @@ var _upSince = nowWall()
 func nowWall() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 func weigh(conf Config) {
-	up := nowWall() - _upSince
+	up := nowWall() - upSince()
 	for _, r := range openRuns() {
 		age := float64(time.Now().UnixNano())/1e9 - r.started
 		// The fast pulse check, ahead of the slow work-silence one. The runner
