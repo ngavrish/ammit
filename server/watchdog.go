@@ -1689,8 +1689,28 @@ func deploysSaid(merged float64) string {
 	return said
 }
 
-// runParams is what the run was started with (run_start tags.params).
+// runParams is what the run was started with (run_start tags.params), less
+// its stand. A continuation goes to the pool and takes the first free stand:
+// the orchestrator inherits the rest from the source run, and leaves the
+// source's stand and its addresses behind when the pool sends it to the other
+// one. Copied into the queue row, where=local pinned every resume of a host
+// run to the host, and APF-3478 waited behind a docker run with the host idle
+// for the same reason the other way round (2026-11-03). A remote product is
+// not a stand and is kept.
 func runParams(run string) map[string]any {
+	out := startParams(run)
+	if out == nil {
+		return nil
+	}
+	if w, _ := out["where"].(string); w != "remote" {
+		delete(out, "where")
+		delete(out, "stand")
+		delete(out, "endpoints")
+	}
+	return out
+}
+
+func startParams(run string) map[string]any {
 	mu.Lock()
 	var raw string
 	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.params'),'') FROM events
@@ -1708,8 +1728,8 @@ func runParams(run string) map[string]any {
 // queue, so it waits behind any live run: the runner has one clone.
 func queueResume(c wdCycle, d *dropFact) int64 {
 	body := map[string]any{"key": d.name, "rerun": "resume", "source_run": c.run}
-	// A host run resumes where it ran: its own params (where, endpoints,
-	// gates) go with it, and the queue starts it through host_starter.
+	// A host run's own params (gates, environment) go with it; its stand does
+	// not (runParams): the queue sends it to the first free stand.
 	if params := runParams(c.run); hostRun(c.run) && params != nil {
 		for k, v := range params {
 			body[k] = v
