@@ -27,8 +27,20 @@ func (e event) f(key string) float64 {
 }
 
 func store(e event) {
+	asked := nowWall()
 	mu.Lock()
 	defer mu.Unlock()
+	// A record that waited this long for the writer is time this process
+	// could not take anything: every producer's POST waited with it, and the
+	// gateway queued the rest of that run's records behind the one it was
+	// still trying to deliver. Run 6d42457b's heartbeats from 433s to 791s
+	// arrived only after ~800s, and the pulse read in between was our own
+	// deafness. Silence nobody could hear is not silence to judge.
+	if waited := nowWall() - asked; waited > deafAfter() {
+		log.Printf("ammit: a %s record waited %.0fs for the writer; "+
+			"re-arming the absence clock", e.s("kind"), waited)
+		rearmAbsence()
+	}
 	// Once more here rather than only at the door: sweeps and samples make
 	// events of their own, and "if a field is not on RECORD.md it is not
 	// stored" has to be true of this service's own events too, or the page is

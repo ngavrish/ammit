@@ -55,7 +55,7 @@ func cooldown(conf Config) {
 		last = lastQueued
 	}
 	since := nowWall() - last
-	if awake := nowWall() - _upSince; awake < since {
+	if awake := nowWall() - upSince(); awake < since {
 		since = awake
 	}
 	if since <= idle || cooledFor == last {
