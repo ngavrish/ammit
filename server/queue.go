@@ -107,6 +107,15 @@ var queueStart = act
 // that names its stand (place, or where = local) waits for that one; the line
 // behind it does not.
 func pumpQueue(conf Config) {
+	pumpQueueSkipping(conf, map[string]bool{})
+}
+
+// pumpQueueSkipping starts the first waiting item whose stand is free and
+// not in `held`. A start the stack holds off marks its stand held for this
+// pass and the pass goes on to the next item: APF-3122's host resume (row
+// 543, 2026-11-03) waited behind WD-a20dcd5d-1, refused every tick on docker
+// ("ui-regression holds the stack"), with the host free.
+func pumpQueueSkipping(conf Config, held map[string]bool) {
 	slots := 1.0
 	if v, ok := conf.num("queue", "parallel"); ok {
 		slots = v
@@ -165,8 +174,8 @@ func pumpQueue(conf Config) {
 	// replaces the stack's containers; a host run rides it out.
 	deployOK, _ := lastDeployClear()
 	mu.Unlock()
-	dockerFree := float64(docker) < slots && deployOK
-	hostFree := host != "" && onHost == 0
+	dockerFree := float64(docker) < slots && deployOK && !held["docker"]
+	hostFree := host != "" && onHost == 0 && !held["local"]
 	var id int64
 	var name, payload, stand string
 	for _, it := range waiting {
@@ -252,6 +261,8 @@ func pumpQueue(conf Config) {
 		db.Exec(`UPDATE queue SET state='waiting', started=NULL WHERE id=? AND ifnull(run,'') = ''`, id)
 		mu.Unlock()
 		log.Printf("ammit: queue row %d (%s) held off on %s, waits again: %s", id, name, stand, outcome)
+		held[stand] = true
+		pumpQueueSkipping(conf, held)
 		return
 	}
 	if !strings.Contains(outcome, `"run_id"`) {
