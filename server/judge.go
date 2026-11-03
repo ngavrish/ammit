@@ -290,9 +290,6 @@ func act(name string, conf Config, ctx map[string]string) string {
 		return "[dry run] " + tmpl
 	}
 	out, err := exec.Command("sh", "-c", tmpl).CombinedOutput()
-	if err != nil {
-		return fmt.Sprintf("failed: %v", err)
-	}
 	said := strings.TrimSpace(string(out))
 	if len(said) > 200 {
 		// On a rune boundary: a cut through a Cyrillic letter left a broken
@@ -302,6 +299,16 @@ func act(name string, conf Config, ctx map[string]string) string {
 			cut--
 		}
 		said = said[:cut]
+	}
+	if err != nil {
+		// What the command printed is why it failed. 2026-11-03:
+		// watchdog_merge for agentic-v-model#1096 (chain 23884d89, cycle 1)
+		// answered "failed: exit status 1" on a green, clean PR, and nothing
+		// on record could say why it was not merged.
+		if said == "" {
+			return fmt.Sprintf("failed: %v", err)
+		}
+		return fmt.Sprintf("failed: %v: %s", err, said)
 	}
 	if said == "" {
 		return "done"
