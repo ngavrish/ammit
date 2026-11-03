@@ -102,6 +102,13 @@ const (
 
 var wdMoving = []string{wdFixing, wdCI, wdMerging, wdDeploying, wdResumed}
 
+// When commands.watchdog_merge was last asked for a PR, and how long a cycle
+// in merging waits before asking again for one that is still open and green.
+// Only watchdogTick touches the map, from the one main loop.
+var wdMergeAsked = map[string]float64{}
+
+const wdMergeEvery = 300.0
+
 // Verdicts that are not a drop. SKIPPED is a run that found its ticket
 // already being run by another: the ticket is not dropped, it is busy.
 var wdNotDropped = map[string]bool{
@@ -1427,6 +1434,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			if strings.ToUpper(p.State) == "MERGED" {
 				continue
 			}
+			wdMergeAsked[p.URL] = wdNow()
 			out := act("watchdog_merge", conf, map[string]string{"pr": p.URL, "run": c.run,
 				"name": d.name})
 			said = append(said, p.URL+": "+out)
@@ -1451,6 +1459,23 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 				}
 				if over(c, conf, "watchdog_ci", since) {
 					fail("PR " + p.URL + " is still not merged")
+					return
+				}
+				// The merge is asked once on entering this state, and an ask
+				// that failed was never asked again. 2026-11-03: the merge of
+				// agentic-v-model#1096 (chain 23884d89, cycle 1) answered
+				// "failed: exit status 1" a minute after its checks went
+				// green; the PR stayed open, green and clean, and the cycle
+				// sat out timeouts.watchdog_ci to fail as "still not merged",
+				// its fix never deployed. An open PR whose checks are green is
+				// asked again, no more often than wdMergeEvery, until it merges
+				// or the same timeout ends the cycle.
+				if p.ci() == "green" && wdNow()-wdMergeAsked[p.URL] >= wdMergeEvery {
+					wdMergeAsked[p.URL] = wdNow()
+					out := act("watchdog_merge", conf, map[string]string{"pr": p.URL,
+						"run": c.run, "name": d.name})
+					wdSay(c.run, d.phase, wdMerging, d.cause, c.cycle, limit, c.prs,
+						"still open and green; merge asked again: "+p.URL+": "+out)
 				}
 				return
 			}
