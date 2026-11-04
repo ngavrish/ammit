@@ -697,21 +697,6 @@ func shortPhases(run string, floor float64) map[string]float64 {
 	return out
 }
 
-// workerStartedAt is when the worker container the runs live in last started,
-// as the daemon reports it. ok is false when the daemon cannot say - the same
-// leash and the same meaning as workerUp: unknown certifies nothing.
-func workerStartedAt(conf Config) (float64, bool) {
-	out, ok := inspectWorker(conf, "{{.State.StartedAt}}")
-	if !ok {
-		return 0, false
-	}
-	at, err := time.Parse(time.RFC3339Nano, out)
-	if err != nil {
-		return 0, false
-	}
-	return float64(at.UnixNano()) / 1e9, true
-}
-
 // lastHeard is when the WORKER last said anything at all under a run, as an
 // absolute time. Heartbeats count here - the question is whether the process
 // spoke, not whether it worked - and only ammit's own instruments are left

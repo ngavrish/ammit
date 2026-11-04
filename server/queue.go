@@ -179,9 +179,18 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// branch_share.py). One run's fan-out spreads over both stands; a start
 	// sent into a stand doing that would wait in its runner, out of sight.
 	branchDocker, branchLocal := leaseHeld("branch-docker"), leaseHeld("branch-local")
+	// Nothing starts, on either stand, while a deploy holds the `deploy`
+	// lease. The deploy takes it before it looks for live runs and keeps it
+	// until it has replaced what it replaces - ammit among them - so a start
+	// cannot land between its look and its recreate. A host run used to start
+	// regardless ("it rides the deploy out"), and it does not ride out ammit:
+	// APF-3478's 2d1357cb was started from this queue at 15:19:26 on
+	// 2026-11-04, a deploy that had just looked took the lease at 15:19:30,
+	// and ammit was recreated under the run a minute later.
+	deployLease := leaseHeld("deploy")
 	mu.Unlock()
-	dockerFree := float64(docker) < slots && deployOK && !held["docker"] && !branchDocker
-	hostFree := host != "" && onHost == 0 && !held["local"] && !branchLocal
+	dockerFree := float64(docker) < slots && deployOK && !deployLease && !held["docker"] && !branchDocker
+	hostFree := host != "" && onHost == 0 && !deployLease && !held["local"] && !branchLocal
 	var id int64
 	var name, payload, stand string
 	for _, it := range waiting {
