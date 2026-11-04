@@ -173,9 +173,15 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// orchestrator, and left running with no run behind it. The deploy
 	// replaces the stack's containers; a host run rides it out.
 	deployOK, _ := lastDeployClear()
+	// A stand that runs claim branches of a run on the other stand is busy
+	// as if that run were on it: the runner there holds `branch-<stand>`
+	// while the job has its clone and its product (agent-runner
+	// branch_share.py). One run's fan-out spreads over both stands; a start
+	// sent into a stand doing that would wait in its runner, out of sight.
+	branchDocker, branchLocal := leaseHeld("branch-docker"), leaseHeld("branch-local")
 	mu.Unlock()
-	dockerFree := float64(docker) < slots && deployOK && !held["docker"]
-	hostFree := host != "" && onHost == 0 && !held["local"]
+	dockerFree := float64(docker) < slots && deployOK && !held["docker"] && !branchDocker
+	hostFree := host != "" && onHost == 0 && !held["local"] && !branchLocal
 	var id int64
 	var name, payload, stand string
 	for _, it := range waiting {
@@ -314,4 +320,13 @@ func placed(payload, stand string) string {
 		return payload
 	}
 	return string(out)
+}
+
+// leaseHeld says whether the named lease is held and not expired. The
+// caller holds mu.
+func leaseHeld(name string) bool {
+	var n int
+	db.QueryRow(`SELECT count(*) FROM leases WHERE name=? AND expires > ?`,
+		name, float64(time.Now().UnixNano())/1e9).Scan(&n)
+	return n > 0
 }
