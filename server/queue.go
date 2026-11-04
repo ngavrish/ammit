@@ -188,6 +188,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// 2026-11-04, a deploy that had just looked took the lease at 15:19:30,
 	// and ammit was recreated under the run a minute later.
 	deployLease := leaseHeld("deploy")
+	releaseEndedStandLeases()
 	mu.Unlock()
 	dockerFree := float64(docker) < slots && deployOK && !deployLease && !held["docker"] && !branchDocker
 	hostFree := host != "" && onHost == 0 && !deployLease && !held["local"] && !branchLocal
@@ -333,6 +334,40 @@ func placed(payload, stand string) string {
 
 // leaseHeld says whether the named lease is held and not expired. The
 // caller holds mu.
+// releaseEndedStandLeases gives back a stand lease ("stand-<where>", held by
+// "<TICKET> <commit>") once its ticket has no run left that has not finished,
+// however the run ended: a verdict, a stop, a stillborn start, an orphan the
+// watchdog closed. Only the run itself released it before, at its own end,
+// and a run that never reached its end kept the stand: on 2026-11-04 the host
+// stand stayed ADHOC-20261103-075702's from 13:52 to 23:05. The caller holds mu.
+func releaseEndedStandLeases() {
+	rows, err := db.Query(`SELECT name, holder FROM leases WHERE name LIKE 'stand-%'`)
+	if err != nil {
+		return
+	}
+	type lease struct{ name, holder string }
+	var held []lease
+	for rows.Next() {
+		var l lease
+		if rows.Scan(&l.name, &l.holder) == nil {
+			held = append(held, l)
+		}
+	}
+	rows.Close()
+	for _, l := range held {
+		ticket := strings.Fields(l.holder)
+		if len(ticket) == 0 {
+			continue
+		}
+		var live int
+		db.QueryRow(`SELECT count(*) FROM runs WHERE name=? AND finished IS NULL`, ticket[0]).Scan(&live)
+		if live == 0 {
+			db.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, l.name, l.holder)
+			log.Printf("ammit: %s released - %s has no live run", l.name, ticket[0])
+		}
+	}
+}
+
 func leaseHeld(name string) bool {
 	var n int
 	db.QueryRow(`SELECT count(*) FROM leases WHERE name=? AND expires > ?`,
