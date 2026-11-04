@@ -1008,42 +1008,54 @@ func weigh(conf Config) {
 }
 
 // sweepCrashed closes the rows of runs whose process was taken out from under
-// them while this service was not there to see it. Once per process life, on
-// the first round that gets a straight answer from the daemon.
+// them while this service was not there to see it. Once per process life,
+// after one grace of listening.
 //
 // A host that dies takes the worker and this watchdog down in the same second.
-// Nobody writes run_end, so the row stays open, and neither standing check
-// reopens it afterwards: the pulse check refuses any age older than our own
-// uptime (rightly - see _upSince), and worker_gone defers to workerUp, which
-// sees the container that has since been restarted and reads the corpse as a
-// wedge. Between the two the row hangs for as long as the database keeps it,
-// and every gate that asks "is a run live" answers yes about a run that ended
-// hours ago. On 14 September APF-1934 sat behind exactly that: the daemon went
-// down at 19:06, and the row was still blocking starts at 22:16, when a person
-// closed it by hand.
+// Nobody writes run_end, so the row stays open, and every gate that asks "is a
+// run live" answers yes about a run that ended hours ago. On 14 September
+// APF-1934 sat behind exactly that: the daemon went down at 19:06, and the row
+// was still blocking starts at 22:16, when a person closed it by hand.
 //
-// The discriminator is the worker's own start time, not an age. A run whose
-// every event predates the container that is running now has no process behind
-// it, whatever the daemon says about that container being up; a run that has
-// spoken since the worker started is alive and is none of this function's
-// business. One question, no clock measured across our absence. A daemon that
-// cannot answer certifies nothing and leaves the sweep armed for the next
-// round.
+// The discriminator is the run's own voice after we came back, never its age
+// against some start time. It used to be "every event predates the worker
+// container's start", and that is not death: this service restarting kills no
+// runner, a host run has no process in that container at all, and a docker
+// runner that survived the restart is alive whatever the container's clock
+// says. On 2026-11-04 at 15:20:37 a deploy recreated ammit and the stack's
+// worker within seconds of each other; APF-3478's host run 2d1357cb, working
+// in envrules, was "last heard 5s before the worker started", closed BLOCKED,
+// and its runner stopped when it saw its row closed.
+//
+// So: listen for timeouts.heartbeat (two of the runner's minute beats) after
+// we came back, measured awake (upSince moves on a suspend). A run that said
+// anything in that time is alive and none of this function's business; a run
+// that stayed silent through two beats has no process behind it, and its row
+// is closed. A run born after we came back is weigh's to judge (stillborn).
 func sweepCrashed(conf Config) bool {
-	started, ok := workerStartedAt(conf)
-	if !ok {
+	grace := 120.0
+	if hb, ok := conf.num("timeouts", "heartbeat"); ok && hb > 0 {
+		grace = hb
+	}
+	since := upSince()
+	if nowWall()-since < grace {
 		return false
 	}
 	for _, r := range openRuns() {
-		at, ok := lastHeard(r.run)
-		if !ok || at >= started {
+		if r.started >= since {
 			continue
 		}
+		at, ok := lastHeard(r.run)
+		if ok && at >= since {
+			continue
+		}
+		quiet := nowWall() - since
 		finish(r.run, "BLOCKED", fmt.Sprintf(
-			"ammit: crash sweep - last heard %.0fs before the worker started, "+
-				"so the process behind this row is gone", started-at))
-		log.Printf("ammit: crash sweep closed run %s (%s) - last heard %.0fs "+
-			"before the worker started", r.run, r.name, started-at)
+			"ammit: crash sweep - nothing heard in the %.0fs since ammit came back "+
+				"(%.0fs grace, two heartbeats), so the process behind this row is gone",
+			quiet, grace))
+		log.Printf("ammit: crash sweep closed run %s (%s) - silent for %.0fs "+
+			"since ammit came back", r.run, r.name, quiet)
 	}
 	return true
 }

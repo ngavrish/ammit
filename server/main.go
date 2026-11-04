@@ -654,7 +654,7 @@ func main() {
 		// by time.Since, and this guard - the one written for exactly that
 		// case - never fired. See _upSince.
 		last := nowWall()
-		// Armed until the daemon answers once: see sweepCrashed.
+		// Armed until one heartbeat grace has been listened through: see sweepCrashed.
 		swept := false
 		for {
 			if late := nowWall() - last; late > float64(tick)*3 {
