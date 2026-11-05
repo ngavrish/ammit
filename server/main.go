@@ -688,6 +688,19 @@ func main() {
 					swept = sweepCrashed(conf)
 				}
 				recordLimits(conf)
+				// The same stall, asked before the sweep that closes runs on
+				// silence, not only before weigh. The VM froze inside this
+				// round for five hours on 2026-11-05 - after recordLimits had
+				// written at 04:18:55 and before sweepAbandoned looked - so the
+				// guard at the top had already passed and the one below came
+				// too late: run 4ef880b4 was closed ABANDONED on its first
+				// awake second, for the night it slept through.
+				if stalled := nowWall() - last; stalled > float64(tick)*3 {
+					log.Printf("ammit: this round waited %.0fs before sweeping "+
+						"against a %ds tick - the silence was ours; re-arming "+
+						"the absence clock", stalled, tick)
+					rearmAbsence()
+				}
 				sweepAbandoned(conf)
 				sweepQueue(conf)
 				// The late-tick guard above measures from one round's start to
