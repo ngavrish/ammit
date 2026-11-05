@@ -1000,10 +1000,29 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 				"no fix is queued - code does not change a network")
 		return
 	}
-	// A chain stopped by its ticket budget is announced, not fixed: no cycle.
+	// A chain stopped by its ticket budget is not broken code, so no fix is
+	// queued: it continues from the phase it stopped in on a budget of its own
+	// (fresh_budget), the person's rule of 2026-10-31 - the hours a chain lost
+	// to the flow's bugs are not the ticket's. 2026-11-05: APF-1972 was closed
+	// over budget three times in a row, each resume within twenty seconds of
+	// its start, and this only recorded it. watchdog.budget_renewals a day per
+	// ticket bound it; past them more time is a person's decision.
 	if d.cause == "limit:"+TicketBudgetRule {
+		most, _ := conf.num("watchdog", "budget_renewals")
+		if most == 0 {
+			most = 2
+		}
+		if done := budgetRenewals(d.name); float64(done) < most {
+			if q := queueFreshResume(d); q != 0 {
+				wdSay(d.run, d.phase, "resumed", d.cause, spentCycles(root), limit, nil,
+					fmt.Sprintf("the ticket is over timeouts.ticket; resumed from %s on a fresh budget "+
+						"(renewal %d of %.0f today, queue %d)", orDash(d.phase), done+1, most, q))
+				return
+			}
+		}
 		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
-			"the ticket is over timeouts.ticket; no fix is queued - more time is a person's decision")
+			"the ticket is over timeouts.ticket and its renewals for today are spent; "+
+				"no resume is queued - more time is a person's decision")
 		return
 	}
 	if parent != 0 {
@@ -1727,10 +1746,35 @@ func startParams(run string) map[string]any {
 // dropped, with the dropped run as the source of its artefacts. Through the
 // queue, so it waits behind any live run: the runner has one clone.
 func queueResume(c wdCycle, d *dropFact) int64 {
-	body := map[string]any{"key": d.name, "rerun": "resume", "source_run": c.run}
+	return queueResumeOf(c.run, d, false)
+}
+
+// queueFreshResume queues the ticket stopped by its budget to continue from
+// the run that stopped, on a budget of its own.
+func queueFreshResume(d *dropFact) int64 {
+	return queueResumeOf(d.run, d, true)
+}
+
+// budgetRenewals is how many fresh-budget resumes the ticket has been given
+// in the last day: the queue rows carry the flag, whoever asked for them.
+func budgetRenewals(name string) int {
+	var n int
+	mu.Lock()
+	db.QueryRow(`SELECT count(*) FROM queue WHERE name = ?
+	             AND json_extract(payload,'$.fresh_budget') = 1 AND requested > ?`,
+		name, wdNow()-86400).Scan(&n)
+	mu.Unlock()
+	return n
+}
+
+func queueResumeOf(run string, d *dropFact, fresh bool) int64 {
+	body := map[string]any{"key": d.name, "rerun": "resume", "source_run": run}
+	if fresh {
+		body["fresh_budget"] = true
+	}
 	// A host run's own params (gates, environment) go with it; its stand does
 	// not (runParams): the queue sends it to the first free stand.
-	if params := runParams(c.run); hostRun(c.run) && params != nil {
+	if params := runParams(run); hostRun(run) && params != nil {
 		for k, v := range params {
 			body[k] = v
 		}
