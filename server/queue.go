@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -76,9 +77,20 @@ func sweepAbandoned(conf Config) {
 		rows.Close()
 	}
 	mu.Unlock()
-	now := float64(time.Now().UnixNano()) / 1e9
+	// Only the silence measured AWAKE counts, as in weigh and sweepCrashed.
+	// Run 4ef880b4 (2026-11-05) was closed ABANDONED at 09:20:17 for "301
+	// minutes" of silence that was the host's sleep: ammit's own round had
+	// written its limits at 04:18:55, the VM froze inside that round, and on
+	// waking this sweep read the whole night as the run's. Nothing in ammit's
+	// tables - no event, no sample, no limit, from any run - is dated between
+	// those two seconds, and the run's runner beat again 49s after it was
+	// closed. A run that really did go quiet while we slept still gets here,
+	// one timeouts.run after we woke, and a dead worker much sooner through
+	// weigh's heartbeat check.
+	now := nowWall()
+	up := now - upSince()
 	for _, q := range found {
-		silent := now - q.at
+		silent := math.Min(now-q.at, up)
 		if silent <= limit {
 			continue
 		}
