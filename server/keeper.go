@@ -8,7 +8,7 @@ import (
 )
 
 // keepTick is the plain watchman: every watchdog.keep_every seconds, for each
-// ticket in watchdog.keep, if nothing of the ticket is running or queued and
+// ticket in watchdog.keep ("all": every ticket run in the last two days), if nothing of the ticket is running or queued and
 // its last run did not end PASS or FAIL, queue a resume from where that run
 // stopped. No fix cycles and no cap - the watchdog's cycles fix code; this only
 // sees to it that a ticket someone is waiting on is never left lying.
@@ -30,11 +30,38 @@ func keepTick(conf Config) {
 		return
 	}
 	wdSetMeta("keep_at", wdNow())
-	for _, t := range strings.Split(tickets, ",") {
+	list := strings.Split(tickets, ",")
+	if strings.TrimSpace(tickets) == "all" {
+		list = recentTickets()
+	}
+	for _, t := range list {
 		if t = strings.TrimSpace(t); t != "" {
 			keepOne(t)
 		}
 	}
+}
+
+// recentTickets is every ticket with a run started in the last two days:
+// watchdog.keep "all" watches each run without anyone listing its ticket.
+// 2026-11-05: keep was empty, so the keeper watched nothing, and APF-1972
+// lay stopped while a person asked in a chat why nothing picked it up.
+func recentTickets() []string {
+	mu.Lock()
+	defer mu.Unlock()
+	rows, err := db.Query(`SELECT DISTINCT name FROM runs WHERE started > ?
+	                       AND name GLOB '[A-Z]*-[0-9]*' AND name NOT LIKE 'WD-%'`, wdNow()-2*86400)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if rows.Scan(&n) == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func keepOne(ticket string) {
