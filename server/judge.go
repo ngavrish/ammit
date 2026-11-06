@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -73,12 +74,10 @@ func escalated(conf Config, rule string, threshold, observed float64,
 
 func judge(scope, run, subject, rule string, threshold, observed float64,
 	action, outcome string) {
-	mu.Lock()
 	db.Exec(`INSERT INTO judgements (at, run, scope, subject, rule, threshold,
 	         observed, action, outcome) VALUES (?,?,?,?,?,?,?,?,?)`,
 		float64(time.Now().UnixNano())/1e9, run, scope, subject, rule, threshold,
 		observed, action, outcome)
-	mu.Unlock()
 	// WARN is called out, because a warning is the only judgement that changes
 	// nothing: the run carries on, and if the line reads like every other line
 	// nobody learns that a limit was crossed until they go looking. The turn
@@ -138,7 +137,7 @@ func endsRun(conf Config, action string) bool {
 // judgement here: actions.on_run_verdict names what to do (notify by default),
 // commands.notify says how. The reporting phase still writes the report; this
 // is for the runs that never reach it.
-func judgeRunEnd(run, name, verdict, summary string) {
+func judgeRunEnd(parent context.Context, run, name, verdict, summary string) {
 	if run == "" || verdict == "" {
 		return
 	}
@@ -154,7 +153,7 @@ func judgeRunEnd(run, name, verdict, summary string) {
 		ctx[k] = v
 	}
 	judge("run", run, name, "verdict."+strings.ToLower(verdict), 0, 0,
-		action, act(action, conf, ctx))
+		action, actCtx(parent, action, conf, ctx))
 }
 
 // judgeEmptyRun records a run that finished having taken no turns.
@@ -163,7 +162,7 @@ func judgeRunEnd(run, name, verdict, summary string) {
 // its own count of steps, and the count that matters is what actually arrived
 // here. A run whose events never reached this service is exactly the case worth
 // catching, and asking the client about it asks the wrong witness.
-func judgeEmptyRun(run, verdict, summary string) {
+func judgeEmptyRun(parent context.Context, run, verdict, summary string) {
 	if run == "" {
 		return
 	}
@@ -177,10 +176,10 @@ func judgeEmptyRun(run, verdict, summary string) {
 	}
 	var turns float64
 	var started, finished sql.NullFloat64
-	mu.Lock()
-	db.QueryRow(`SELECT coalesce(turns,0), started, finished FROM runs WHERE run=?`,
+	rctx, rcancel := readCtx(parent)
+	readDB.QueryRowContext(rctx, `SELECT coalesce(turns,0), started, finished FROM runs WHERE run=?`,
 		run).Scan(&turns, &started, &finished)
-	mu.Unlock()
+	rcancel()
 	if turns >= floor {
 		return
 	}
@@ -194,7 +193,7 @@ func judgeEmptyRun(run, verdict, summary string) {
 		lived = finished.Float64 - started.Float64
 	}
 	judge("run", run, strings.TrimSpace(verdict+" "+summary), "limits.turns_per_run_min",
-		floor, turns, action, act(action, conf, ctx))
+		floor, turns, action, actCtx(parent, action, conf, ctx))
 	log.Printf("ammit: run %s finished after %.0fs having taken %.0f turns: %s",
 		run, lived, turns, summary)
 }
@@ -221,12 +220,18 @@ var personCommands = map[string]bool{"approve_report": true}
 // byPerson is the context key only /act sets, after it has checked the caller.
 const byPerson = "\x00by_person"
 
+// act runs a command on the service's own loops; actCtx is the same for a
+// caller that has a context (/act).
 func act(name string, conf Config, ctx map[string]string) string {
+	return actCtx(bg, name, conf, ctx)
+}
+
+func actCtx(parent context.Context, name string, conf Config, ctx map[string]string) string {
 	// A run of the host stand has no directory in the stack's runner, so
 	// stop_run's docker exec reaches nothing there: run ee7f58c8 of APF-3122
 	// (2026-10-27) answered every stop with "exit status 2" and went on. Its
 	// stop is the host orchestrator's own POST /cancel (stop_run_host).
-	if name == "stop_run" && conf.str("commands", "stop_run_host", "") != "" && hostRun(ctx["run"]) {
+	if name == "stop_run" && conf.str("commands", "stop_run_host", "") != "" && hostRun(parent, ctx["run"]) {
 		name = "stop_run_host"
 	}
 	tmpl := conf.str("commands", name, "")
@@ -256,12 +261,17 @@ func act(name string, conf Config, ctx map[string]string) string {
 		}
 		if run != "" {
 			if max, ok := conf.num("limits", "retry_max"); ok && max > 0 {
+				// act runs on the judge loop, on /act and after a record
+				// lands, so the count has a lock of its own.
+				reanimationsMu.Lock()
 				reanimations[run]++
-				if float64(reanimations[run]) > max {
-					finish(run, "BLOCKED", fmt.Sprintf(
+				revived := reanimations[run]
+				reanimationsMu.Unlock()
+				if float64(revived) > max {
+					finishCtx(parent, run, "BLOCKED", fmt.Sprintf(
 						"revived %d times and still not reporting - past "+
 							"limits.retry_max (%.0f); closed rather than "+
-							"revived again", reanimations[run]-1, max))
+							"revived again", revived-1, max))
 					return fmt.Sprintf("closed: retry_max %.0f reached", max)
 				}
 			}
@@ -317,13 +327,24 @@ func act(name string, conf Config, ctx map[string]string) string {
 }
 
 func finish(run, verdict, summary string) {
-	mu.Lock()
+	finishCtx(bg, run, verdict, summary)
+}
+
+// finishCtx is finish for a caller that has a context.
+func finishCtx(parent context.Context, run, verdict, summary string) {
 	now := float64(time.Now().UnixNano()) / 1e9
-	db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
-		now, verdict, summary, run)
-	db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, now, run)
-	mu.Unlock()
-	closeSpansOf(run, now, "the run ended")
+	// The run and its queue row close together, one transaction.
+	if err := inTxCtx(parent, func(tx dbx) error {
+		if _, err := tx.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
+			now, verdict, summary, run); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, now, run)
+		return err
+	}); err != nil {
+		log.Printf("ammit: could not close run %s: %v", run, err)
+	}
+	closeSpansOf(parent, run, now, "the run ended")
 }
 
 // When this process started. An age measured across our own absence is
@@ -462,7 +483,7 @@ func weigh(conf Config) {
 					// event loop had stopped turning. The pulse is gone and
 					// nothing here can bring it back: close the row, say so,
 					// and the watchdog resumes it once the host runner is up.
-					if hostRun(r.run) {
+					if hostRun(bg, r.run) {
 						// Any event from the host runner is a pulse: its heartbeat
 						// pauses through a network outage while it works on.
 						if ev := runnerEventAge(r.run); ev >= 0 && ev <= hb {
@@ -1104,11 +1125,11 @@ func whereOf(payload string) string {
 
 // hostRun is a run whose run_start says where = local: it runs on the
 // host, not in the runner container.
-func hostRun(run string) bool {
-	mu.Lock()
-	defer mu.Unlock()
+func hostRun(parent context.Context, run string) bool {
+	ctx, cancel := readCtx(parent)
+	defer cancel()
 	var n int
-	db.QueryRow(`SELECT count(*) FROM events WHERE run = ? AND kind = 'run_start'
+	readDB.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE run = ? AND kind = 'run_start'
 	               AND `+whereOf("payload")+` = 'local'`, run).Scan(&n)
 	return n > 0
 }

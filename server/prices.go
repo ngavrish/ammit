@@ -62,21 +62,26 @@ func dropOldPrices() {
 }
 
 // seedPrices writes the sheet into the prices table, replacing what was there:
-// the file is the source, the table is how a query reads it.
+// the file is the source, the table is how a query reads it. One
+// transaction: a reader sees the old sheet or the new one, never none.
 func seedPrices() {
-	mu.Lock()
-	defer mu.Unlock()
-	if _, err := db.Exec(`DELETE FROM prices`); err != nil {
+	if err := inTx(seedPricesIn); err != nil {
 		log.Printf("ammit: prices: %v", err)
-		return
+	}
+}
+
+func seedPricesIn(tx dbx) error {
+	if _, err := tx.Exec(`DELETE FROM prices`); err != nil {
+		return err
 	}
 	s := prices()
 	for _, p := range s.Models {
-		if _, err := db.Exec(`INSERT INTO prices (model, name, tier, input, output, cache_read, cache_write, cache_write_1h, us_surcharge) VALUES (?,?,?,?,?,?,?,?,?)`,
+		if _, err := tx.Exec(`INSERT INTO prices (model, name, tier, input, output, cache_read, cache_write, cache_write_1h, us_surcharge) VALUES (?,?,?,?,?,?,?,?,?)`,
 			p.Model, p.Name, p.Tier, p.Input, p.Output, p.CacheRead, p.CacheWrite, p.CacheWrite1h, s.USSurcharge); err != nil {
 			log.Printf("ammit: prices: %v", err)
 		}
 	}
+	return nil
 }
 
 // The SDK's formula, in SQL, over the lifted turns: what a run's turns come
@@ -149,10 +154,10 @@ const spentExpr = `(
 // spentUSD is a run's spend, once: every session's bill where it sent one, and
 // the price of its turns where it did not.
 func spentUSD(r openRun) float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var usd float64
-	if err := db.QueryRow(spentSQL, r.run, r.run).Scan(&usd); err != nil {
+	if err := readDB.QueryRowContext(ctx, spentSQL, r.run, r.run).Scan(&usd); err != nil {
 		log.Printf("ammit: spent usd: %v", err)
 		return r.usd
 	}

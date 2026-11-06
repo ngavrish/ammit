@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -37,19 +38,27 @@ import (
 // and the row was never tied to it, or the start failed and nothing ever came
 // back. Both look the same from here and both end the same way.
 func sweepQueue(conf Config) {
-	mu.Lock()
-	defer mu.Unlock()
 	now := float64(time.Now().UnixNano()) / 1e9
-	// Tied to a run that is over.
-	db.Exec(`UPDATE queue SET state='done', finished=?
+	err := inTx(func(tx dbx) error {
+		// Tied to a run that is over.
+		if _, err := tx.Exec(`UPDATE queue SET state='done', finished=?
 	         WHERE state='running' AND ifnull(run,'') <> ''
-	           AND run IN (SELECT run FROM runs WHERE finished IS NOT NULL)`, now)
-	// Never tied to anything, and older than a run is allowed to take. Whatever
-	// it was, it is not running now.
-	if limit, ok := conf.num("timeouts", "run"); ok && limit > 0 {
-		db.Exec(`UPDATE queue SET state='done', finished=?
+	           AND run IN (SELECT run FROM runs WHERE finished IS NOT NULL)`, now); err != nil {
+			return err
+		}
+		// Never tied to anything, and older than a run is allowed to take. Whatever
+		// it was, it is not running now.
+		if limit, ok := conf.num("timeouts", "run"); ok && limit > 0 {
+			if _, err := tx.Exec(`UPDATE queue SET state='done', finished=?
 		         WHERE state='running' AND ifnull(run,'') = ''
-		           AND coalesce(started, requested) < ?`, now, now-limit)
+		           AND coalesce(started, requested) < ?`, now, now-limit); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("ammit: queue sweep: %v", err)
 	}
 }
 
@@ -58,8 +67,8 @@ func sweepAbandoned(conf Config) {
 	if !ok || limit <= 0 {
 		return
 	}
-	mu.Lock()
-	rows, err := db.Query(`SELECT r.run, coalesce(max(e.at), r.started)
+	ctx, cancel := readCtx(bg)
+	rows, err := readDB.QueryContext(ctx, `SELECT r.run, coalesce(max(e.at), r.started)
 	                       FROM runs r LEFT JOIN events e ON e.run = r.run
 	                       WHERE r.finished IS NULL GROUP BY r.run`)
 	type quiet struct {
@@ -74,9 +83,12 @@ func sweepAbandoned(conf Config) {
 				found = append(found, q)
 			}
 		}
+		if err := rows.Err(); err != nil {
+			log.Printf("ammit: sweepAbandoned: %v", err)
+		}
 		rows.Close()
 	}
-	mu.Unlock()
+	cancel()
 	// Only the silence measured AWAKE counts, as in weigh and sweepCrashed.
 	// Run 4ef880b4 (2026-11-05) was closed ABANDONED at 09:20:17 for "301
 	// minutes" of silence that was the host's sleep: ammit's own round had
@@ -133,18 +145,20 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 		slots = v
 	}
 	host := conf.str("context", "host_starter", "")
-	mu.Lock()
+	// What the stands hold, read off the read pool: a moment's snapshot is
+	// all this ever was - the row is marked running further down, by its id.
+	rctx, rcancel := readCtx(bg)
 	since := float64(time.Now().Add(-24*time.Hour).UnixNano()) / 1e9
 	// A run on the host (its run_start says tags.where = local) holds the
 	// host's clone, not the runner's: counted as a docker slot, the APF-2327
 	// host run on 2026-10-12 would have held APF-3296's queue the way its
 	// stack run had for two hours the night before.
 	var docker, onHost int
-	db.QueryRow(`SELECT count(*) FROM runs r WHERE r.finished IS NULL AND r.started > ?
+	readDB.QueryRowContext(rctx, `SELECT count(*) FROM runs r WHERE r.finished IS NULL AND r.started > ?
 	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run
 	                 AND e.kind = 'run_start'
 	                 AND `+whereOf("e.payload")+` = 'local')`, since).Scan(&docker)
-	db.QueryRow(`SELECT count(*) FROM runs r WHERE r.finished IS NULL AND r.started > ?
+	readDB.QueryRowContext(rctx, `SELECT count(*) FROM runs r WHERE r.finished IS NULL AND r.started > ?
 	               AND EXISTS (SELECT 1 FROM events e WHERE e.run = r.run
 	                 AND e.kind = 'run_start'
 	                 AND `+whereOf("e.payload")+` = 'local')`, since).Scan(&onHost)
@@ -152,7 +166,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// the start and its run_start the stand looks free for a tick, and a
 	// second item sent into it then waits in its runner for the clone.
 	starting := map[string]int{}
-	if rows, err := db.Query(`SELECT coalesce(payload,'') FROM queue
+	if rows, err := readDB.QueryContext(rctx, `SELECT coalesce(payload,'') FROM queue
 	                           WHERE state='running' AND ifnull(run,'') = '' AND started > ?`,
 		float64(time.Now().Add(-3*time.Minute).UnixNano())/1e9); err == nil {
 		for rows.Next() {
@@ -160,6 +174,13 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 			if rows.Scan(&p) == nil {
 				starting[standOf(p)]++
 			}
+		}
+		if err := rows.Err(); err != nil {
+			// A count cut short would show a stand freer than it is.
+			log.Printf("ammit: pumpQueueSkipping: %v", err)
+			rows.Close()
+			rcancel()
+			return
 		}
 		rows.Close()
 	}
@@ -170,7 +191,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 		name, payload string
 	}
 	var waiting []item
-	if rows, err := db.Query(`SELECT id, name, coalesce(payload,'') FROM queue
+	if rows, err := readDB.QueryContext(rctx, `SELECT id, name, coalesce(payload,'') FROM queue
 	                           WHERE state='waiting' ORDER BY requested LIMIT 100`); err == nil {
 		for rows.Next() {
 			var it item
@@ -178,19 +199,22 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 				waiting = append(waiting, it)
 			}
 		}
+		if err := rows.Err(); err != nil {
+			log.Printf("ammit: pumpQueueSkipping: %v", err)
+		}
 		rows.Close()
 	}
 	// Not into a deploy that is going or waiting (deploys.go, deployClear):
 	// the item stays waiting, rather than being started, refused by the
 	// orchestrator, and left running with no run behind it. The deploy
 	// replaces the stack's containers; a host run rides it out.
-	deployOK, _ := lastDeployClear()
+	deployOK, _ := lastDeployClear(rctx)
 	// A stand that runs claim branches of a run on the other stand is busy
 	// as if that run were on it: the runner there holds `branch-<stand>`
 	// while the job has its clone and its product (agent-runner
 	// branch_share.py). One run's fan-out spreads over both stands; a start
 	// sent into a stand doing that would wait in its runner, out of sight.
-	branchDocker, branchLocal := leaseHeld("branch-docker"), leaseHeld("branch-local")
+	branchDocker, branchLocal := leaseHeld(rctx, "branch-docker"), leaseHeld(rctx, "branch-local")
 	// Nothing starts, on either stand, while a deploy holds the `deploy`
 	// lease. The deploy takes it before it looks for live runs and keeps it
 	// until it has replaced what it replaces - ammit among them - so a start
@@ -199,9 +223,9 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// APF-3478's 2d1357cb was started from this queue at 15:19:26 on
 	// 2026-11-04, a deploy that had just looked took the lease at 15:19:30,
 	// and ammit was recreated under the run a minute later.
-	deployLease := leaseHeld("deploy")
+	deployLease := leaseHeld(rctx, "deploy")
+	rcancel()
 	releaseEndedStandLeases()
-	mu.Unlock()
 	dockerFree := float64(docker) < slots && deployOK && !deployLease && !held["docker"] && !branchDocker
 	hostFree := host != "" && onHost == 0 && !deployLease && !held["local"] && !branchLocal
 	var id int64
@@ -236,17 +260,24 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// queued answered it. 2026-10-27: a keeper resume of APF-3301 queued at
 	// 11:46 started at 12:0x, after the ticket had ended FAIL at 11:51.
 	if strings.Contains(payload, `"rerun":"resume"`) {
+		// The count and the withdrawal, one transaction.
 		var done int
-		mu.Lock()
-		db.QueryRow(`SELECT count(*) FROM runs WHERE name=? AND verdict IN ('PASS','FAIL')
+		if err := inTx(func(tx dbx) error {
+			tx.QueryRow(`SELECT count(*) FROM runs WHERE name=? AND verdict IN ('PASS','FAIL')
 		             AND finished > (SELECT requested FROM queue WHERE id=?)`, name, id).Scan(&done)
+			if done > 0 {
+				_, err := tx.Exec(`UPDATE queue SET state='done', finished=? WHERE id=?`, nowWall(), id)
+				return err
+			}
+			return nil
+		}); err != nil {
+			log.Printf("ammit: queue row %d (%s): %v", id, name, err)
+			return
+		}
 		if done > 0 {
-			db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=?`, nowWall(), id)
-			mu.Unlock()
 			log.Printf("ammit: queue row %d (%s) withdrawn: the ticket ended PASS/FAIL after it was queued", id, name)
 			return
 		}
-		mu.Unlock()
 	}
 	asked := payload // the row as queued, without the stand this attempt picks
 	payload = placed(payload, stand)
@@ -266,10 +297,8 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// run_start is stamped 0.012 s before the row's started; the run ended,
 	// its row stayed running with no run, and the watchdog failed the cycle as
 	// "the fix run was started and no run came of it".
-	mu.Lock()
 	db.Exec(`UPDATE queue SET state='running', started=?, payload=? WHERE id=?`,
 		float64(time.Now().UnixNano())/1e9, payload, id)
-	mu.Unlock()
 	busy := docker
 	if stand == "local" {
 		busy = onHost
@@ -296,19 +325,15 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// stopped for eight hours.
 	if !strings.Contains(outcome, `"run_id"`) &&
 		(strings.Contains(outcome, "try again") || strings.Contains(outcome, "already running")) {
-		mu.Lock()
 		db.Exec(`UPDATE queue SET state='waiting', started=NULL, payload=? WHERE id=? AND ifnull(run,'') = ''`, asked, id)
-		mu.Unlock()
 		log.Printf("ammit: queue row %d (%s) held off on %s, waits again: %s", id, name, stand, outcome)
 		held[stand] = true
 		pumpQueueSkipping(conf, held)
 		return
 	}
 	if !strings.Contains(outcome, `"run_id"`) {
-		mu.Lock()
 		db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND ifnull(run,'') = ''`,
 			nowWall(), id)
-		mu.Unlock()
 		log.Printf("ammit: queue row %d (%s) refused on %s, closed: %s", id, name, stand, outcome)
 	}
 }
@@ -350,18 +375,23 @@ func placed(payload, stand string) string {
 	return string(out)
 }
 
-// leaseHeld says whether the named lease is held and not expired. The
-// caller holds mu.
 // releaseEndedStandLeases gives back a stand lease ("stand-<where>", held by
 // "<TICKET> <commit>") once its ticket has no run left that has not finished,
 // however the run ended: a verdict, a stop, a stillborn start, an orphan the
 // watchdog closed. Only the run itself released it before, at its own end,
 // and a run that never reached its end kept the stand: on 2026-11-04 the host
-// stand stayed ADHOC-20261103-075702's from 13:52 to 23:05. The caller holds mu.
+// stand stayed ADHOC-20261103-075702's from 13:52 to 23:05. One transaction:
+// the look at the ticket's runs and the release, with no run_start between.
 func releaseEndedStandLeases() {
-	rows, err := db.Query(`SELECT name, holder FROM leases WHERE name LIKE 'stand-%'`)
+	if err := inTx(releaseEndedStandLeasesIn); err != nil {
+		log.Printf("ammit: stand leases: %v", err)
+	}
+}
+
+func releaseEndedStandLeasesIn(tx dbx) error {
+	rows, err := tx.Query(`SELECT name, holder FROM leases WHERE name LIKE 'stand-%'`)
 	if err != nil {
-		return
+		return err
 	}
 	type lease struct{ name, holder string }
 	var held []lease
@@ -371,6 +401,9 @@ func releaseEndedStandLeases() {
 			held = append(held, l)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: releaseEndedStandLeasesIn: %v", err)
+	}
 	rows.Close()
 	for _, l := range held {
 		ticket := strings.Fields(l.holder)
@@ -378,17 +411,24 @@ func releaseEndedStandLeases() {
 			continue
 		}
 		var live int
-		db.QueryRow(`SELECT count(*) FROM runs WHERE name=? AND finished IS NULL`, ticket[0]).Scan(&live)
+		if err := tx.QueryRow(`SELECT count(*) FROM runs WHERE name=? AND finished IS NULL`,
+			ticket[0]).Scan(&live); err != nil {
+			return err
+		}
 		if live == 0 {
-			db.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, l.name, l.holder)
+			if _, err := tx.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, l.name, l.holder); err != nil {
+				return err
+			}
 			log.Printf("ammit: %s released - %s has no live run", l.name, ticket[0])
 		}
 	}
+	return nil
 }
 
-func leaseHeld(name string) bool {
+// leaseHeld says whether the named lease is held and not expired.
+func leaseHeld(ctx context.Context, name string) bool {
 	var n int
-	db.QueryRow(`SELECT count(*) FROM leases WHERE name=? AND expires > ?`,
+	readDB.QueryRowContext(ctx, `SELECT count(*) FROM leases WHERE name=? AND expires > ?`,
 		name, float64(time.Now().UnixNano())/1e9).Scan(&n)
 	return n > 0
 }

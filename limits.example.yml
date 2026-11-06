@@ -45,6 +45,9 @@ retention:
   # any other, and ATTACH brings an old run back when somebody asks.
   days: 30
   dir: /data/archive
+  # How often the WAL is folded back into the database and cut to nothing
+  # (PRAGMA wal_checkpoint(TRUNCATE) on the writer). 300 when unset.
+  checkpoint_seconds: 300
 
 # Twice a limit is a different event from a limit. Crossing one is ordinary and a
 # warning is the right size of answer; crossing it twice over says the limit no

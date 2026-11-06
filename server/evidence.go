@@ -252,7 +252,7 @@ func dropTemp(f *os.File) {
 	_ = os.Remove(f.Name())
 }
 
-func postEvidence(db *sql.DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWriter, r *http.Request) {
+func postEvidence(db *sql.DB, store evidenceStore, w http.ResponseWriter, r *http.Request) {
 	if store == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "the evidence store is not configured: " + evidenceUnconfigured})
@@ -344,7 +344,6 @@ func postEvidence(db *sql.DB, mu *sync.Mutex, store evidenceStore, w http.Respon
 	}
 
 	at := float64(time.Now().UnixNano()) / 1e9
-	mu.Lock()
 	// Written again rather than added again: a retried upload of the same
 	// bytes for the same test is the same proof, and two rows for it would be
 	// a test that looks proved twice.
@@ -359,7 +358,6 @@ func postEvidence(db *sql.DB, mu *sync.Mutex, store evidenceStore, w http.Respon
 		  meta=excluded.meta`,
 		at, row.ticket, row.run, row.test, row.classname, row.feature, row.status,
 		row.kind, sum, size, mime, key, version, row.meta)
-	mu.Unlock()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -457,7 +455,8 @@ func evidenceRowOf(f map[string]string, hasFile bool) (evidenceRow, string) {
 // test. Whole statements, one per question, for the reason getCoverage gives:
 // a query built by concatenation reads the same whether it holds a caller's
 // text or not.
-func getEvidence(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+// rdb is the read pool.
+func getEvidence(rdb *sql.DB, w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ticket, run, test := strings.TrimSpace(q.Get("ticket")),
 		strings.TrimSpace(q.Get("run")), q.Get("test")
@@ -468,25 +467,23 @@ func getEvidence(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 		rows *sql.Rows
 		err  error
 	)
-	ctx := r.Context()
-	mu.Lock()
+	ctx, cancel := context.WithTimeout(r.Context(), _QUERY_DEADLINE)
+	defer cancel()
 	switch {
 	case run != "" && test != "":
-		rows, err = db.QueryContext(ctx, cols+`WHERE run = ? AND test = ?`+order, run, test)
+		rows, err = rdb.QueryContext(ctx, cols+`WHERE run = ? AND test = ?`+order, run, test)
 	case run != "":
-		rows, err = db.QueryContext(ctx, cols+`WHERE run = ?`+order, run)
+		rows, err = rdb.QueryContext(ctx, cols+`WHERE run = ?`+order, run)
 	case ticket != "" && test != "":
-		rows, err = db.QueryContext(ctx, cols+`WHERE ticket = ? AND test = ?`+order, ticket, test)
+		rows, err = rdb.QueryContext(ctx, cols+`WHERE ticket = ? AND test = ?`+order, ticket, test)
 	case ticket != "":
-		rows, err = db.QueryContext(ctx, cols+`WHERE ticket = ?`+order, ticket)
+		rows, err = rdb.QueryContext(ctx, cols+`WHERE ticket = ?`+order, ticket)
 	default:
-		mu.Unlock()
 		// No "everything": the table grows by a row per file per run, and an
 		// unfiltered list is a question nobody means.
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "ticket or run is required"})
 		return
 	}
-	mu.Unlock()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -518,19 +515,20 @@ func getEvidence(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 // serveEvidenceFile streams one file back by its hash, with Range: a browser
 // seeks in a video by asking for the bytes it wants, and a server that answers
 // every seek with the whole file is a video that cannot be scrubbed.
-func serveEvidenceFile(db *sql.DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWriter, r *http.Request) {
+// rdb is the read pool.
+func serveEvidenceFile(rdb *sql.DB, store evidenceStore, w http.ResponseWriter, r *http.Request) {
 	sum := r.PathValue("sha256")
 	if !sha256Hex.MatchString(sum) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not a sha256 (64 lowercase hex)"})
 		return
 	}
 	var key, mime, version string
-	mu.Lock()
 	// Any row will do: the same bytes under two tickets are two keys holding
 	// one file, and either of them is that file.
-	err := db.QueryRowContext(r.Context(), `SELECT key, mime, coalesce(version_id, '')
+	rctx, rcancel := context.WithTimeout(r.Context(), _QUERY_DEADLINE)
+	err := rdb.QueryRowContext(rctx, `SELECT key, mime, coalesce(version_id, '')
 		FROM evidence WHERE sha256 = ? ORDER BY id LIMIT 1`, sum).Scan(&key, &mime, &version)
-	mu.Unlock()
+	rcancel()
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such evidence"})
 		return

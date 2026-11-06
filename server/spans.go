@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -38,7 +39,7 @@ func notClosed(r *http.Request) string {
 	return " AND ifnull(json_extract(payload,'$.error'),'') NOT LIKE 'closed by ammit%'"
 }
 
-func closeSpansOf(run string, at float64, why string) {
+func closeSpansOf(parent context.Context, run string, at float64, why string) {
 	pairs := []struct{ start, end, column string }{
 		{"request_start", "request_end", "session"},
 		{"item_start", "item_end", "session"},
@@ -49,14 +50,14 @@ func closeSpansOf(run string, at float64, why string) {
 		{"phase_start", "phase_end", "phase"},
 	}
 	for _, p := range pairs {
-		for name, age := range openSpans(run, p.start, p.end, p.column) {
+		for name, age := range openSpansCtx(parent, run, p.start, p.end, p.column) {
 			e := event{"kind": p.end, "at": at, "run": run, p.column: name,
 				"ok": false, "seconds": age,
 				"error": "closed by ammit: " + why}
 			if p.column != "session" {
 				e["session"] = name
 			}
-			store(e)
+			storeCtx(parent, e)
 		}
 	}
 }
@@ -68,9 +69,9 @@ type openRun struct {
 }
 
 func openRuns() []openRun {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(`SELECT run, coalesce(name,''), started, coalesce(usd,0),
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, `SELECT run, coalesce(name,''), started, coalesce(usd,0),
 	                       coalesce(turns,0) FROM runs
 	                       WHERE finished IS NULL AND started > ?`,
 		float64(time.Now().Add(-72*time.Hour).UnixNano())/1e9)
@@ -85,6 +86,9 @@ func openRuns() []openRun {
 			out = append(out, r)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: openRuns: %v", err)
+	}
 	return out
 }
 
@@ -96,10 +100,10 @@ func openRuns() []openRun {
 // lastBranch is the branch of the newest event of this run, or "" if this run
 // never fanned out.
 func lastBranch(run string) string {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var branch string
-	db.QueryRow(`SELECT coalesce(branch,'') FROM events WHERE run=? AND ifnull(branch,'') <> ''
+	readDB.QueryRowContext(ctx, `SELECT coalesce(branch,'') FROM events WHERE run=? AND ifnull(branch,'') <> ''
 	             ORDER BY id DESC LIMIT 1`, run).Scan(&branch)
 	return branch
 }
@@ -113,10 +117,10 @@ func lastBranch(run string) string {
 // Read from run_start first and note second: the runner opens a run it did not
 // start with a note carrying the same tags, and both are the same fact.
 func runMode(run string) string {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var mode string
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.mode'),'') FROM events
+	readDB.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.tags.mode'),'') FROM events
 	             WHERE run=? AND kind IN ('run_start','note')
 	               AND ifnull(json_extract(payload,'$.tags.mode'),'') <> ''
 	             ORDER BY id ASC LIMIT 1`, run).Scan(&mode)
@@ -127,11 +131,11 @@ func runMode(run string) string {
 // tool. The session logs the tool call, then waits for it to finish, so the
 // newest thing said by this session before the wait began settles it.
 func afterTool(run, request string) bool {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var started float64
 	var agent, wait string
-	if err := db.QueryRow(`SELECT at, coalesce(agent,''),
+	if err := readDB.QueryRowContext(ctx, `SELECT at, coalesce(agent,''),
 	                       coalesce(json_extract(payload,'$.wait'),'')
 	                       FROM events
 	                       WHERE run=? AND kind='request_start' AND session=?
@@ -150,7 +154,7 @@ func afterTool(run, request string) bool {
 		return wait == "tool"
 	}
 	var level string
-	if err := db.QueryRow(`SELECT coalesce(json_extract(payload,'$.level'),'')
+	if err := readDB.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.level'),'')
 	                       FROM events WHERE run=? AND kind='log' AND agent=? AND at<=?
 	                       ORDER BY id DESC LIMIT 1`, run, agent, started).
 		Scan(&level); err != nil {
@@ -161,11 +165,11 @@ func afterTool(run, request string) bool {
 
 // spanFacts is who opened this wait, on which branch, and when.
 func spanFacts(run, request string) (string, string, float64) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var at float64
 	var agent, branch string
-	db.QueryRow(`SELECT at, coalesce(agent,''), coalesce(branch,'')
+	readDB.QueryRowContext(ctx, `SELECT at, coalesce(agent,''), coalesce(branch,'')
 	             FROM events WHERE run=? AND kind='request_start' AND session=?
 	             ORDER BY id DESC LIMIT 1`, run, request).Scan(&at, &agent, &branch)
 	return agent, branch, at
@@ -178,10 +182,10 @@ func spanIsOrphaned(run, request string) bool {
 	if agent == "" {
 		return false
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var ended int
-	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='session_end'
+	readDB.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE run=? AND kind='session_end'
 	             AND coalesce(agent,'')=? AND coalesce(branch,'')=? AND at>=?`,
 		run, agent, branch, at).Scan(&ended)
 	return ended > 0
@@ -190,12 +194,12 @@ func spanIsOrphaned(run, request string) bool {
 // itemFacts is what an open unit of work said about itself when it started:
 // what kind of thing it is, and who is running it.
 func itemFacts(run, item string) (string, string) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var kind, agent string
 	// itemkind, not kind: `kind` on an event is already the event's own name, so
 	// what sort of unit this is has to travel under a name of its own.
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.itemkind'),''), coalesce(agent,'')
+	readDB.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.itemkind'),''), coalesce(agent,'')
 	             FROM events WHERE run=? AND kind='item_start' AND session=?
 	             ORDER BY id DESC LIMIT 1`, run, item).Scan(&kind, &agent)
 	return kind, agent
@@ -208,10 +212,10 @@ func itemFacts(run, item string) (string, string) {
 // timeouts.module alone, the run warned and retried a feature that was inside
 // the deadline it was actually given.
 func itemBudget(run, item string) float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var budget float64
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.budget'),0)
+	readDB.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.budget'),0)
 	             FROM events WHERE run=? AND kind='item_start' AND session=?
 	             ORDER BY id DESC LIMIT 1`, run, item).Scan(&budget)
 	return budget
@@ -221,14 +225,14 @@ func itemBudget(run, item string) float64 {
 // open now — not across the run, which is a different question with a different
 // answer when an agent runs once per branch.
 func turnsPerSession(run string) map[string]float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	// One session is one agent on one branch, and only while it is open.
 	// Keyed on the agent alone this summed every funcreq branch of a
 	// fan-out into one number (314 "turns in one session" on run 6843c553)
 	// and went on warning about it every fifteen minutes for an hour after
 	// the last of those sessions had ended.
-	rows, err := db.Query(`
+	rows, err := readDB.QueryContext(ctx, `
 		SELECT coalesce(t.agent,'') || CASE WHEN coalesce(t.branch,'')<>'' THEN '@'||t.branch ELSE '' END,
 		       count(*) FROM events t
 		WHERE t.run=? AND t.kind='turn' AND ifnull(t.agent,'') <> ''
@@ -255,6 +259,9 @@ func turnsPerSession(run string) map[string]float64 {
 		if err := rows.Scan(&who, &n); err == nil {
 			out[who] = n
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: turnsPerSession: %v", err)
 	}
 	return out
 }
@@ -289,10 +296,10 @@ func turnsPerSession(run string) map[string]float64 {
 //
 // Returns session key -> requests in the window.
 func spinningSessions(run string, window, minRequests float64) map[string]float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	since := float64(time.Now().UnixNano())/1e9 - window
-	rows, err := db.Query(`
+	rows, err := readDB.QueryContext(ctx, `
 		SELECT s.session,
 		  (SELECT count(*) FROM events r WHERE r.run=s.run AND r.kind='request_end'
 		     AND coalesce(r.agent,'')=s.agent AND coalesce(r.branch,'')=s.branch
@@ -321,6 +328,9 @@ func spinningSessions(run string, window, minRequests float64) map[string]float6
 			out[session] = reqs
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: spinningSessions: %v", err)
+	}
 	return out
 }
 
@@ -329,12 +339,12 @@ func spinningSessions(run string, window, minRequests float64) map[string]float6
 // doing now: one heavy turn an hour ago is history, and a limit that keeps
 // firing on history cannot be acted on.
 func heaviestTurn(run string) (float64, string, string) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	since := float64(time.Now().Add(-15*time.Minute).UnixNano()) / 1e9
 	var size float64
 	var who, phase string
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.context'),0),
+	readDB.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.context'),0),
 	                    coalesce(agent,'?'), coalesce(phase,'')
 	             FROM events WHERE run=? AND kind='turn' AND at>=?
 	             ORDER BY coalesce(json_extract(payload,'$.context'),0) DESC
@@ -381,14 +391,14 @@ func inspectWorker(conf Config, format string) (string, bool) {
 // heardFrom is seconds since the WORKER said anything at all - any event it
 // sent, agented or not; only the watchdog's own instruments are excluded.
 func heardFrom(run string) float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var at float64
 	// heartbeat excluded alongside the watchdog's own instruments: it is the
 	// process pulse, and a 60-second pulse would otherwise reset this
 	// work-silence measure forever, hiding a wedged session behind a living
 	// loop. Work-silence and process-pulse are two questions with two checks.
-	err := db.QueryRow(`SELECT at FROM events
+	err := readDB.QueryRowContext(ctx, `SELECT at FROM events
 	                    WHERE run=? AND kind NOT IN ('sample','netprobe','heartbeat')
 	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
 	if err != nil {
@@ -403,10 +413,10 @@ func heardFrom(run string) float64 {
 // the fast reaper run 14 lacked: the worker was recreated and no work event
 // came, but nothing watched the pulse because the pulse was not an event.
 func heartbeatAge(run string) float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var at float64
-	err := db.QueryRow(`SELECT at FROM events
+	err := readDB.QueryRowContext(ctx, `SELECT at FROM events
 	                    WHERE run=? AND kind='heartbeat'
 	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
 	if err != nil {
@@ -421,15 +431,15 @@ func heartbeatAge(run string) float64 {
 // 298dfc86) was closed as "stopped beating" at 10:56 while its bugsrules
 // phase ended at 10:56:13. Any event is the runner's own word that it lives.
 func runnerEventAge(run string) float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var at float64
 	// Not the watchdog's own instruments: samples, probes, progress lines and
 	// service logs keep arriving for a run nobody runs any more, and counted
 	// as the runner's word they kept WD-9c5e5b68-1 open eighty minutes after
 	// its last heartbeat, holding the docker deploy behind a corpse
 	// (2026-10-27).
-	err := db.QueryRow(`SELECT at FROM events WHERE run=?
+	err := readDB.QueryRowContext(ctx, `SELECT at FROM events WHERE run=?
 	                    AND kind NOT IN ('sample','netprobe','progress','service_log')
 	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
 	if err != nil {
@@ -439,8 +449,8 @@ func runnerEventAge(run string) float64 {
 }
 
 func quietFor(run string) (float64, string, string) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var at float64
 	var agent, phase string
 	// The pulse reads only what an AGENT said. Excluding the watchdog's own
@@ -452,7 +462,7 @@ func quietFor(run string) (float64, string, string) {
 	// none of them count: silence is measured from the last thing a session
 	// actually said, and the aim lands on that session. A run with no agented
 	// events yet has no pulse to judge - better no judgement than a blind one.
-	err := db.QueryRow(`SELECT at, coalesce(agent,''), coalesce(phase,'') FROM events
+	err := readDB.QueryRowContext(ctx, `SELECT at, coalesce(agent,''), coalesce(phase,'') FROM events
 	                    WHERE run=? AND coalesce(agent,'') != ''
 	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at, &agent, &phase)
 	if err != nil {
@@ -477,8 +487,8 @@ func quietFor(run string) (float64, string, string) {
 // The pair-of-events version never worked precisely because nothing sent the
 // first half, and timeouts.phase had quietly never fired.
 func openPhases(run string) map[string]float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	// Only a phase somebody OPENED counts as open. Any event carries a phase
 	// column — an orchestrator's deploy step logs under phase "envdeploy"
 	// without ever starting a phase of that name — and counting those held a
@@ -492,7 +502,7 @@ func openPhases(run string) map[string]float64 {
 	// ended at 30 minutes and ui's went on to 126 against a 90-minute limit,
 	// unjudged. The key is phase@branch for a branch's phase, the bare phase
 	// otherwise - the same spelling sessions use for agent@branch.
-	rows, err := db.Query(`
+	rows, err := readDB.QueryContext(ctx, `
 		SELECT coalesce(phase,''), coalesce(branch,''), min(at) FROM events
 		WHERE run=? AND kind='phase_start' AND ifnull(phase,'') <> ''
 		  AND coalesce(phase,'') || '@' || coalesce(branch,'') NOT IN (
@@ -511,6 +521,9 @@ func openPhases(run string) map[string]float64 {
 		if err := rows.Scan(&phase, &branch, &at); err == nil {
 			live[phaseKey(phase, branch)] = now - at
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: openPhases: %v", err)
 	}
 	return live
 }
@@ -541,10 +554,10 @@ func sessionQuiet(run, session string) float64 {
 	if at := strings.Index(session, "@"); at >= 0 {
 		agent, branch = session[:at], session[at+1:]
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var last float64
-	err := db.QueryRow(`SELECT max(at) FROM events
+	err := readDB.QueryRowContext(ctx, `SELECT max(at) FROM events
 	                    WHERE run=? AND (session=?
 	                       OR (coalesce(agent,'')=? AND coalesce(branch,'')=?))`,
 		run, session, agent, branch).Scan(&last)
@@ -575,9 +588,13 @@ func testRunning(conf Config, run string) bool {
 }
 
 func openSpans(run, startKind, endKind, column string) map[string]float64 {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(fmt.Sprintf(`
+	return openSpansCtx(bg, run, startKind, endKind, column)
+}
+
+func openSpansCtx(parent context.Context, run, startKind, endKind, column string) map[string]float64 {
+	ctx, cancel := readCtx(parent)
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, fmt.Sprintf(`
 		SELECT coalesce(%[1]s,''), max(at) FROM events
 		WHERE run=? AND kind=? AND ifnull(%[1]s,'') <> ''
 		  AND coalesce(%[1]s,'') NOT IN (
@@ -596,6 +613,9 @@ func openSpans(run, startKind, endKind, column string) map[string]float64 {
 			live[key] = now - at
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: openSpansCtx: %v", err)
+	}
 	return live
 }
 
@@ -605,10 +625,10 @@ func openSpans(run, startKind, endKind, column string) map[string]float64 {
 // retry the row announces, which the runner records as the time the message
 // took to arrive. Sessions with nothing to say are absent.
 func retryWaits(run string, window float64) map[string]float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	since := float64(time.Now().UnixNano())/1e9 - window
-	rows, err := db.Query(`
+	rows, err := readDB.QueryContext(ctx, `
 		SELECT coalesce(agent,'') || CASE WHEN coalesce(branch,'')<>'' THEN '@'||branch ELSE '' END,
 		       sum(coalesce(json_extract(payload,'$.seconds'),0))
 		FROM events
@@ -627,6 +647,9 @@ func retryWaits(run string, window float64) map[string]float64 {
 			out[session] = secs
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: retryWaits: %v", err)
+	}
 	return out
 }
 
@@ -638,8 +661,8 @@ func retryWaits(run string, window float64) map[string]float64 {
 // no agent did the work, and that is a run to stop and read, not to let
 // through to the next phase at full price.
 func shortPhases(run string, floor float64) map[string]float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	// The FIRST time a branch enters a phase, and only that one.
 	//
 	// The floor is against a phase that answered without doing the work, so
@@ -665,7 +688,7 @@ func shortPhases(run string, floor float64) map[string]float64 {
 	// A turn is the thing the floor was always reaching for. With it there is
 	// one number for every phase, and the number only has to be long enough
 	// that a phase which truly did nothing has finished failing.
-	rows, err := db.Query(`
+	rows, err := readDB.QueryContext(ctx, `
 		SELECT coalesce(e.phase,''), coalesce(json_extract(e.payload,'$.seconds'), 0)
 		FROM events e
 		WHERE e.run=? AND e.kind='phase_end' AND ifnull(e.phase,'') <> ''
@@ -694,6 +717,9 @@ func shortPhases(run string, floor float64) map[string]float64 {
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: shortPhases: %v", err)
+	}
 	return out
 }
 
@@ -702,10 +728,10 @@ func shortPhases(run string, floor float64) map[string]float64 {
 // spoke, not whether it worked - and only ammit's own instruments are left
 // out. ok is false for a row that has no event of its own.
 func lastHeard(run string) (float64, bool) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var at float64
-	err := db.QueryRow(`SELECT at FROM events
+	err := readDB.QueryRowContext(ctx, `SELECT at FROM events
 	                    WHERE run=? AND kind NOT IN ('sample','netprobe')
 	                    ORDER BY id DESC LIMIT 1`, run).Scan(&at)
 	if err != nil {
@@ -732,17 +758,17 @@ func chainStart(run string, started float64) (string, float64) {
 			return root, started
 		}
 		var src string
-		mu.Lock()
-		db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.resolved.source_run'),'')
+		ctx, cancel := readCtx(bg)
+		readDB.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.tags.resolved.source_run'),'')
 		             FROM events WHERE run=? AND kind='run_start' ORDER BY id ASC LIMIT 1`,
 			root).Scan(&src)
 		if src == "" || src == root {
-			mu.Unlock()
+			cancel()
 			return root, started
 		}
 		var at float64
-		err := db.QueryRow(`SELECT started FROM runs WHERE run=?`, src).Scan(&at)
-		mu.Unlock()
+		err := readDB.QueryRowContext(ctx, `SELECT started FROM runs WHERE run=?`, src).Scan(&at)
+		cancel()
 		if err != nil {
 			return root, started
 		}
@@ -754,9 +780,9 @@ func chainStart(run string, started float64) (string, float64) {
 // freshBudget is a run whose queue row asked for a budget of its own.
 func freshBudget(run string) bool {
 	var payload string
-	mu.Lock()
-	db.QueryRow(`SELECT coalesce(payload,'') FROM queue WHERE run=? ORDER BY id DESC LIMIT 1`, run).Scan(&payload)
-	mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	readDB.QueryRowContext(ctx, `SELECT coalesce(payload,'') FROM queue WHERE run=? ORDER BY id DESC LIMIT 1`, run).Scan(&payload)
+	cancel()
 	var p map[string]any
 	if json.Unmarshal([]byte(payload), &p) != nil {
 		return false

@@ -213,27 +213,38 @@ type judgementFact struct {
 
 func readRunFacts(run string) (*runFacts, error) {
 	f := &runFacts{run: run, rec: map[string]*phaseRecord{}}
-	mu.Lock()
-	defer mu.Unlock()
-	var name, verdict, summary sql.NullString
-	var started, finished sql.NullFloat64
-	err := db.QueryRow(`SELECT name, started, finished, verdict, summary FROM runs WHERE run=?`,
-		run).Scan(&name, &started, &finished, &verdict, &summary)
+	// One snapshot: a run row that says open and events that say it ended
+	// are two moments, and the watchdog decides on what it reads here.
+	err := readTx(bg, func(ctx context.Context, x dbx) error {
+		return readRunFactsIn(ctx, x, f)
+	})
 	if err != nil {
 		return nil, err
 	}
+	return f, nil
+}
+
+func readRunFactsIn(ctx context.Context, x dbx, f *runFacts) error {
+	run := f.run
+	var name, verdict, summary sql.NullString
+	var started, finished sql.NullFloat64
+	err := x.QueryRowContext(ctx, `SELECT name, started, finished, verdict, summary FROM runs WHERE run=?`,
+		run).Scan(&name, &started, &finished, &verdict, &summary)
+	if err != nil {
+		return err
+	}
 	f.name, f.verdict, f.summary = name.String, strings.ToUpper(verdict.String), summary.String
 	f.started, f.finished, f.open = started.Float64, finished.Float64, !finished.Valid
-	f.newer = laterStarts(f.name, run, f.started)
+	f.newer = laterStarts(ctx, x, f.name, run, f.started)
 	var starts int
-	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='run_start'`, run).Scan(&starts)
+	x.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE run=? AND kind='run_start'`, run).Scan(&starts)
 	f.runStart = starts > 0
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.mode'),'') FROM events
+	x.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.tags.mode'),'') FROM events
 	             WHERE run=? AND kind IN ('run_start','note')
 	               AND ifnull(json_extract(payload,'$.tags.mode'),'') <> ''
 	             ORDER BY id LIMIT 1`, run).Scan(&f.mode)
 	var flowMode, phases string
-	if db.QueryRow(`SELECT coalesce(mode,''), coalesce(phases,'') FROM flows WHERE run=?`,
+	if x.QueryRowContext(ctx, `SELECT coalesce(mode,''), coalesce(phases,'') FROM flows WHERE run=?`,
 		run).Scan(&flowMode, &phases) == nil {
 		if flowMode != "" {
 			f.mode = flowMode
@@ -241,15 +252,15 @@ func readRunFacts(run string) (*runFacts, error) {
 		_ = json.Unmarshal([]byte(phases), &f.phases)
 	}
 	var from sql.NullString
-	if db.QueryRow(`SELECT json_extract(payload,'$.from_phase') FROM events
+	if x.QueryRowContext(ctx, `SELECT json_extract(payload,'$.from_phase') FROM events
 	                WHERE run=? AND kind='replay' ORDER BY id DESC LIMIT 1`, run).Scan(&from) == nil {
 		f.replayKnown, f.replayFrom = true, from.String
 	}
-	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='heartbeat'`, run).Scan(&f.heartbeats)
+	x.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE run=? AND kind='heartbeat'`, run).Scan(&f.heartbeats)
 	var ends int
-	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='run_end'`, run).Scan(&ends)
+	x.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE run=? AND kind='run_end'`, run).Scan(&ends)
 	f.runEnd = ends > 0
-	rows, err := db.Query(`SELECT coalesce(phase,''), coalesce(branch,''), kind,
+	rows, err := x.QueryContext(ctx, `SELECT coalesce(phase,''), coalesce(branch,''), kind,
 	                         coalesce(json_extract(payload,'$.verdict'),''),
 	                         coalesce(json_extract(payload,'$.failed'),0),
 	                         coalesce(json_extract(payload,'$.ok'),1),
@@ -280,15 +291,19 @@ func readRunFacts(run string) (*runFacts, error) {
 				p.verdicts[branch] = strings.ToLower(verdict)
 			}
 		}
+		if err := rows.Err(); err != nil {
+			log.Printf("ammit: readRunFactsIn: %v", err)
+			return err
+		}
 		rows.Close()
 	}
-	f.judgements = judgementsOf(run)
-	return f, nil
+	f.judgements = judgementsOf(ctx, x, run)
+	return nil
 }
 
-// laterStarts is when every later run of the ticket started. Under mu.
-func laterStarts(name, run string, after float64) []float64 {
-	rows, err := db.Query(`SELECT started FROM runs WHERE name=? AND run<>? AND started > ?`,
+// laterStarts is when every later run of the ticket started.
+func laterStarts(ctx context.Context, x dbx, name, run string, after float64) []float64 {
+	rows, err := x.QueryContext(ctx, `SELECT started FROM runs WHERE name=? AND run<>? AND started > ?`,
 		name, run, after)
 	if err != nil {
 		return nil
@@ -301,12 +316,15 @@ func laterStarts(name, run string, after float64) []float64 {
 			out = append(out, at)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: laterStarts: %v", err)
+	}
 	return out
 }
 
-// judgementsOf is every judgement written about a run. Under mu.
-func judgementsOf(run string) []judgementFact {
-	rows, err := db.Query(`SELECT scope, rule, action, coalesce(subject,''),
+// judgementsOf is every judgement written about a run.
+func judgementsOf(ctx context.Context, x dbx, run string) []judgementFact {
+	rows, err := x.QueryContext(ctx, `SELECT scope, rule, action, coalesce(subject,''),
 	                         coalesce(threshold,0), coalesce(observed,0)
 	                       FROM judgements WHERE run=? ORDER BY id`, run)
 	if err != nil {
@@ -319,6 +337,9 @@ func judgementsOf(run string) []judgementFact {
 		if rows.Scan(&j.scope, &j.rule, &j.action, &j.subject, &j.threshold, &j.observed) == nil {
 			out = append(out, j)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: judgementsOf: %v", err)
 	}
 	return out
 }
@@ -667,19 +688,19 @@ func causeOf(f *runFacts, conf Config, d *dropFact) string {
 // phase it is in, limits.wait otherwise; neither set, nothing is judged.
 // Measured awake, like every age here.
 func waitingOn(run string, conf Config) (quiet, limit float64, rule, phase string, waiting bool) {
-	mu.Lock()
-	db.QueryRow(`SELECT coalesce(phase,'') FROM events
+	ctx, cancel := readCtx(bg)
+	readDB.QueryRowContext(ctx, `SELECT coalesce(phase,'') FROM events
 	             WHERE run=? AND kind='phase_start' AND ifnull(phase,'') <> ''
 	               AND coalesce(phase,'') || '@' || coalesce(branch,'') NOT IN (
 	                   SELECT coalesce(phase,'') || '@' || coalesce(branch,'')
 	                   FROM events WHERE run=? AND kind='phase_end')
 	             ORDER BY at DESC LIMIT 1`, run, run).Scan(&phase)
 	var last sql.NullFloat64
-	db.QueryRow(`SELECT max(at) FROM events WHERE run=? AND kind IN ('`+
+	readDB.QueryRowContext(ctx, `SELECT max(at) FROM events WHERE run=? AND kind IN ('`+
 		strings.Join(wdProgress, "','")+`')`, run).Scan(&last)
 	var started float64
-	db.QueryRow(`SELECT coalesce(started,0) FROM runs WHERE run=?`, run).Scan(&started)
-	mu.Unlock()
+	readDB.QueryRowContext(ctx, `SELECT coalesce(started,0) FROM runs WHERE run=?`, run).Scan(&started)
+	cancel()
 	rule = "limits.wait"
 	limit, ok := conf.num("limits", "wait")
 	if phase != "" {
@@ -704,18 +725,16 @@ func waitingOn(run string, conf Config) (quiet, limit float64, rule, phase strin
 // ---- the record ----------------------------------------------------------
 
 func wdMeta(name string) (float64, bool) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var v float64
-	if db.QueryRow(`SELECT value FROM watchdog_meta WHERE name=?`, name).Scan(&v) != nil {
+	if readDB.QueryRowContext(ctx, `SELECT value FROM watchdog_meta WHERE name=?`, name).Scan(&v) != nil {
 		return 0, false
 	}
 	return v, true
 }
 
 func wdSetMeta(name string, v float64) {
-	mu.Lock()
-	defer mu.Unlock()
 	db.Exec(`INSERT OR IGNORE INTO watchdog_meta (name, value) VALUES (?,?)`, name, v)
 }
 
@@ -742,12 +761,10 @@ func firstLine(s string) string {
 // restart, or a second tick, must not answer one drop twice.
 func recordDrop(d *dropFact, root string) bool {
 	ev, _ := json.Marshal(d.evidence)
-	mu.Lock()
 	res, err := db.Exec(`INSERT OR IGNORE INTO watchdog_drops
 	         (run, root, name, mode, phase, cause, verdict, evidence, at)
 	         VALUES (?,?,?,?,?,?,?,?,?)`,
 		d.run, root, d.name, d.mode, d.phase, d.cause, d.verdict, string(ev), wdNow())
-	mu.Unlock()
 	if err != nil {
 		log.Printf("ammit: watchdog could not record the drop of %s: %v", d.run, err)
 		return false
@@ -763,11 +780,11 @@ func recordDrop(d *dropFact, root string) bool {
 // adopted rather than queued (replayOf) has no queue row of its own: it is
 // the cycle's resumed_run, and its drop belongs to the same chain.
 func rootOf(run string) (string, int64) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var root string
 	var id int64
-	err := db.QueryRow(`SELECT c.root, c.id FROM watchdog_cycles c
+	err := readDB.QueryRowContext(ctx, `SELECT c.root, c.id FROM watchdog_cycles c
 	                    LEFT JOIN queue q ON q.id = c.resume_queue
 	                    WHERE q.run = ? OR c.resumed_run = ?
 	                    ORDER BY c.id DESC LIMIT 1`, run, run).Scan(&root, &id)
@@ -789,9 +806,15 @@ type wdCycle struct {
 }
 
 func wdCycles(where string, args ...any) []wdCycle {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(`SELECT id, root, run, cycle, state, branch, fix_queue,
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	return wdCyclesIn(ctx, readDB, where, args...)
+}
+
+// wdCyclesIn is wdCycles on x: the read pool, or a transaction that is about
+// to act on what it finds.
+func wdCyclesIn(ctx context.Context, x dbx, where string, args ...any) []wdCycle {
+	rows, err := x.QueryContext(ctx, `SELECT id, root, run, cycle, state, branch, fix_queue,
 	                         coalesce(prs,'[]'), merged_at, deployed_at, resume_queue,
 	                         coalesce(resumed_run,''), coalesce(why,''), started,
 	                         coalesce(entered, started)
@@ -811,12 +834,13 @@ func wdCycles(where string, args ...any) []wdCycle {
 			out = append(out, c)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: wdCyclesIn: %v", err)
+	}
 	return out
 }
 
 func wdUpdate(id int64, set string, args ...any) {
-	mu.Lock()
-	defer mu.Unlock()
 	args = append([]any{wdNow()}, args...)
 	args = append(args, id)
 	db.Exec(`UPDATE watchdog_cycles SET updated=?, `+set+` WHERE id=?`, args...)
@@ -834,20 +858,24 @@ func wdMove(id int64, state, set string, args ...any) {
 // started, whatever became of it. The announcement of exhaustion is a row too
 // and is not a cycle.
 func spentCycles(root string) int {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	return spentCyclesIn(ctx, readDB, root)
+}
+
+func spentCyclesIn(ctx context.Context, x dbx, root string) int {
 	var n int
-	db.QueryRow(`SELECT count(*) FROM watchdog_cycles WHERE root=? AND state<>?`,
+	x.QueryRowContext(ctx, `SELECT count(*) FROM watchdog_cycles WHERE root=? AND state<>?`,
 		root, wdExhausted).Scan(&n)
 	return n
 }
 
 func dropOfRun(run string) (*dropFact, bool) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	d := &dropFact{run: run}
 	var ev string
-	err := db.QueryRow(`SELECT coalesce(name,''), coalesce(mode,''), coalesce(phase,''),
+	err := readDB.QueryRowContext(ctx, `SELECT coalesce(name,''), coalesce(mode,''), coalesce(phase,''),
 	                      cause, coalesce(verdict,''), coalesce(evidence,'[]')
 	                    FROM watchdog_drops WHERE run=?`, run).
 		Scan(&d.name, &d.mode, &d.phase, &d.cause, &d.verdict, &ev)
@@ -885,10 +913,8 @@ func watchdogTick(conf Config) {
 		if d == nil {
 			// Not a drop, and never will be: the row is finished. A marker so
 			// it is not read again every tick.
-			mu.Lock()
 			db.Exec(`INSERT OR IGNORE INTO watchdog_meta (name, value) VALUES (?,?)`,
 				"seen:"+run, wdNow())
-			mu.Unlock()
 			continue
 		}
 		answerDrop(d, conf, limit)
@@ -904,9 +930,9 @@ func watchdogTick(conf Config) {
 // finishedSince is every run that ended after `since` and has not been read:
 // neither recorded as a drop nor marked as seen.
 func finishedSince(since float64) []string {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(`SELECT run FROM runs WHERE finished IS NOT NULL AND finished >= ?
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, `SELECT run FROM runs WHERE finished IS NOT NULL AND finished >= ?
 	                       AND run NOT IN (SELECT run FROM watchdog_drops)
 	                       AND 'seen:' || run NOT IN (SELECT name FROM watchdog_meta)
 	                       ORDER BY finished`, since)
@@ -920,6 +946,9 @@ func finishedSince(since float64) []string {
 		if rows.Scan(&r) == nil {
 			out = append(out, r)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: finishedSince: %v", err)
 	}
 	return out
 }
@@ -1067,42 +1096,59 @@ func handStopped(run string) bool {
 const TicketBudgetRule = "timeouts.ticket"
 
 func startCycle(d *dropFact, root string, conf Config, limit float64) {
-	for _, c := range wdCycles(`root=? AND state IN ('`+strings.Join(wdMoving, "','")+`')`, root) {
+	// The look for a moving cycle, the count of spent ones and the new row,
+	// one transaction: two drops of one chain answered at once must not both
+	// find it idle and both open cycle n.
+	var moving *wdCycle
+	var n int
+	var id int64
+	var exhausted, hands bool
+	var branch string
+	err := inTx(func(tx dbx) error {
+		for _, c := range wdCyclesIn(bg, tx, `root=? AND state IN ('`+strings.Join(wdMoving, "','")+`')`, root) {
+			moving = &c
+			return nil
+		}
+		n = spentCyclesIn(bg, tx, root) + 1
+		now := wdNow()
+		if float64(n) > limit {
+			exhausted = true
+			_, err := tx.Exec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, why, started, updated)
+		         VALUES (?,?,?,?,?,?,?,?)`, root, d.run, n, wdExhausted, "",
+				fmt.Sprintf("loops.laps_watchdog = %.0f cycles spent", limit), now, now)
+			return err
+		}
+		if handsOff(conf) {
+			hands = true
+			return nil
+		}
+		branch = fmt.Sprintf("watchdog/%s-%d", shortRun(root), n)
+		res, err := tx.Exec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, started,
+	                       entered, updated) VALUES (?,?,?,?,?,?,?,?)`,
+			root, d.run, n, wdFixing, branch, now, now, now)
+		if err != nil {
+			return err
+		}
+		id, _ = res.LastInsertId()
+		return nil
+	})
+	switch {
+	case err != nil:
+		log.Printf("ammit: watchdog could not open a cycle for %s: %v", d.run, err)
+	case moving != nil:
 		// One cycle per chain at a time. A drop that arrives while one is
 		// moving is the moving one's business: it is recorded, not answered.
-		log.Printf("ammit: watchdog %s: cycle %d of %s is still %s", d.run, c.cycle, root, c.state)
-		return
-	}
-	n := spentCycles(root) + 1
-	now := wdNow()
-	if float64(n) > limit {
-		mu.Lock()
-		db.Exec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, why, started, updated)
-		         VALUES (?,?,?,?,?,?,?,?)`, root, d.run, n, wdExhausted, "",
-			fmt.Sprintf("loops.laps_watchdog = %.0f cycles spent", limit), now, now)
-		mu.Unlock()
+		log.Printf("ammit: watchdog %s: cycle %d of %s is still %s", d.run, moving.cycle, root, moving.state)
+	case exhausted:
 		announceExhausted(d, root, conf, limit)
-		return
-	}
-	if handsOff(conf) {
+	case hands:
 		// Recorded, not answered, and no cycle spent on it: the switch says
 		// hands off, and a cycle is a hand.
 		wdSay(d.run, d.phase, "recorded", d.cause, n-1, limit, nil,
 			"[hands off] the drop is recorded and no fix was queued: actions.enforce is off")
-		return
+	default:
+		queueFix(id, d, root, n, branch, conf, limit)
 	}
-	branch := fmt.Sprintf("watchdog/%s-%d", shortRun(root), n)
-	mu.Lock()
-	res, err := db.Exec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, started,
-	                       entered, updated) VALUES (?,?,?,?,?,?,?,?)`,
-		root, d.run, n, wdFixing, branch, now, now, now)
-	mu.Unlock()
-	if err != nil {
-		log.Printf("ammit: watchdog could not open a cycle for %s: %v", d.run, err)
-		return
-	}
-	id, _ := res.LastInsertId()
-	queueFix(id, d, root, n, branch, conf, limit)
 }
 
 func shortRun(run string) string {
@@ -1121,7 +1167,7 @@ func queueFix(id int64, d *dropFact, root string, n int, branch string, conf Con
 	task := fixTask(d, root, n, branch, conf)
 	payload, _ := json.Marshal(map[string]string{
 		"key": key, "mode": conf.str("watchdog", "fix_mode", "watchdogfix"), "task": task})
-	mu.Lock()
+	// The fix's queue row and the cycle's pointer to it, one transaction.
 	tx, err := db.BeginTx(context.Background(), nil)
 	if err == nil {
 		var res sql.Result
@@ -1138,7 +1184,6 @@ func queueFix(id int64, d *dropFact, root string, n int, branch string, conf Con
 			_ = tx.Rollback()
 		}
 	}
-	mu.Unlock()
 	if err != nil {
 		wdMove(id, wdFailed, "why=?", "could not queue the fix: "+err.Error())
 		return
@@ -1620,11 +1665,11 @@ func fixEnded(c wdCycle) (bool, string) {
 	if !c.fixQueue.Valid {
 		return false, ""
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var run sql.NullString
 	var finished sql.NullFloat64
-	db.QueryRow(`SELECT q.run, r.finished FROM queue q LEFT JOIN runs r ON r.run = q.run
+	readDB.QueryRowContext(ctx, `SELECT q.run, r.finished FROM queue q LEFT JOIN runs r ON r.run = q.run
 	             WHERE q.id=?`, c.fixQueue.Int64).Scan(&run, &finished)
 	return finished.Valid, run.String
 }
@@ -1636,10 +1681,10 @@ func fixWithdrawn(c wdCycle) (bool, string) {
 	if !c.fixQueue.Valid {
 		return false, ""
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var key string
-	err := db.QueryRow(`SELECT name FROM queue WHERE id=? AND state='done'
+	err := readDB.QueryRowContext(ctx, `SELECT name FROM queue WHERE id=? AND state='done'
 	                    AND started IS NULL AND ifnull(run,'') = ''`, c.fixQueue.Int64).Scan(&key)
 	return err == nil, key
 }
@@ -1648,10 +1693,10 @@ func fixWithdrawn(c wdCycle) (bool, string) {
 // The deploy job reports how it ended (POST /deploy); a merge is live once a
 // deploy that started after it finished well.
 func deployedAfter(merged float64) (float64, bool) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var at float64
-	err := db.QueryRow(`SELECT at FROM deploys WHERE status='success' AND at > ?
+	err := readDB.QueryRowContext(ctx, `SELECT at FROM deploys WHERE status='success' AND at > ?
 	                    ORDER BY at LIMIT 1`, merged).Scan(&at)
 	return at, err == nil
 }
@@ -1669,9 +1714,9 @@ func deployedAfter(merged float64) (float64, bool) {
 // "agentic-v-model is behind with uncommitted changes" instead of re-deriving
 // it from a run that never had the fix.
 func deploysSaid(merged float64) string {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(`SELECT coalesce(run,''), status, coalesce(detail,'') FROM deploys
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, `SELECT coalesce(run,''), status, coalesce(detail,'') FROM deploys
 	                       WHERE at > ? AND status <> 'success' AND status <> 'running'
 	                       ORDER BY at`, merged)
 	if err != nil {
@@ -1693,6 +1738,9 @@ func deploysSaid(merged float64) string {
 		if detail != "" {
 			lastRun, lastStatus, lastDetail = run, status, detail
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: deploysSaid: %v", err)
 	}
 	if len(order) == 0 {
 		return ""
@@ -1730,11 +1778,11 @@ func runParams(run string) map[string]any {
 }
 
 func startParams(run string) map[string]any {
-	mu.Lock()
+	ctx, cancel := readCtx(bg)
 	var raw string
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.params'),'') FROM events
+	readDB.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.tags.params'),'') FROM events
 	             WHERE run=? AND kind='run_start' ORDER BY id LIMIT 1`, run).Scan(&raw)
-	mu.Unlock()
+	cancel()
 	var out map[string]any
 	if raw == "" || json.Unmarshal([]byte(raw), &out) != nil {
 		return nil
@@ -1759,11 +1807,11 @@ func queueFreshResume(d *dropFact) int64 {
 // in the last day: the queue rows carry the flag, whoever asked for them.
 func budgetRenewals(name string) int {
 	var n int
-	mu.Lock()
-	db.QueryRow(`SELECT count(*) FROM queue WHERE name = ?
+	ctx, cancel := readCtx(bg)
+	readDB.QueryRowContext(ctx, `SELECT count(*) FROM queue WHERE name = ?
 	             AND json_extract(payload,'$.fresh_budget') = 1 AND requested > ?`,
 		name, wdNow()-86400).Scan(&n)
-	mu.Unlock()
+	cancel()
 	return n
 }
 
@@ -1774,7 +1822,7 @@ func queueResumeOf(run string, d *dropFact, fresh bool) int64 {
 	}
 	// A host run's own params (gates, environment) go with it; its stand does
 	// not (runParams): the queue sends it to the first free stand.
-	if params := runParams(run); hostRun(run) && params != nil {
+	if params := runParams(run); hostRun(bg, run) && params != nil {
 		for k, v := range params {
 			body[k] = v
 		}
@@ -1786,8 +1834,6 @@ func queueResumeOf(run string, d *dropFact, fresh bool) int64 {
 		body["from_phase"] = d.phase
 	}
 	payload, _ := json.Marshal(body)
-	mu.Lock()
-	defer mu.Unlock()
 	res, err := db.Exec(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?)`,
 		d.name, string(payload), wdNow())
 	if err != nil {
@@ -1804,10 +1850,10 @@ func queueResumeOf(run string, d *dropFact, fresh bool) int64 {
 // phases, so there is nothing to resume") reads as a run slow to come, and
 // the next cycle is sent to look for the wrong thing.
 func startAnswer(name string, started float64) string {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var out sql.NullString
-	if db.QueryRow(`SELECT outcome FROM judgements WHERE scope='queue' AND subject=?
+	if readDB.QueryRowContext(ctx, `SELECT outcome FROM judgements WHERE scope='queue' AND subject=?
 	                AND at >= ? ORDER BY id LIMIT 1`, name, started-1).Scan(&out) != nil {
 		return ""
 	}
@@ -1831,10 +1877,10 @@ func resumeOutcome(c wdCycle) (string, bool, string, float64) {
 // cycle did - the resume, however it was started. Read from the run's own
 // replay event, so it is the run that says what it continues.
 func replayOf(name, source string, after float64) string {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var run string
-	db.QueryRow(`SELECT r.run FROM runs r JOIN events e ON e.run = r.run AND e.kind = 'replay'
+	readDB.QueryRowContext(ctx, `SELECT r.run FROM runs r JOIN events e ON e.run = r.run AND e.kind = 'replay'
 	             WHERE r.name = ? AND json_extract(e.payload, '$.source_run') = ? AND r.started > ?
 	             ORDER BY r.started LIMIT 1`, name, source, after).Scan(&run)
 	return run
@@ -1854,10 +1900,10 @@ func replayOf(name, source string, after float64) string {
 // watchdog, counting every replay out, went on to cycle 2 for a run nobody
 // needed.
 func supersededBy(name, source string, after float64) string {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var run string
-	if err := db.QueryRowContext(bg, `SELECT r.run FROM runs r
+	if err := readDB.QueryRowContext(ctx, `SELECT r.run FROM runs r
 	             WHERE r.name = ? AND r.run <> ? AND r.started > ?
 	               AND EXISTS (SELECT 1 FROM events e WHERE e.run = r.run AND e.kind = 'phase_start')
 	               AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run = r.run AND e.kind = 'replay'
@@ -1871,10 +1917,10 @@ func supersededBy(name, source string, after float64) string {
 // droppedAt is when the dropped run ended - a run started after that answers
 // the drop, whether or not the cycle had begun - or `or` when it is not known.
 func droppedAt(run string, or float64) float64 {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var at sql.NullFloat64
-	db.QueryRow(`SELECT finished FROM runs WHERE run=?`, run).Scan(&at)
+	readDB.QueryRowContext(ctx, `SELECT finished FROM runs WHERE run=?`, run).Scan(&at)
 	if at.Valid {
 		return at.Float64
 	}
@@ -1883,11 +1929,11 @@ func droppedAt(run string, or float64) float64 {
 
 // runOutcome is whether a run has finished and how.
 func runOutcome(run string) (string, bool, string) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var finished sql.NullFloat64
 	var verdict sql.NullString
-	db.QueryRow(`SELECT finished, verdict FROM runs WHERE run=?`, run).Scan(&finished, &verdict)
+	readDB.QueryRowContext(ctx, `SELECT finished, verdict FROM runs WHERE run=?`, run).Scan(&finished, &verdict)
 	return run, finished.Valid, verdict.String
 }
 
@@ -1896,8 +1942,6 @@ func withdraw(row sql.NullInt64) {
 	if !row.Valid {
 		return
 	}
-	mu.Lock()
-	defer mu.Unlock()
 	db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND state='waiting'`,
 		wdNow(), row.Int64)
 }
@@ -1908,11 +1952,11 @@ func queueOutcome(row sql.NullInt64) (string, bool, string, float64) {
 	if !row.Valid {
 		return "", false, "", 0
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var run, verdict sql.NullString
 	var started, finished sql.NullFloat64
-	db.QueryRow(`SELECT q.run, q.started, r.finished, r.verdict FROM queue q
+	readDB.QueryRowContext(ctx, `SELECT q.run, q.started, r.finished, r.verdict FROM queue q
 	             LEFT JOIN runs r ON r.run = q.run WHERE q.id=?`, row.Int64).
 		Scan(&run, &started, &finished, &verdict)
 	return run.String, finished.Valid, verdict.String, started.Float64
@@ -1952,25 +1996,28 @@ func announceExhausted(d *dropFact, root string, conf Config, limit float64) {
 
 // watchdogState is GET /watchdog: every drop and every cycle, or one chain's
 // when ?run= names any run in it. What the fix run reads for its history.
-func watchdogState(run string) map[string]any {
+func watchdogState(parent context.Context, run string) map[string]any {
 	root := run
-	if run != "" {
-		mu.Lock()
-		db.QueryRow(`SELECT root FROM watchdog_drops WHERE run=?`, run).Scan(&root)
-		mu.Unlock()
-	}
-	where, args := "1=1", []any{}
-	if root != "" {
-		where, args = "root=?", []any{root}
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	return map[string]any{"drops": wdDropRows(where, args), "cycles": wdCycleRows(where, args)}
+	out := map[string]any{"drops": []map[string]any{}, "cycles": []map[string]any{}}
+	// The drops and the cycles from one snapshot, so a cycle is never listed
+	// without the drop that opened it.
+	_ = readTx(parent, func(ctx context.Context, x dbx) error {
+		if run != "" {
+			x.QueryRowContext(ctx, `SELECT root FROM watchdog_drops WHERE run=?`, run).Scan(&root)
+		}
+		where, args := "1=1", []any{}
+		if root != "" {
+			where, args = "root=?", []any{root}
+		}
+		out = map[string]any{"drops": wdDropRows(ctx, x, where, args), "cycles": wdCycleRows(ctx, x, where, args)}
+		return nil
+	})
+	return out
 }
 
-func wdDropRows(where string, args []any) []map[string]any {
+func wdDropRows(ctx context.Context, x dbx, where string, args []any) []map[string]any {
 	drops := []map[string]any{}
-	rows, err := db.Query(`SELECT run, root, name, mode, phase, cause, verdict, evidence, at
+	rows, err := x.QueryContext(ctx, `SELECT run, root, name, mode, phase, cause, verdict, evidence, at
 	                    FROM watchdog_drops WHERE `+where+` ORDER BY at DESC LIMIT 200`, args...)
 	if err != nil {
 		return drops
@@ -1988,13 +2035,16 @@ func wdDropRows(where string, args []any) []map[string]any {
 					"cause": cause.String, "verdict": verdict.String, "evidence": lines, "at": at})
 			}
 		}
+		if err := rows.Err(); err != nil {
+			log.Printf("ammit: wdDropRows: %v", err)
+		}
 	}
 	return drops
 }
 
-func wdCycleRows(where string, args []any) []map[string]any {
+func wdCycleRows(ctx context.Context, x dbx, where string, args []any) []map[string]any {
 	cycles := []map[string]any{}
-	rows, err := db.Query(`SELECT id, root, run, cycle, state, branch, coalesce(prs,'[]'),
+	rows, err := x.QueryContext(ctx, `SELECT id, root, run, cycle, state, branch, coalesce(prs,'[]'),
 	                      merged_at, deployed_at, coalesce(resumed_run,''), coalesce(why,''),
 	                      started, updated
 	                    FROM watchdog_cycles WHERE `+where+` ORDER BY id DESC LIMIT 200`, args...)
@@ -2025,6 +2075,9 @@ func wdCycleRows(where string, args []any) []map[string]any {
 				cycles = append(cycles, c)
 			}
 		}
+		if err := rows.Err(); err != nil {
+			log.Printf("ammit: wdCycleRows: %v", err)
+		}
 	}
 	return cycles
 }
@@ -2035,10 +2088,10 @@ func poolBack(run string) float64 {
 	if run == "" {
 		return 0
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var back float64
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.pool_back'),0) FROM events
+	readDB.QueryRowContext(ctx, `SELECT coalesce(json_extract(payload,'$.pool_back'),0) FROM events
 	             WHERE run = ? AND kind = 'run_end' ORDER BY id DESC LIMIT 1`, run).Scan(&back)
 	return back
 }
@@ -2051,16 +2104,14 @@ func networkRefused(d *dropFact) bool {
 		return true
 	}
 	var summary string
-	mu.Lock()
-	db.QueryRow(`SELECT coalesce(summary,'') FROM runs WHERE run=?`, d.run).Scan(&summary)
-	mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	readDB.QueryRowContext(ctx, `SELECT coalesce(summary,'') FROM runs WHERE run=?`, d.run).Scan(&summary)
 	if strings.Contains(summary, refusal) {
 		return true
 	}
 	var n int
-	mu.Lock()
-	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND payload LIKE ?`,
+	readDB.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE run=? AND payload LIKE ?`,
 		d.run, "%"+refusal+"%").Scan(&n)
-	mu.Unlock()
 	return n > 0
 }

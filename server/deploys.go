@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -35,7 +35,7 @@ type deployIn struct {
 	Shas   string `json:"shas"`
 }
 
-func putDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func putDeploy(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	var in deployIn
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
@@ -47,11 +47,9 @@ func putDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Reques
 			"error": "status is running, success, failure, cancelled or yielded"})
 		return
 	}
-	mu.Lock()
 	_, err := db.ExecContext(r.Context(),
 		`INSERT INTO deploys (at, run, status, detail, shas) VALUES (?,?,?,?,?)`,
 		float64(time.Now().UnixNano())/1e9, in.Run, status, in.Detail, in.Shas)
-	mu.Unlock()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -65,15 +63,15 @@ func putDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Reques
 // `clear` is the whole answer for a caller that wants one: the last deploy
 // finished and it finished well. A deploy still running, or one that ended
 // badly, is not a reason this service refuses anything - it is a reason the
-// caller should.
-func getDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
-	mu.Lock()
-	row := db.QueryRowContext(r.Context(),
+// caller should. rdb is the read pool.
+func getDeploy(rdb *sql.DB, w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), _QUERY_DEADLINE)
+	defer cancel()
+	row := rdb.QueryRowContext(ctx,
 		`SELECT at, run, status, detail, shas FROM deploys ORDER BY at DESC LIMIT 1`)
 	var at float64
 	var run, status, detail, shas sql.NullString
 	err := row.Scan(&at, &run, &status, &detail, &shas)
-	mu.Unlock()
 	if err == sql.ErrNoRows {
 		// Nothing has ever been said. A deployment where the deploy does not
 		// report is not one where every run must refuse to start.
@@ -135,11 +133,11 @@ func deployClear(status string, age float64) (bool, string) {
 }
 
 // lastDeployClear is deployClear for the last thing the deploy said; nothing
-// said is clear, as it is for GET /deploy. The caller holds mu.
-func lastDeployClear() (bool, string) {
+// said is clear, as it is for GET /deploy. Read under the caller's deadline.
+func lastDeployClear(ctx context.Context) (bool, string) {
 	var at float64
 	var status string
-	if db.QueryRow(`SELECT at, status FROM deploys ORDER BY at DESC LIMIT 1`).
+	if readDB.QueryRowContext(ctx, `SELECT at, status FROM deploys ORDER BY at DESC LIMIT 1`).
 		Scan(&at, &status) != nil {
 		return true, ""
 	}

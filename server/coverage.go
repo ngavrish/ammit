@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -52,7 +52,7 @@ var coverageKinds = map[string]bool{
 	"requirement": true, "funcreq": true, "claim": true,
 }
 
-func putCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func putCoverage(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	var in coverageIn
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
@@ -65,8 +65,19 @@ func putCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 	var refused []string
 	written := 0
 	at := float64(time.Now().UnixNano()) / 1e9
-	mu.Lock()
-	defer mu.Unlock()
+	// The batch is one transaction on the writer: a run's coverage lands
+	// whole, and a reader never sees half of what one post said.
+	tx, err := db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 	for _, row := range in.Rows {
 		kind := strings.TrimSpace(strings.ToLower(row.Kind))
 		rid := strings.TrimSpace(row.ID)
@@ -76,7 +87,7 @@ func putCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 		}
 		// Written again rather than added again: a phase that retries after a
 		// timeout is the ordinary case, not the exception.
-		_, err := db.ExecContext(r.Context(), `
+		_, err := tx.ExecContext(r.Context(), `
 			INSERT INTO coverage (at, run, ticket, kind, rid, covers, source, quote, title, tests, body)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT (run, kind, rid) DO UPDATE SET
@@ -93,6 +104,11 @@ func putCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 		}
 		written++
 	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	committed = true
 	sort.Strings(refused)
 	reply := map[string]any{"written": written}
 	if len(refused) > 0 {
@@ -103,7 +119,8 @@ func putCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 
 // getCoverage answers the traceability question for one ticket or one run:
 // every row, with what it covers and what proves it.
-func getCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+// rdb is the read pool.
+func getCoverage(rdb *sql.DB, w http.ResponseWriter, r *http.Request) {
 	ticket := strings.TrimSpace(r.URL.Query().Get("ticket"))
 	run := strings.TrimSpace(r.URL.Query().Get("run"))
 	// Three whole statements rather than one with a clause pasted into it.
@@ -116,16 +133,16 @@ func getCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 		rows *sql.Rows
 		err  error
 	)
-	mu.Lock()
+	ctx, cancel := context.WithTimeout(r.Context(), _QUERY_DEADLINE)
+	defer cancel()
 	switch {
 	case run != "":
-		rows, err = db.QueryContext(r.Context(), cols+`WHERE run = ? ORDER BY kind, rid`, run)
+		rows, err = rdb.QueryContext(ctx, cols+`WHERE run = ? ORDER BY kind, rid`, run)
 	case ticket != "":
-		rows, err = db.QueryContext(r.Context(), cols+`WHERE ticket = ? ORDER BY kind, rid`, ticket)
+		rows, err = rdb.QueryContext(ctx, cols+`WHERE ticket = ? ORDER BY kind, rid`, ticket)
 	default:
-		rows, err = db.QueryContext(r.Context(), cols+`ORDER BY kind, rid`)
+		rows, err = rdb.QueryContext(ctx, cols+`ORDER BY kind, rid`)
 	}
-	mu.Unlock()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

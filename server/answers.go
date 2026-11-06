@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,7 +38,7 @@ import (
 // an answer may sit with no model until the first turn of its stream lands.
 //
 // Rows are made on ingest, never on demand; the history is replayed through
-// the same code once, in slices of time, with the lock let go between slices.
+// the same code once, in slices of time, one writer transaction per slice.
 
 var answerIdle = map[string]string{
 	"TaskNotificationMessage": "background",
@@ -56,6 +57,11 @@ type bucket struct {
 }
 
 var (
+	// answersMu guards the three below and nothing else. It is only ever
+	// taken inside a transaction on the writer (store's, or a backfill
+	// slice's), never the other way round: a goroutine holding it while it
+	// waited for the writer would wait on a store that waits on it.
+	answersMu     sync.Mutex
 	answerStreams = map[streamKey]*answerAcc{}
 	streamModels  = map[agentKey]string{}
 	// False until the replay has caught up; until then store() leaves these
@@ -213,16 +219,18 @@ func (b *answerBatch) flush() {
 	b.touched, b.dirty = map[streamKey]bool{}, map[bucket]bool{}
 }
 
-// liftAnswer is the live path, called from lift under mu.
-func liftAnswer(id int64, at float64, e event) {
-	if !answersLive {
-		return
-	}
+// liftAnswer is the live path, called from lift inside store's transaction.
+func liftAnswer(x dbx, id int64, at float64, e event) {
 	kind := e.s("kind")
 	if kind != "turn" && kind != "request_end" {
 		return
 	}
-	b := newAnswerBatch(db)
+	answersMu.Lock()
+	defer answersMu.Unlock()
+	if !answersLive {
+		return
+	}
+	b := newAnswerBatch(x)
 	b.add(id, at, kind, e.s("run"), e.s("branch"), e.s("phase"), e.s("agent"), e.s("wait"),
 		e.s("msg"), e.f("seconds"), strings.Contains(e.s("detail"), "api_retry"), e.s("model"))
 	b.flush()
@@ -231,21 +239,28 @@ func liftAnswer(id int64, at float64, e event) {
 // backfillAnswers replays the events the tables have not seen, six hours of
 // them at a time, then turns the live path on in the same locked moment as
 // the last slice, so nothing lands between the replay and the live path.
+// Each slice is one transaction on the writer, and store() waits only for
+// the slice in hand, never for the whole replay.
 func backfillAnswers() {
 	started := time.Now()
-	mu.Lock()
 	var mark float64
-	err := db.QueryRowContext(bg, `SELECT coalesce((SELECT at FROM lift_marks WHERE name='answers'),
+	err := inTx(func(tx dbx) error {
+		err := tx.QueryRowContext(bg, `SELECT coalesce((SELECT at FROM lift_marks WHERE name='answers'),
 	                              (SELECT min(at)-1 FROM events WHERE kind IN ('request_end','turn')), 0)`).Scan(&mark)
+		if err != nil {
+			log.Printf("ammit: answers backfill: %v", err)
+		}
+		answersMu.Lock()
+		defer answersMu.Unlock()
+		loadAnswerState(tx)
+		return nil
+	})
 	if err != nil {
 		log.Printf("ammit: answers backfill: %v", err)
 	}
-	loadAnswerState()
-	mu.Unlock()
 	const slice = 6 * 3600.0
 	n := 0
 	for {
-		mu.Lock()
 		now := float64(time.Now().Unix())
 		to := mark + slice
 		last := to >= now
@@ -254,10 +269,10 @@ func backfillAnswers() {
 		}
 		tx, err := db.BeginTx(bg, nil)
 		if err != nil {
-			mu.Unlock()
 			log.Printf("ammit: answers backfill: %v", err)
 			return
 		}
+		answersMu.Lock()
 		b := newAnswerBatch(tx)
 		rs, err := tx.QueryContext(bg, `SELECT id, at, kind, coalesce(run,''), coalesce(branch,''), coalesce(phase,''),
 		        coalesce(agent,''), coalesce(json_extract(payload,'$.wait'),''),
@@ -266,8 +281,8 @@ func backfillAnswers() {
 		        coalesce(json_extract(payload,'$.model'),'')
 		        FROM events WHERE kind IN ('request_end','turn') AND at > ? AND at <= ? ORDER BY at, id`, mark, to)
 		if err != nil {
+			answersMu.Unlock()
 			_ = tx.Rollback()
-			mu.Unlock()
 			log.Printf("ammit: answers backfill: %v", err)
 			return
 		}
@@ -294,28 +309,33 @@ func backfillAnswers() {
 			b.last = to
 		}
 		b.flush()
+		if last {
+			// Live before the commit lets the writer go: the next store()
+			// cannot begin until it has, so it lands on the live path, and
+			// everything before it is in this slice.
+			answersLive = true
+			// A stream that stopped a day ago is not going to answer; its
+			// half-counted clock is dropped rather than kept forever.
+			if _, err := tx.ExecContext(bg, `DELETE FROM model_streams WHERE at < ?`, now-86400); err != nil {
+				log.Printf("ammit: answers: %v", err)
+			}
+		}
+		answersMu.Unlock()
 		if err := tx.Commit(); err != nil {
 			log.Printf("ammit: answers backfill: %v", err)
 		}
 		if last {
-			answersLive = true
-			// A stream that stopped a day ago is not going to answer; its
-			// half-counted clock is dropped rather than kept forever.
-			if _, err := db.ExecContext(bg, `DELETE FROM model_streams WHERE at < ?`, now-86400); err != nil {
-				log.Printf("ammit: answers: %v", err)
-			}
-			mu.Unlock()
 			break
 		}
-		mu.Unlock()
 		mark = to
 		time.Sleep(20 * time.Millisecond)
 	}
 	log.Printf("ammit: answers: replayed %d events in %s; live", n, time.Since(started).Round(time.Millisecond))
 }
 
-func loadAnswerState() {
-	if rs, err := db.QueryContext(bg, `SELECT run, branch, agent, phase, seconds, retry_s, at FROM model_streams`); err == nil {
+// loadAnswerState reads the clocks back, with answersMu held.
+func loadAnswerState(tx dbx) {
+	if rs, err := tx.QueryContext(bg, `SELECT run, branch, agent, phase, seconds, retry_s, at FROM model_streams`); err == nil {
 		for rs.Next() {
 			var k streamKey
 			st := &answerAcc{}
@@ -325,7 +345,7 @@ func loadAnswerState() {
 		}
 		closeRows(rs)
 	}
-	if rs, err := db.QueryContext(bg, `SELECT run, branch, agent, model FROM model_of`); err == nil {
+	if rs, err := tx.QueryContext(bg, `SELECT run, branch, agent, model FROM model_of`); err == nil {
 		for rs.Next() {
 			var k agentKey
 			var m string

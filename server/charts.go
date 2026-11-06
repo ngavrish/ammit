@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -265,10 +266,10 @@ func scope(sql, run string) string {
 
 // The longest any one question may hold this service.
 //
-// mu below is taken for the whole of db.Query, and SQLite computes an
-// aggregate or a join before it returns its first row - so a single expensive
-// query holds the lock the judge loop, the event ingest and every other panel
-// need. One did: a self-join on json_extract(payload, '$.request'), a join on
+// SQLite computes an aggregate or a join before it returns its first row, and
+// a read holds its WAL snapshot for as long as it runs - so a single expensive
+// query once held what the judge loop, the event ingest and every other panel
+// needed (a global lock, then), and today would hold the checkpoint off. One did: a self-join on json_extract(payload, '$.request'), a join on
 // a computed value that SQLite cannot index, pinned this service at 100% CPU
 // for forty minutes with a twelve-branch fan-out running unwatched behind it.
 // Closing the HTTP connection did nothing; nothing was cancelling the query.
@@ -282,10 +283,9 @@ const _QUERY_DEADLINE = 60 * time.Second
 func rows(sql string) map[string]any {
 	ctx, cancel := context.WithTimeout(context.Background(), _QUERY_DEADLINE)
 	defer cancel()
-	// Not under mu: mu serialises the writer, and this is the read-only
-	// connection, which WAL lets run beside it. Holding mu here stalled every
-	// POST /events for as long as one slow panel or /query ran - 59 s behind a
-	// runaway recursive CTE.
+	// On the read-only pool, which WAL lets run beside the writer. Under the
+	// old global lock this stalled every POST /events for as long as one slow
+	// panel or /query ran - 59 s behind a runaway recursive CTE.
 	rs, err := readDB.QueryContext(ctx, sql)
 	if err != nil {
 		return map[string]any{"error": err.Error()}
@@ -416,8 +416,9 @@ func serveCharts(mux *http.ServeMux) {
 				f.col, f.col, f.op))
 			args = append(args, n)
 		}
-		mu.Lock()
-		rs, err := db.Query(`SELECT run, coalesce(name,''), started,
+		ctx, cancel := readCtx(r.Context())
+		defer cancel()
+		rs, err := readDB.QueryContext(ctx, `SELECT run, coalesce(name,''), started,
 		                     coalesce(finished,0), coalesce(verdict,''),
 		                     coalesce(usd,0), coalesce(turns,0)
 		                     FROM runs WHERE `+strings.Join(where, " AND ")+`
@@ -440,9 +441,12 @@ func serveCharts(mux *http.ServeMux) {
 					out = append(out, x)
 				}
 			}
+			// A read cut off by its deadline ends early and says so here.
+			if rerr := rs.Err(); rerr != nil {
+				log.Printf("ammit: runs list: %v", rerr)
+			}
 			rs.Close()
 		}
-		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)
 	})

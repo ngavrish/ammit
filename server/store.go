@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"time"
@@ -26,10 +27,34 @@ func (e event) f(key string) float64 {
 	return 0
 }
 
+// store keeps one event and everything it lifts, as one transaction on the
+// writer: the counts it reads (a gate's round, a call's repeats) are read
+// where no other record can land between the count and the row it numbers.
+// What it sets off - judgements, which read and write for themselves - runs
+// after the commit, so it reads the record it was set off by.
 func store(e event) {
+	storeCtx(bg, e)
+}
+
+// storeCtx is store for a caller that has a context: POST /events, which
+// passes its request's without the cancel.
+func storeCtx(parent context.Context, e event) {
 	asked := nowWall()
-	mu.Lock()
-	defer mu.Unlock()
+	var later []func()
+	err := inTxCtx(parent, func(tx dbx) error {
+		later = keep(parent, tx, e, asked)
+		return nil
+	})
+	if err != nil {
+		log.Printf("ammit: could not keep a %s record: %v", e.s("kind"), err)
+		return
+	}
+	for _, f := range later {
+		go f()
+	}
+}
+
+func keep(parent context.Context, x dbx, e event, asked float64) (later []func()) {
 	// A record that waited this long for the writer is time this process
 	// could not take anything: every producer's POST waited with it, and the
 	// gateway queued the rest of that run's records behind the one it was
@@ -51,18 +76,20 @@ func store(e event) {
 		at = float64(time.Now().UnixNano()) / 1e9
 	}
 	payload, _ := json.Marshal(e)
-	res, err := db.Exec(
+	res, err := x.Exec(
 		`INSERT INTO events (at, kind, run, phase, session, agent, branch, payload)
 		 VALUES (?,?,?,?,?,?,?,?)`,
 		at, e.s("kind"), e.s("run"), e.s("phase"), e.s("session"), e.s("agent"),
 		e.s("branch"), string(payload))
 	if err != nil {
 		log.Printf("ammit: could not keep an event: %v", err)
-		return
+		return nil
 	}
 	if id, err := res.LastInsertId(); err == nil {
-		lift(id, at, e)
-		indexEvent(id, at, e)
+		if f := lift(x, id, at, e); f != nil {
+			later = append(later, f)
+		}
+		indexEvent(x, id, at, e)
 	}
 	// A run this store has never heard of gets a row on its first event.
 	//
@@ -72,7 +99,7 @@ func store(e event) {
 	// to the queue's idea of what is running. The row is what makes a run real
 	// here, so any event may create it and run_start merely fills in the name.
 	if run := e.s("run"); run != "" && e.s("kind") != "run_start" {
-		db.Exec(`INSERT OR IGNORE INTO runs (run, name, started) VALUES (?,?,?)`,
+		storeExec(x, `INSERT OR IGNORE INTO runs (run, name, started) VALUES (?,?,?)`,
 			run, run, at)
 	}
 
@@ -90,7 +117,7 @@ func store(e event) {
 		// The oldest running row for this ticket that has not been tied to
 		// anything: a queue is a line, and the one at the front is the one that
 		// just started.
-		db.Exec(`UPDATE queue SET run = ? WHERE id = (
+		storeExec(x, `UPDATE queue SET run = ? WHERE id = (
 		           SELECT id FROM queue WHERE name = ? AND state = 'running'
 		             AND ifnull(run,'') = '' ORDER BY id LIMIT 1)`,
 			e.s("run"), e.s("name"))
@@ -102,7 +129,7 @@ func store(e event) {
 		// directory the ticket's NEXT run was nine minutes into using — a dead
 		// run's verdict killed the live one. A run that was still open when
 		// its ticket started over was not going to finish; say so and close it.
-		db.Exec(`UPDATE runs SET finished=?, verdict='BLOCKED',
+		storeExec(x, `UPDATE runs SET finished=?, verdict='BLOCKED',
 		         summary='superseded: a newer run of this ticket started'
 		         WHERE name=? AND run<>? AND finished IS NULL`,
 			at, e.s("name"), e.s("run"))
@@ -113,19 +140,19 @@ func store(e event) {
 		// off the caller's thread, which makes the order a race nobody
 		// controls, and the fixture in this repository lost it about half the
 		// time - the same run reported $0.50 and $0.40 on two identical builds.
-		db.Exec(`INSERT INTO runs (run, name, started) VALUES (?,?,?)
+		storeExec(x, `INSERT INTO runs (run, name, started) VALUES (?,?,?)
 		         ON CONFLICT(run) DO UPDATE SET name=excluded.name,
 		                                        started=excluded.started`,
 			e.s("run"), e.s("name"), at)
 	case "flow":
 		phases, _ := json.Marshal(e["phases"])
-		db.Exec(`INSERT OR REPLACE INTO flows (run, at, mode, phases)
+		storeExec(x, `INSERT OR REPLACE INTO flows (run, at, mode, phases)
 		         VALUES (?,?,?,?)`,
 			e.s("run"), at, e.s("mode"), string(phases))
 	case "run_end":
-		db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
+		storeExec(x, `UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
 			at, e.s("verdict"), e.s("summary"), e.s("run"))
-		db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, at, e.s("run"))
+		storeExec(x, `UPDATE queue SET state='done', finished=? WHERE run=?`, at, e.s("run"))
 		// A run that ended having done nothing.
 		//
 		// Every rule here is about overshoot — too many turns, too long, too
@@ -138,25 +165,27 @@ func store(e event) {
 		//
 		// Undershoot is the other half of the same job. A run is here to do
 		// work, and one that finished without taking a turn did not.
-		// In a goroutine, because store() holds mu with a defer and both
-		// judgeEmptyRun and judge() take it themselves. Called inline, the first
-		// run_end after this shipped locked the watchdog and every event behind
-		// it: /runs stopped answering, the deploy refused rather than guess, and
-		// nothing was judged again until the container was restarted. A mutex in
-		// Go is not reentrant and this file locks in a dozen places — anything
-		// called from inside store() must take the lock for itself, later.
-		go judgeEmptyRun(e.s("run"), e.s("verdict"), e.s("summary"))
-		// And say so, for the runs that die before the phase that reports.
-		go judgeRunEnd(e.s("run"), e.s("name"), e.s("verdict"), e.s("summary"))
+		// After the commit, on their own goroutines, because both read the
+		// run_end this transaction is keeping and write through the writer
+		// this transaction holds. Called inline (under the old global lock),
+		// the first run_end after this shipped locked the watchdog and every
+		// event behind it: /runs stopped answering, the deploy refused rather
+		// than guess, and nothing was judged again until the container was
+		// restarted. Anything set off from inside store() runs later.
+		run, verdict, summary, name := e.s("run"), e.s("verdict"), e.s("summary"), e.s("name")
+		later = append(later,
+			func() { judgeEmptyRun(parent, run, verdict, summary) },
+			// And say so, for the runs that die before the phase that reports.
+			func() { judgeRunEnd(parent, run, name, verdict, summary) })
 	case "gate":
 		// The round is counted here rather than trusted from the caller: a
 		// pipeline knows what it found, and this service knows how many times it
 		// has been told.
 		var round int
-		db.QueryRow(`SELECT count(*) FROM gates WHERE run=? AND phase=? AND
+		x.QueryRow(`SELECT count(*) FROM gates WHERE run=? AND phase=? AND
 		             coalesce(branch,'')=?`, e.s("run"), e.s("phase"),
 			e.s("branch")).Scan(&round)
-		db.Exec(`INSERT INTO gates (at, run, phase, branch, verdict, findings,
+		storeExec(x, `INSERT INTO gates (at, run, phase, branch, verdict, findings,
 		         round, seconds) VALUES (?,?,?,?,?,?,?,?)`,
 			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("verdict"),
 			int(e.f("findings")), round+1, e.f("seconds"))
@@ -167,10 +196,10 @@ func store(e event) {
 		input, _ := e["input"].(map[string]any)
 		kind, target, signature := classify(e.s("tool"), input)
 		var repeat, onTarget int
-		db.QueryRow(`SELECT count(*) FROM calls WHERE run=? AND signature=?`,
+		x.QueryRow(`SELECT count(*) FROM calls WHERE run=? AND signature=?`,
 			e.s("run"), signature).Scan(&repeat)
 		if target != "" {
-			db.QueryRow(`SELECT count(*) FROM calls WHERE run=? AND target=?`,
+			x.QueryRow(`SELECT count(*) FROM calls WHERE run=? AND target=?`,
 				e.s("run"), target).Scan(&onTarget)
 		}
 		ok := 1
@@ -184,7 +213,7 @@ func store(e event) {
 				adhoc = 1
 			}
 		}
-		db.Exec(`INSERT INTO calls (at, run, phase, branch, agent, session, tool,
+		storeExec(x, `INSERT INTO calls (at, run, phase, branch, agent, session, tool,
 		         kind, target, signature, repeat, on_target, seconds, ok, why, request,
 		         adhoc)
 		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -193,9 +222,18 @@ func store(e event) {
 			repeat+1, onTarget+1, e.f("seconds"), ok, e.s("why"), e.s("request"),
 			adhoc)
 	case "spend":
-		db.Exec(`UPDATE runs SET usd = coalesce(usd,0) + ? WHERE run=?`,
+		storeExec(x, `UPDATE runs SET usd = coalesce(usd,0) + ? WHERE run=?`,
 			e.f("usd"), e.s("run"))
 	case "turn":
-		db.Exec(`UPDATE runs SET turns = coalesce(turns,0) + 1 WHERE run=?`, e.s("run"))
+		storeExec(x, `UPDATE runs SET turns = coalesce(turns,0) + 1 WHERE run=?`, e.s("run"))
+	}
+	return later
+}
+
+// storeExec runs one of keep's statements and says when it failed. These
+// were dropped in silence; inside a transaction a failure is worth a line.
+func storeExec(x dbx, q string, args ...any) {
+	if _, err := x.Exec(q, args...); err != nil {
+		log.Printf("ammit: store: %v", err)
 	}
 }

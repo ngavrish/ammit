@@ -102,9 +102,9 @@ type livePhase struct {
 // closed there - and a loop's second lap (reportrules, foldgate) is exactly
 // the phase this report exists to show.
 func currentPhases(run string) []livePhase {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(`
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, `
 		SELECT coalesce(s.phase,''), coalesce(s.branch,''), max(s.at), count(*) FROM events s
 		WHERE s.run=? AND s.kind='phase_start' AND ifnull(s.phase,'') <> ''
 		GROUP BY 1, 2
@@ -126,16 +126,19 @@ func currentPhases(run string) []livePhase {
 			out = append(out, p)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: currentPhases: %v", err)
+	}
 	return out
 }
 
 // lastRed is the newest phase end that said it failed or was red.
 func lastRed(run string) (string, string, float64) {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var phase, text string
 	var at float64
-	err := db.QueryRow(`SELECT coalesce(phase,''), coalesce(json_extract(payload,'$.text'),
+	err := readDB.QueryRowContext(ctx, `SELECT coalesce(phase,''), coalesce(json_extract(payload,'$.text'),
 	                           json_extract(payload,'$.error'),''), at
 	                    FROM events WHERE run=? AND kind='phase_end'
 	                      AND (json_extract(payload,'$.ok') IN (0, 'false')
@@ -178,17 +181,17 @@ func inFlight(run string) []liveCall {
 // lastAsked is the last tool line the request's agent logged before the wait
 // opened: "Bash {...}" for a shell call. Empty when it logged none.
 func lastAsked(run, request string) string {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var started float64
 	var agent string
-	if db.QueryRow(`SELECT at, coalesce(agent,'') FROM events
+	if readDB.QueryRowContext(ctx, `SELECT at, coalesce(agent,'') FROM events
 	                WHERE run=? AND kind='request_start' AND session=?
 	                ORDER BY id DESC LIMIT 1`, run, request).Scan(&started, &agent) != nil {
 		return ""
 	}
 	var text sql.NullString
-	db.QueryRow(`SELECT json_extract(payload,'$.text') FROM events
+	readDB.QueryRowContext(ctx, `SELECT json_extract(payload,'$.text') FROM events
 	             WHERE run=? AND kind='log' AND agent=? AND at<=?
 	               AND json_extract(payload,'$.level')='tool'
 	             ORDER BY id DESC LIMIT 1`, run, agent, started).Scan(&text)

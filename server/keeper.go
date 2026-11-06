@@ -46,9 +46,9 @@ func keepTick(conf Config) {
 // 2026-11-05: keep was empty, so the keeper watched nothing, and APF-1972
 // lay stopped while a person asked in a chat why nothing picked it up.
 func recentTickets() []string {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(`SELECT DISTINCT name FROM runs WHERE started > ?
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, `SELECT DISTINCT name FROM runs WHERE started > ?
 	                       AND name GLOB '[A-Z]*-[0-9]*' AND name NOT LIKE 'WD-%'`, wdNow()-2*86400)
 	if err != nil {
 		return nil
@@ -61,20 +61,24 @@ func recentTickets() []string {
 			out = append(out, n)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: keeper: %v", err)
+		return nil
+	}
 	return out
 }
 
 func keepOne(ticket string) {
-	mu.Lock()
+	ctx, cancel := readCtx(bg)
 	var busy int
-	db.QueryRow(`SELECT (SELECT count(*) FROM runs WHERE name=? AND finished IS NULL)
+	readDB.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM runs WHERE name=? AND finished IS NULL)
 	                  + (SELECT count(*) FROM queue WHERE name=? AND state IN ('waiting','running'))`,
 		ticket, ticket).Scan(&busy)
 	var run, verdict, summary string
-	db.QueryRow(`SELECT run, coalesce(verdict,''), coalesce(summary,'') FROM runs
+	readDB.QueryRowContext(ctx, `SELECT run, coalesce(verdict,''), coalesce(summary,'') FROM runs
 	             WHERE name=? AND finished IS NOT NULL ORDER BY started DESC LIMIT 1`,
 		ticket).Scan(&run, &verdict, &summary)
-	mu.Unlock()
+	cancel()
 	if busy > 0 || run == "" {
 		return
 	}
@@ -124,9 +128,7 @@ func keepOne(ticket string) {
 		body[k] = v
 	}
 	payload, _ := json.Marshal(body)
-	mu.Lock()
 	db.Exec(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?)`, ticket, string(payload), wdNow())
-	mu.Unlock()
 	text := fmt.Sprintf("keeper: %s was lying since run %s ended %s; resume queued from %s",
 		ticket, shortRun(run), orDash(verdict), orDash(phase))
 	store(event{"kind": "keeper", "run": run, "text": text})

@@ -22,6 +22,9 @@ func watchdogHistory(out io.Writer, dbPath string, days float64, conf Config) er
 	if err != nil {
 		return err
 	}
+	// The detector's reads go through the read pool, as the service's do;
+	// here both handles are the same read-only file.
+	readDB = db
 	since := float64(time.Now().Add(-time.Duration(days*24) * time.Hour).Unix())
 	rows, err := db.Query(`SELECT run FROM runs WHERE started > ? ORDER BY started`, since)
 	if err != nil {
