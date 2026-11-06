@@ -942,18 +942,9 @@ func main() {
 		}
 		at := float64(time.Now().UnixNano()) / 1e9
 		mu.Lock()
-		res, err := db.Exec(`INSERT INTO documents (at, run, kind, phase, bytes, path)
+		_, err = db.Exec(`INSERT INTO documents (at, run, kind, phase, bytes, path)
 		         VALUES (?,?,?,?,?,?)`,
 			at, in.Run, in.Kind, in.Phase, len(in.Body), path)
-		if err == nil {
-			// Searchable the moment it lands, from the body in hand: the file
-			// is on a disk this process may not be able to read back after a
-			// volume is remounted, and an artefact nobody can find is an
-			// artefact nobody has.
-			if id, idErr := res.LastInsertId(); idErr == nil {
-				indexDocument(id, at, in.Run, in.Kind, in.Phase, in.Body)
-			}
-		}
 		mu.Unlock()
 		reply := map[string]any{"path": path, "bytes": len(in.Body)}
 		if len(dropped) > 0 {

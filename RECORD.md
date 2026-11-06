@@ -196,9 +196,9 @@ use. A rule id is the exception the guard needs: it is the name of a decision
 rather than the name of a row, and it is the word somebody searching for
 refusals has.
 
-A document is indexed from its body, up to the first megabyte. The whole of it
-stays on disk and `GET /documents?id=` still serves all of it; what is over a
-megabyte in is findable by the words before it.
+Documents are not indexed. Their bodies are files under the documents
+directory, read by run, kind and phase; a word inside one is found by grep on
+that directory.
 
 ## What search costs
 

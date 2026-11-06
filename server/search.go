@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -23,8 +22,11 @@ import (
 // files on a disk under a path a row remembers, so the only way to find a word
 // inside one was to fetch every one of them and grep.
 //
-// So one index over both, maintained where they land: the prose fields of an
-// event, and the body of a document. What it holds is on RECORD.md with
+// So one index, maintained where the words land: the prose fields of an
+// event. Documents were in it too, up to a megabyte each, and that copy grew
+// to eight of the database's fourteen gigabytes while no part of the flow ever
+// searched it: documents are read by run, kind and phase, and their bodies are
+// files on disk that grep reads for free. What it holds is on RECORD.md with
 // everything else, because an index of things nobody listed is a second record
 // with no page.
 
@@ -32,13 +34,6 @@ import (
 // number or an id is not searched: "3600" matching a timeout, a token count
 // and a session id in one answer is an answer nobody can use.
 var searchedFields = []string{"text", "note", "summary", "error", "reason", "why", "detail"}
-
-// indexMaxBytes is how much of a document is indexed. A framework map is over
-// a megabyte and a run makes several; the whole body stays on disk and is
-// served in full by /documents, and what is searchable is the first megabyte.
-// Written as a number rather than left unbounded, because an index that grows
-// with the largest artefact anybody ever posts is a limit nobody set.
-const indexMaxBytes = 1 << 20
 
 // snippetWidth is how much of the match comes back with it. Wide enough for
 // the line the word was on, narrow enough that fifty results are a page.
@@ -147,22 +142,6 @@ func indexEvent(id int64, at float64, e event) {
 	indexRow("event", id, e.s("run"), e.s("kind"), at, e.s("phase"), e.s("session"), body)
 }
 
-// indexDocument files a document's body, up to indexMaxBytes.
-func indexDocument(id int64, at float64, run, kind, phase, body string) {
-	if len(body) > indexMaxBytes {
-		body = body[:indexMaxBytes]
-		// Cut on a rune boundary: half a character in the index is a token
-		// nothing matches and a snippet that renders as a question mark.
-		for len(body) > 0 && !utf8.ValidString(body) {
-			body = body[:len(body)-1]
-		}
-	}
-	if strings.TrimSpace(body) == "" {
-		return
-	}
-	indexRow("document", id, run, kind, at, phase, "", body)
-}
-
 // insertSearchText keeps one row of searchable text and returns its rowid, or
 // false when the row was already there. Whether the insert happened is read
 // from RowsAffected rather than from the new rowid: an INSERT OR IGNORE that
@@ -207,9 +186,9 @@ func indexRow(source string, ref int64, run, kind string, at float64,
 // watchdog is not the place to hold them all in memory.
 const backfillBatch = 2000
 
-// indexHistory files everything already kept that has no row yet: the events
-// through the same searchable() the write path uses, the documents by reading
-// the files back off the disk. Runs once on start, and picks up where it
+// indexHistory files every kept event that has no row yet, through the same
+// searchable() the write path uses, and drops the document rows an older
+// version filed. Runs once on start, and picks up where it
 // stopped, so a database that predates this index becomes searchable without
 // anybody replaying anything.
 func indexHistory() {
@@ -221,9 +200,9 @@ func indexHistory() {
 			"reading every event again")
 	}
 	events := backfillEvents(stale)
-	documents := backfillDocuments()
+	documents := dropDocuments()
 	if events > 0 || documents > 0 {
-		log.Printf("ammit: indexed %d event(s) and %d document(s) for search",
+		log.Printf("ammit: indexed %d event(s) and dropped %d document(s) from search",
 			events, documents)
 	}
 	// The rebuild is what puts any of it in reach of a query, and it also
@@ -329,37 +308,17 @@ func backfillEvents(fromTheStart bool) int {
 	}
 }
 
-// backfillDocuments indexes the bodies off the disk, since the row keeps the
-// path and not the words.
-func backfillDocuments() int {
-	rows, err := db.Query(`SELECT d.id, d.at, coalesce(d.run,''), d.kind,
-	                       coalesce(d.phase,''), d.path FROM documents d
-	                       WHERE NOT EXISTS (SELECT 1 FROM search_text s
-	                         WHERE s.source='document' AND s.ref=d.id)`)
+// dropDocuments removes the document rows from the searchable text. The FTS
+// table points at search_text, so the rebuild that follows a non-zero count is
+// what takes their words out of the index too.
+func dropDocuments() int64 {
+	res, err := db.Exec(`DELETE FROM search_text WHERE source='document'`)
 	if err != nil {
+		log.Printf("ammit: could not drop documents from search: %v", err)
 		return 0
 	}
-	type doc struct {
-		id                     int64
-		at                     float64
-		run, kind, phase, path string
-	}
-	var todo []doc
-	for rows.Next() {
-		var d doc
-		if rows.Scan(&d.id, &d.at, &d.run, &d.kind, &d.phase, &d.path) == nil {
-			todo = append(todo, d)
-		}
-	}
-	rows.Close()
-	for _, d := range todo {
-		raw, err := os.ReadFile(d.path)
-		if err != nil {
-			continue // the volume lost it; the row stays, the words are gone
-		}
-		indexDocument(d.id, d.at, d.run, d.kind, d.phase, string(raw))
-	}
-	return len(todo)
+	n, _ := res.RowsAffected()
+	return n
 }
 
 // indexMark is what the database says its FTS index was last built from.
