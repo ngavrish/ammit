@@ -35,7 +35,7 @@ type deployIn struct {
 	Shas   string `json:"shas"`
 }
 
-func putDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func putDeploy(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	var in deployIn
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
@@ -66,7 +66,7 @@ func putDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Reques
 // finished and it finished well. A deploy still running, or one that ended
 // badly, is not a reason this service refuses anything - it is a reason the
 // caller should.
-func getDeploy(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func getDeploy(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	row := db.QueryRowContext(r.Context(),
 		`SELECT at, run, status, detail, shas FROM deploys ORDER BY at DESC LIMIT 1`)

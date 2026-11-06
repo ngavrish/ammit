@@ -46,9 +46,21 @@ jobs:
   # panels' SQL parses; none of them proves the service answers, and the three
   # things checked here - the comparison, the search and the record - each pass
   # in isolation while being wrong in the wiring. So: build the binary, start it
-  # against a scratch sqlite, post two runs through the Python client, and ask.
+  # against a scratch Postgres, post two runs through the Python client, and ask.
   live:
     runs-on: ubuntu-latest
+    # The record is Postgres. A throwaway one, with no password because it
+    # holds nothing and lives as long as this job.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ammit
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ammit" --health-interval 2s
+          --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -82,3 +94,5 @@ jobs:
             echo "could not fetch runsdb.py; record_check.py will WARN and check the clients"
           fi
       - run: bash tools/live_check.sh
+        env:
+          AMMIT_LIVE_PG: postgres://ammit@127.0.0.1:5432/postgres

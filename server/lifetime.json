@@ -23,7 +23,7 @@
    "height": 7,
    "top": true,
    "queries": [
-    "SELECT 'runs' AS metric, count(*) AS value, 'runs' AS unit FROM runs UNION ALL SELECT 'spent', round(sum(usd),2), 'currencyUSD' FROM runs UNION ALL SELECT 'runs over the cost cap', sum(coalesce(usd,0) >= (SELECT value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY id DESC LIMIT 1)), 'runs' FROM runs UNION ALL SELECT 'turns', sum(coalesce(turns,0)), 'turns' FROM runs UNION ALL SELECT 'tokens out', sum(coalesce(json_extract(payload,'$.tokens_out'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'cache read', sum(coalesce(json_extract(payload,'$.cache_read'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'cache written', sum(coalesce(json_extract(payload,'$.cache_write'),0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'agent sessions', count(*), 'sessions' FROM events WHERE kind = 'session_end' UNION ALL SELECT 'gate rounds', count(*), 'rounds' FROM gates UNION ALL SELECT 'heal sessions', count(*), 'sessions' FROM events WHERE kind = 'spend' AND json_extract(payload,'$.agent') LIKE '%heal%' UNION ALL SELECT 'dearest session (' || coalesce((SELECT json_extract(payload,'$.agent') FROM events WHERE kind = 'spend' ORDER BY json_extract(payload,'$.usd') DESC LIMIT 1),'?') || ')', max(json_extract(payload,'$.usd')), 'currencyUSD' FROM events WHERE kind = 'spend' UNION ALL SELECT 'longest run (' || coalesce((SELECT name FROM runs WHERE finished IS NOT NULL ORDER BY finished - started DESC LIMIT 1),'?') || ')', round(max(finished - started) / 60.0), 'm' FROM runs WHERE finished IS NOT NULL"
+    "SELECT 'runs' AS metric, count(*) AS value, 'runs' AS unit FROM runs UNION ALL SELECT 'spent', round(sum(usd),2), 'currencyUSD' FROM runs UNION ALL SELECT 'runs over the cost cap', sum((coalesce(usd,0) >= (SELECT value FROM limits WHERE name = 'limits.usd_per_run' ORDER BY id DESC LIMIT 1))::int), 'runs' FROM runs UNION ALL SELECT 'turns', sum(coalesce(turns,0)), 'turns' FROM runs UNION ALL SELECT 'tokens out', sum(coalesce(jnum(payload->'tokens_out'), 0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'cache read', sum(coalesce(jnum(payload->'cache_read'), 0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'cache written', sum(coalesce(jnum(payload->'cache_write'), 0)), 'tokens' FROM events WHERE kind = 'spend' UNION ALL SELECT 'agent sessions', count(*), 'sessions' FROM events WHERE kind = 'session_end' UNION ALL SELECT 'gate rounds', count(*), 'rounds' FROM gates UNION ALL SELECT 'heal sessions', count(*), 'sessions' FROM events WHERE kind = 'spend' AND (payload->>'agent') ILIKE '%heal%' UNION ALL SELECT 'dearest session (' || coalesce((SELECT (payload->>'agent') FROM events WHERE kind = 'spend' ORDER BY jnum(payload->'usd') DESC NULLS LAST LIMIT 1),'?') || ')', max(jnum(payload->'usd')), 'currencyUSD' FROM events WHERE kind = 'spend' UNION ALL SELECT 'longest run (' || coalesce((SELECT name FROM runs WHERE finished IS NOT NULL ORDER BY finished - started DESC LIMIT 1),'?') || ')', round(max(finished - started) / 60.0, 0), 'm' FROM runs WHERE finished IS NOT NULL"
    ]
   },
   {
@@ -45,7 +45,7 @@
    "unit": "currencyUSD",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'counted', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) GROUP BY run) m ON m.run=r.run ORDER BY 1"
+    "SELECT r.started AS time, 'billed' AS metric, coalesce(r.usd,0) AS value, r.name AS label FROM runs r UNION ALL SELECT r.started, 'counted', m.usd, r.name FROM runs r JOIN (SELECT run, round(sum(usd),2) AS usd FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + greatest(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) AS s1 GROUP BY run) m ON m.run=r.run ORDER BY 1"
    ],
    "why": "A turn reports its output twice: tokens_out is what the SDK said, and while a session is streaming that is the message_start placeholder - a handful of tokens, never the turn - and out_est is what the message was worth at four characters a token. The runner writes both rather than choose, because one of these is priced and an estimate written into a priced field is money nobody spent. The turns table keeps both columns as they came. Choosing is done in the query, and it is max: whichever number is real, it is the larger one. Every query that reads a turn's output takes the pair; simplifying it back to tokens_out alone brings the placeholder back into the bill. The spend events are the session's own bill and need none of this."
   },
@@ -68,7 +68,7 @@
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'elapsed' AS metric, coalesce(r.finished, strftime('%s','now')) - r.started AS value, r.name AS label FROM runs r ORDER BY 1",
+    "SELECT r.started AS time, 'elapsed' AS metric, coalesce(r.finished, floor(extract(epoch from now()))::float8) - r.started AS value, r.name AS label FROM runs r ORDER BY 1",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.run' AND at*1000 < $__from)) ORDER BY at"
    ],
    "label": "Run duration"
@@ -79,7 +79,7 @@
    "unit": "runs",
    "about": "One line per verdict",
    "queries": [
-    "SELECT cast(strftime('%s', date(finished,'unixepoch')) AS INTEGER)*1000 AS time, coalesce(nullif(verdict,''),'(none)') AS metric, count(*) AS value FROM runs WHERE finished IS NOT NULL GROUP BY 1,2 ORDER BY 1"
+    "SELECT (floor(finished/86400)*86400)::bigint*1000 AS time, coalesce(nullif(verdict,''),'(none)') AS metric, count(*) AS value FROM runs WHERE finished IS NOT NULL GROUP BY 1,2 ORDER BY 1"
    ],
    "label": "Runs per day"
   },
@@ -90,7 +90,7 @@
    "unit": "currencyUSD",
    "height": 7,
    "queries": [
-    "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, 'spent' AS metric, round(sum(usd),2) AS value FROM runs GROUP BY 1 ORDER BY 1"
+    "SELECT (floor(started/86400)*86400)::bigint*1000 AS time, 'spent' AS metric, round(sum(usd),2) AS value FROM runs GROUP BY 1 ORDER BY 1"
    ],
    "label": "Spend per day"
   },
@@ -101,7 +101,7 @@
    "unit": "currencyUSD",
    "height": 7,
    "queries": [
-    "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, name AS metric, coalesce(usd,0) AS value FROM runs ORDER BY 1"
+    "SELECT (floor(started/86400)*86400)::bigint*1000 AS time, name AS metric, coalesce(usd,0) AS value FROM runs ORDER BY 1"
    ],
    "label": "Cost per run, by day"
   },
@@ -112,7 +112,7 @@
    "unit": "turns",
    "height": 7,
    "queries": [
-    "SELECT cast(strftime('%s', date(started,'unixepoch')) AS INTEGER)*1000 AS time, name AS metric, turns AS value FROM runs WHERE turns > 0 ORDER BY 1"
+    "SELECT (floor(started/86400)*86400)::bigint*1000 AS time, name AS metric, turns AS value FROM runs WHERE turns > 0 ORDER BY 1"
    ],
    "label": "Turns per run, by day"
   },
@@ -122,7 +122,7 @@
    "height": 9,
    "about": "Every agent that has ever cost anything, dearest first, with what it charges per session",
    "queries": [
-    "SELECT json_extract(payload,'$.agent') AS agent, count(*) AS sessions, round(sum(json_extract(payload,'$.usd')),2) AS usd, round(avg(json_extract(payload,'$.usd')),3) AS usd_each, round(sum(json_extract(payload,'$.seconds'))/3600,1) AS hours FROM events WHERE kind='session_end' AND json_extract(payload,'$.agent') IS NOT NULL GROUP BY 1 HAVING usd > 0 ORDER BY usd DESC LIMIT 40"
+    "SELECT (payload->>'agent') AS agent, count(*) AS sessions, round(sum(jnum(payload->'usd')),2) AS usd, round(avg(jnum(payload->'usd')),3) AS usd_each, round(sum(jnum(payload->'seconds'))/3600,1) AS hours FROM events WHERE kind='session_end' AND (payload->>'agent') IS NOT NULL GROUP BY 1 HAVING round(sum(jnum(payload->'usd')),2) > 0 ORDER BY usd DESC NULLS LAST LIMIT 40"
    ],
    "label": "Cost by agent, all time"
   },
@@ -142,7 +142,7 @@
    "height": 8,
    "about": "How often each check refuses, and how long its repair takes",
    "queries": [
-    "SELECT phase, count(*) AS rounds, sum(verdict='red') AS red, sum(verdict='green') AS green, sum(findings) AS findings, round(avg(seconds)/60,1) AS avg_minutes FROM gates GROUP BY phase ORDER BY rounds DESC LIMIT 40"
+    "SELECT phase, count(*) AS rounds, sum((verdict='red')::int) AS red, sum((verdict='green')::int) AS green, sum(findings) AS findings, round(avg(seconds)/60,1) AS avg_minutes FROM gates GROUP BY phase ORDER BY rounds DESC LIMIT 40"
    ],
    "label": "Gates, all time"
   },

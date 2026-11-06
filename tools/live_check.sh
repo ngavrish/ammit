@@ -7,7 +7,13 @@
 # and the record - are each a claim about what happens end to end, and every
 # one of them passes in isolation while being wrong in the wiring.
 #
-# Run it: bash tools/live_check.sh
+# Run it against a Postgres it may make a database on - a scratch server,
+# never the live one:
+#
+#   AMMIT_LIVE_PG=postgres://ammit@127.0.0.1:5432/postgres bash tools/live_check.sh
+#
+# It makes a database of its own (ammit_live_<pid>), points the server at it,
+# and drops it on the way out. psql must be on the path.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,15 +21,23 @@ port="${AMMIT_LIVE_PORT:-8399}"
 work="$(mktemp -d)"
 base="http://127.0.0.1:${port}"
 pid=""
+: "${AMMIT_LIVE_PG:?AMMIT_LIVE_PG: a Postgres connection string this check may create a database on}"
+livedb="ammit_live_$$"
+dsn="${AMMIT_LIVE_PG%/*}/${livedb}?sslmode=disable"
 
 cleanup() {
   if [ -n "$pid" ]; then
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   fi
+  psql -q "$AMMIT_LIVE_PG" -c "DROP DATABASE IF EXISTS $livedb" >/dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT
+psql -q "$AMMIT_LIVE_PG" -c "CREATE DATABASE $livedb" >/dev/null
+
+# sql STATEMENT - run one statement against the scratch database.
+sql() { psql -qtA "$dsn" -c "$1"; }
 
 # want NAME PATTERN FILE - the answer must contain this.
 want() {
@@ -59,7 +73,8 @@ restart() {
     wait "$pid" 2>/dev/null || true
     pid=""
   fi
-  AMMIT_DB="$work/data/ammit.db" \
+  AMMIT_DSN="$dsn" \
+  AMMIT_DATA="$work/data" \
   AMMIT_DOCS="$work/data/documents" \
   AMMIT_CONFIG="$2" \
   AMMIT_PORT="$port" \
@@ -82,7 +97,9 @@ echo "== building"
 ( cd "$root/server" && go build -o "$work/ammit" . )
 
 echo "== starting on :$port with a scratch database"
-AMMIT_DB="$work/data/ammit.db" \
+mkdir -p "$work/data"
+AMMIT_DSN="$dsn" \
+AMMIT_DATA="$work/data" \
 AMMIT_DOCS="$work/data/documents" \
 AMMIT_CONFIG="$work/no-such-limits.yml" \
 AMMIT_PORT="$port" \
@@ -199,7 +216,7 @@ want "the reply names what it dropped"    '"dropped":\["heart","weight_of_a_feat
   "$work/dropped.json"
 
 curl -sS -o "$work/row.json" --get "$base/query" \
-  --data-urlencode "sql=SELECT payload FROM events WHERE json_extract(payload,'\$.text')='a line'"
+  --data-urlencode "sql=SELECT payload FROM events WHERE payload->>'text'='a line'"
 cat "$work/row.json"; echo
 want "the row is there"                   'text.{1,4}:.{1,4}a line' "$work/row.json"
 deny "and the extra field is not in it"   'weight_of_a_feather|heart' "$work/row.json"
@@ -243,7 +260,7 @@ curl -sS -o "$work/rv-post.json" -X POST "$base/events" -H 'Content-Type: applic
        "check":"sleep_instead_of_waiting","detail":"no sleep over the settle ceiling"}'
 deny "nothing is named back as dropped" 'dropped' "$work/rv-post.json"
 curl -sS -o "$work/rv.json" --get "$base/query" --data-urlencode \
-  "sql=SELECT json_extract(payload,'\$.rule'), json_extract(payload,'\$.label'), json_extract(payload,'\$.check'), json_extract(payload,'\$.source') FROM events WHERE kind='rule_verdict' AND run='live-a-1'"
+  "sql=SELECT payload->>'rule', payload->>'label', payload->>'check', payload->>'source' FROM events WHERE kind='rule_verdict' AND run='live-a-1'"
 cat "$work/rv.json"; echo
 want "the rule, the label, the check and the source are kept" \
   'a-sleep-is-not-a-wait.,.verified.,.sleep_instead_of_waiting.,.implementing' "$work/rv.json"
@@ -252,23 +269,14 @@ echo "== the same database, restarted, with the search index thrown away"
 # What a live check is for. Every /search above ran against an index built row
 # by row as the events landed, which is the one case the backfill is not in:
 # a database that predates this index, or one whose index was lost, is
-# searchable only if the backfill on start actually reaches the FTS table.
+# searchable only if the backfill on start actually reaches the index.
 before="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["count"])' \
   "$work/search-kind.json")"
 kill "$pid"
 wait "$pid" 2>/dev/null || true
 pid=""
-python3 - "$work/data/ammit.db" <<'DROPSEARCH'
-import sqlite3
-import sys
-
-db = sqlite3.connect(sys.argv[1])
-db.execute("DROP TABLE IF EXISTS search_fts")
-db.execute("DROP TABLE IF EXISTS search_text")
-db.commit()
-kept = db.execute("select count(*) from events").fetchone()[0]
-print(f"  dropped search_text and search_fts; {kept} events still in the record")
-DROPSEARCH
+sql "DROP TABLE IF EXISTS search_text"
+echo "  dropped search_text; $(sql 'select count(*) from events') events still in the record"
 
 restart "the server answers again" "$work/no-such-limits.yml" 3600 server2.log
 
@@ -295,26 +303,16 @@ echo "== an index built by the version that could not index a call"
 # The state a deployment is actually in, rather than the one a dropped table
 # leaves: the first version of this index filed a row only when the prose
 # fields joined to something, so a call with no `why` got no row while a later
-# log line did, and the high-water mark moved past both. Rebuilding the FTS
-# side of that heals the prose and leaves the call unfindable for ever, which
+# log line did, and the high-water mark moved past both. Rebuilding the index
+# over that heals the prose and leaves the call unfindable for ever, which
 # is what dropping search_text hides - it resets the mark to zero.
 kill "$pid"
 wait "$pid" 2>/dev/null || true
 pid=""
-python3 - "$work/data/ammit.db" <<'OLDINDEX'
-import sqlite3
-import sys
-
-db = sqlite3.connect(sys.argv[1])
-db.execute("DELETE FROM search_text WHERE source='event' AND kind='call'")
-db.execute("DROP TABLE IF EXISTS search_fts")
-db.execute("UPDATE search_meta SET value='1' WHERE key='fts_generation'")
-db.commit()
-calls = db.execute("select count(*) from events where kind='call'").fetchone()[0]
-mark = db.execute("select coalesce(max(ref),0) from search_text "
-                  "where source='event'").fetchone()[0]
-print(f"  {calls} call events with no index row, and the mark already at {mark}")
-OLDINDEX
+sql "DELETE FROM search_text WHERE source='event' AND kind='call'"
+sql "UPDATE search_meta SET value='1' WHERE key='fts_generation'"
+echo "  $(sql "select count(*) from events where kind='call'") call events with no index row," \
+  "and the mark already at $(sql "select coalesce(max(ref),0) from search_text where source='event'")"
 
 restart "the server answers a third time" "$work/no-such-limits.yml" 3600 server3.log
 curl -sS -o "$work/old-index-call.json" "$base/search?q=pytest&kind=call"
@@ -332,32 +330,27 @@ want "the log says why it read them again" 'built by an older version' \
   "$work/server3.log"
 
 echo "== a marker saying built, over an index that is gone"
-# Dropping the FTS table is what repairing a corrupt one amounts to. The marker
-# still says the index was built, so nothing would rebuild it and every search
-# would answer zero for ever, silently.
+# Dropping an index is what repairing a corrupt one amounts to. The marker
+# still says the index was built; the words are a column of search_text, so
+# what can be lost is the GIN index over them, and the start makes it again.
 kill "$pid"
 wait "$pid" 2>/dev/null || true
 pid=""
-python3 - "$work/data/ammit.db" <<'DROPFTS'
-import sqlite3
-import sys
-
-db = sqlite3.connect(sys.argv[1])
-db.execute("DROP TABLE IF EXISTS search_fts")
-db.commit()
-mark = db.execute("select value from search_meta where key='fts_generation'").fetchone()
-kept = db.execute("select count(*) from search_text").fetchone()[0]
-print(f"  search_fts dropped; the marker still says {mark[0]} over {kept} rows of text")
-DROPFTS
+sql "DROP INDEX IF EXISTS search_text_words"
+echo "  search_text_words dropped; the marker still says" \
+  "$(sql "select value from search_meta where key='fts_generation'")" \
+  "over $(sql 'select count(*) from search_text') rows of text"
 
 restart "the server answers a fourth time" "$work/no-such-limits.yml" 3600 server4.log
 curl -sS -o "$work/lost-index.json" "$base/search?q=AttributeError"
 want "a lost index is rebuilt anyway"     '"source":"event"' "$work/lost-index.json"
-want "and says so in one line"            'holds nothing against' "$work/server4.log"
+curl -sS -o "$work/lost-index-made.json" --get "$base/query" \
+  --data-urlencode "sql=SELECT count(*) FROM pg_indexes WHERE indexname='search_text_words'"
+want "and the index is there again"       'rows.:..1..' "$work/lost-index-made.json"
 
 echo "== a run archived out of the record leaves the index with it"
-# archive() moves finished runs into a file of their own and its stated job is
-# to leave the live database small. The index it did not touch outlived the
+# archive() moves finished runs into the archive schema and its stated job is
+# to leave the live tables small. The index it did not touch outlived the
 # events it mirrors: /search went on answering with rows whose event was gone,
 # each with a fetch link that resolves to nothing.
 kill "$pid"

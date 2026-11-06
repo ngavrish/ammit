@@ -252,7 +252,7 @@ func dropTemp(f *os.File) {
 	_ = os.Remove(f.Name())
 }
 
-func postEvidence(db *sql.DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWriter, r *http.Request) {
+func postEvidence(db *DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWriter, r *http.Request) {
 	if store == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "the evidence store is not configured: " + evidenceUnconfigured})
@@ -457,7 +457,7 @@ func evidenceRowOf(f map[string]string, hasFile bool) (evidenceRow, string) {
 // test. Whole statements, one per question, for the reason getCoverage gives:
 // a query built by concatenation reads the same whether it holds a caller's
 // text or not.
-func getEvidence(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func getEvidence(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ticket, run, test := strings.TrimSpace(q.Get("ticket")),
 		strings.TrimSpace(q.Get("run")), q.Get("test")
@@ -518,7 +518,7 @@ func getEvidence(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 // serveEvidenceFile streams one file back by its hash, with Range: a browser
 // seeks in a video by asking for the bytes it wants, and a server that answers
 // every seek with the whole file is a video that cannot be scrubbed.
-func serveEvidenceFile(db *sql.DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWriter, r *http.Request) {
+func serveEvidenceFile(db *DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWriter, r *http.Request) {
 	sum := r.PathValue("sha256")
 	if !sha256Hex.MatchString(sum) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not a sha256 (64 lowercase hex)"})

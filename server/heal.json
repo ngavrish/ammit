@@ -13,7 +13,7 @@
    "unit": "laps",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'heal laps' AS metric, coalesce(l.total,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, branch, max(lap) AS laps FROM heal_laps GROUP BY 1,2) GROUP BY run) l ON l.run=r.run ORDER BY 1"
+    "SELECT r.started AS time, 'heal laps' AS metric, coalesce(l.total,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, branch, max(lap) AS laps FROM heal_laps GROUP BY 1,2) AS s1 GROUP BY run) l ON l.run=r.run ORDER BY 1"
    ]
   },
   {
@@ -23,7 +23,7 @@
    "unit": "laps",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'most on one branch' AS metric, coalesce(l.most,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, branch, max(lap) AS laps FROM heal_laps GROUP BY 1,2) GROUP BY run) l ON l.run=r.run ORDER BY 1",
+    "SELECT r.started AS time, 'most on one branch' AS metric, coalesce(l.most,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(laps) AS total, max(laps) AS most FROM (SELECT run, branch, max(lap) AS laps FROM heal_laps GROUP BY 1,2) AS s1 GROUP BY run) l ON l.run=r.run ORDER BY 1",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name IN ('loops.laps_branchheal','loops.heal_laps_per_branch') AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name IN ('loops.laps_branchheal','loops.heal_laps_per_branch') AND at*1000 < $__from)) ORDER BY at"
    ]
   },
@@ -34,7 +34,7 @@
    "unit": "laps",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'laps on green' AS metric, coalesce(g.n,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, count(*) AS n FROM (SELECT l.run, (SELECT s.failed FROM suites s WHERE s.run=l.run AND s.branch=l.branch AND s.at < l.at ORDER BY s.at DESC LIMIT 1) AS failed_before FROM heal_laps l) WHERE failed_before = 0 GROUP BY run) g ON g.run=r.run ORDER BY 1"
+    "SELECT r.started AS time, 'laps on green' AS metric, coalesce(g.n,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, count(*) AS n FROM (SELECT l.run, (SELECT s.failed FROM suites s WHERE s.run=l.run AND s.branch=l.branch AND s.at < l.at ORDER BY s.at DESC LIMIT 1) AS failed_before FROM heal_laps l) AS s1 WHERE failed_before = 0 GROUP BY run) g ON g.run=r.run ORDER BY 1"
    ]
   },
   {
@@ -44,7 +44,7 @@
    "unit": "scenarios",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'first suite' AS metric, coalesce(sum(CASE WHEN s.n=1 THEN s.failed END),0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT *, row_number() OVER (PARTITION BY run, branch ORDER BY at) AS n, row_number() OVER (PARTITION BY run, branch ORDER BY at DESC) AS rn FROM suites) s ON s.run=r.run GROUP BY r.run UNION ALL SELECT r.started, 'last suite', coalesce(sum(CASE WHEN s.rn=1 THEN s.failed END),0), r.name FROM runs r LEFT JOIN (SELECT *, row_number() OVER (PARTITION BY run, branch ORDER BY at) AS n, row_number() OVER (PARTITION BY run, branch ORDER BY at DESC) AS rn FROM suites) s ON s.run=r.run GROUP BY r.run ORDER BY 1"
+    "SELECT r.started AS time, 'first suite' AS metric, coalesce(sum(CASE WHEN s.n=1 THEN s.failed END),0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT *, row_number() OVER (PARTITION BY run, branch ORDER BY at) AS n, row_number() OVER (PARTITION BY run, branch ORDER BY at DESC) AS rn FROM suites) s ON s.run=r.run GROUP BY r.run, r.started, r.name UNION ALL SELECT r.started, 'last suite', coalesce(sum(CASE WHEN s.rn=1 THEN s.failed END),0), r.name FROM runs r LEFT JOIN (SELECT *, row_number() OVER (PARTITION BY run, branch ORDER BY at) AS n, row_number() OVER (PARTITION BY run, branch ORDER BY at DESC) AS rn FROM suites) s ON s.run=r.run GROUP BY r.run, r.started, r.name ORDER BY 1"
    ]
   },
   {
@@ -54,7 +54,7 @@
    "unit": "refusals",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'red gates' AS metric, coalesce(g.reds,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(verdict='red') AS reds FROM gates GROUP BY run) g ON g.run=r.run ORDER BY 1"
+    "SELECT r.started AS time, 'red gates' AS metric, coalesce(g.reds,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum((verdict='red')::int) AS reds FROM gates GROUP BY run) g ON g.run=r.run ORDER BY 1"
    ]
   },
   {
@@ -64,7 +64,7 @@
    "unit": "currencyUSD",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'heal' AS metric, coalesce(m.usd,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, round(sum(json_extract(payload,'$.usd')),2) AS usd FROM events WHERE kind='spend' AND json_extract(payload,'$.phase') LIKE '%heal%' GROUP BY run) m ON m.run=r.run ORDER BY 1"
+    "SELECT r.started AS time, 'heal' AS metric, coalesce(m.usd,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, round(sum(jnum(payload->'usd')),2) AS usd FROM events WHERE kind='spend' AND (payload->>'phase') ILIKE '%heal%' GROUP BY run) m ON m.run=r.run ORDER BY 1"
    ]
   },
   {
@@ -79,7 +79,7 @@
    "unit": "lessons",
    "height": 8,
    "queries": [
-    "SELECT at AS time, 'total' AS metric, json_extract(payload,'$.total') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
+    "SELECT at AS time, 'total' AS metric, jnum(payload->'total') AS value FROM events WHERE kind='learning' AND (payload->>'item')='lessons' ORDER BY 1"
    ]
   },
   {
@@ -89,7 +89,7 @@
    "unit": "lessons",
    "height": 8,
    "queries": [
-    "SELECT at AS time, 'fresh' AS metric, json_extract(payload,'$.fresh') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' UNION ALL SELECT at, 'confirmed', json_extract(payload,'$.confirmed') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='lessons' ORDER BY 1"
+    "SELECT at AS time, 'fresh' AS metric, jnum(payload->'fresh') AS value FROM events WHERE kind='learning' AND (payload->>'item')='lessons' UNION ALL SELECT at, 'confirmed', jnum(payload->'confirmed') FROM events WHERE kind='learning' AND (payload->>'item')='lessons' ORDER BY 1"
    ]
   },
   {
@@ -99,7 +99,7 @@
    "unit": "times",
    "height": 8,
    "queries": [
-    "SELECT r.started AS time, 'stored' AS metric, coalesce(m.stored,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run UNION ALL SELECT r.started, 'injected', coalesce(m.injected,0), r.name FROM runs r LEFT JOIN (SELECT run, sum(json_extract(payload,'$.text') LIKE 'memory stored%') AS stored, sum(json_extract(payload,'$.text') LIKE 'memory injected%') AS injected FROM events WHERE kind='log' AND json_extract(payload,'$.text') LIKE 'memory %' GROUP BY run) m ON m.run=r.run ORDER BY 1"
+    "SELECT r.started AS time, 'stored' AS metric, coalesce(m.stored,0) AS value, r.name AS label FROM runs r LEFT JOIN (SELECT run, sum(((payload->>'text') ILIKE 'memory stored%')::int) AS stored, sum(((payload->>'text') ILIKE 'memory injected%')::int) AS injected FROM events WHERE kind='log' AND (payload->>'text') ILIKE 'memory %' GROUP BY run) m ON m.run=r.run UNION ALL SELECT r.started, 'injected', coalesce(m.injected,0), r.name FROM runs r LEFT JOIN (SELECT run, sum(((payload->>'text') ILIKE 'memory stored%')::int) AS stored, sum(((payload->>'text') ILIKE 'memory injected%')::int) AS injected FROM events WHERE kind='log' AND (payload->>'text') ILIKE 'memory %' GROUP BY run) m ON m.run=r.run ORDER BY 1"
    ]
   }
  ]

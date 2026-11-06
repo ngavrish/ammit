@@ -8,8 +8,6 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 // What a run's spans say: what is open, what is quiet, what is stuck.
@@ -35,7 +33,7 @@ func notClosed(r *http.Request) string {
 	if r.URL.Query().Get("closed") != "" {
 		return ""
 	}
-	return " AND ifnull(json_extract(payload,'$.error'),'') NOT LIKE 'closed by ammit%'"
+	return " AND coalesce((payload->>'error'),'') NOT ILIKE 'closed by ammit%'"
 }
 
 func closeSpansOf(run string, at float64, why string) {
@@ -85,6 +83,7 @@ func openRuns() []openRun {
 			out = append(out, r)
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
@@ -99,7 +98,7 @@ func lastBranch(run string) string {
 	mu.Lock()
 	defer mu.Unlock()
 	var branch string
-	db.QueryRow(`SELECT coalesce(branch,'') FROM events WHERE run=? AND ifnull(branch,'') <> ''
+	db.QueryRow(`SELECT coalesce(branch,'') FROM events WHERE run=? AND coalesce(branch,'') <> ''
 	             ORDER BY id DESC LIMIT 1`, run).Scan(&branch)
 	return branch
 }
@@ -116,9 +115,9 @@ func runMode(run string) string {
 	mu.Lock()
 	defer mu.Unlock()
 	var mode string
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.mode'),'') FROM events
+	db.QueryRow(`SELECT coalesce((payload->'tags'->>'mode'),'') FROM events
 	             WHERE run=? AND kind IN ('run_start','note')
-	               AND ifnull(json_extract(payload,'$.tags.mode'),'') <> ''
+	               AND coalesce((payload->'tags'->>'mode'),'') <> ''
 	             ORDER BY id ASC LIMIT 1`, run).Scan(&mode)
 	return mode
 }
@@ -132,7 +131,7 @@ func afterTool(run, request string) bool {
 	var started float64
 	var agent, wait string
 	if err := db.QueryRow(`SELECT at, coalesce(agent,''),
-	                       coalesce(json_extract(payload,'$.wait'),'')
+	                       coalesce((payload->>'wait'),'')
 	                       FROM events
 	                       WHERE run=? AND kind='request_start' AND session=?
 	                       ORDER BY id DESC LIMIT 1`, run, request).
@@ -150,7 +149,7 @@ func afterTool(run, request string) bool {
 		return wait == "tool"
 	}
 	var level string
-	if err := db.QueryRow(`SELECT coalesce(json_extract(payload,'$.level'),'')
+	if err := db.QueryRow(`SELECT coalesce((payload->>'level'),'')
 	                       FROM events WHERE run=? AND kind='log' AND agent=? AND at<=?
 	                       ORDER BY id DESC LIMIT 1`, run, agent, started).
 		Scan(&level); err != nil {
@@ -195,7 +194,7 @@ func itemFacts(run, item string) (string, string) {
 	var kind, agent string
 	// itemkind, not kind: `kind` on an event is already the event's own name, so
 	// what sort of unit this is has to travel under a name of its own.
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.itemkind'),''), coalesce(agent,'')
+	db.QueryRow(`SELECT coalesce((payload->>'itemkind'),''), coalesce(agent,'')
 	             FROM events WHERE run=? AND kind='item_start' AND session=?
 	             ORDER BY id DESC LIMIT 1`, run, item).Scan(&kind, &agent)
 	return kind, agent
@@ -211,7 +210,7 @@ func itemBudget(run, item string) float64 {
 	mu.Lock()
 	defer mu.Unlock()
 	var budget float64
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.budget'),0)
+	db.QueryRow(`SELECT coalesce(jnum(payload->'budget'), 0)
 	             FROM events WHERE run=? AND kind='item_start' AND session=?
 	             ORDER BY id DESC LIMIT 1`, run, item).Scan(&budget)
 	return budget
@@ -231,7 +230,7 @@ func turnsPerSession(run string) map[string]float64 {
 	rows, err := db.Query(`
 		SELECT coalesce(t.agent,'') || CASE WHEN coalesce(t.branch,'')<>'' THEN '@'||t.branch ELSE '' END,
 		       count(*) FROM events t
-		WHERE t.run=? AND t.kind='turn' AND ifnull(t.agent,'') <> ''
+		WHERE t.run=? AND t.kind='turn' AND coalesce(t.agent,'') <> ''
 		  AND t.at >= coalesce((SELECT max(s.at) FROM events s
 		      WHERE s.run=t.run AND s.kind='session_start'
 		        AND coalesce(s.agent,'')=coalesce(t.agent,'')
@@ -256,6 +255,7 @@ func turnsPerSession(run string) map[string]float64 {
 			out[who] = n
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
@@ -297,11 +297,11 @@ func spinningSessions(run string, window, minRequests float64) map[string]float6
 		  (SELECT count(*) FROM events r WHERE r.run=s.run AND r.kind='request_end'
 		     AND coalesce(r.agent,'')=s.agent AND coalesce(r.branch,'')=s.branch
 		     AND r.at>=?
-		     AND json_extract(r.payload,'$.msg')='AssistantMessage') reqs,
+		     AND (r.payload->>'msg')='AssistantMessage') reqs,
 		  (SELECT count(*) FROM events c WHERE c.run=s.run AND c.kind='call'
 		     AND coalesce(c.session,'')=s.session AND c.at>=?) calls
-		FROM (SELECT run, coalesce(session,'') session, coalesce(agent,'') agent,
-		             coalesce(branch,'') branch
+		FROM (SELECT max(run) run, coalesce(session,'') session,
+		             max(coalesce(agent,'')) agent, max(coalesce(branch,'')) branch
 		      FROM events WHERE run=? AND kind='session_start'
 		        AND coalesce(session,'')<>''
 		        AND coalesce(session,'') NOT IN (
@@ -321,6 +321,7 @@ func spinningSessions(run string, window, minRequests float64) map[string]float6
 			out[session] = reqs
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
@@ -334,10 +335,10 @@ func heaviestTurn(run string) (float64, string, string) {
 	since := float64(time.Now().Add(-15*time.Minute).UnixNano()) / 1e9
 	var size float64
 	var who, phase string
-	db.QueryRow(`SELECT coalesce(json_extract(payload,'$.context'),0),
+	db.QueryRow(`SELECT coalesce(jnum(payload->'context'), 0),
 	                    coalesce(agent,'?'), coalesce(phase,'')
 	             FROM events WHERE run=? AND kind='turn' AND at>=?
-	             ORDER BY coalesce(json_extract(payload,'$.context'),0) DESC
+	             ORDER BY coalesce(jnum(payload->'context'), 0) DESC
 	             LIMIT 1`, run, since).Scan(&size, &who, &phase)
 	return size, who, phase
 }
@@ -494,7 +495,7 @@ func openPhases(run string) map[string]float64 {
 	// otherwise - the same spelling sessions use for agent@branch.
 	rows, err := db.Query(`
 		SELECT coalesce(phase,''), coalesce(branch,''), min(at) FROM events
-		WHERE run=? AND kind='phase_start' AND ifnull(phase,'') <> ''
+		WHERE run=? AND kind='phase_start' AND coalesce(phase,'') <> ''
 		  AND coalesce(phase,'') || '@' || coalesce(branch,'') NOT IN (
 		      SELECT coalesce(phase,'') || '@' || coalesce(branch,'')
 		      FROM events WHERE run=? AND kind='phase_end')
@@ -512,6 +513,7 @@ func openPhases(run string) map[string]float64 {
 			live[phaseKey(phase, branch)] = now - at
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	return live
 }
 
@@ -579,7 +581,7 @@ func openSpans(run, startKind, endKind, column string) map[string]float64 {
 	defer mu.Unlock()
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT coalesce(%[1]s,''), max(at) FROM events
-		WHERE run=? AND kind=? AND ifnull(%[1]s,'') <> ''
+		WHERE run=? AND kind=? AND coalesce(%[1]s,'') <> ''
 		  AND coalesce(%[1]s,'') NOT IN (
 		      SELECT coalesce(%[1]s,'') FROM events WHERE run=? AND kind=?)
 		GROUP BY 1`, column), run, startKind, run, endKind)
@@ -596,6 +598,7 @@ func openSpans(run, startKind, endKind, column string) map[string]float64 {
 			live[key] = now - at
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	return live
 }
 
@@ -610,10 +613,10 @@ func retryWaits(run string, window float64) map[string]float64 {
 	since := float64(time.Now().UnixNano())/1e9 - window
 	rows, err := db.Query(`
 		SELECT coalesce(agent,'') || CASE WHEN coalesce(branch,'')<>'' THEN '@'||branch ELSE '' END,
-		       sum(coalesce(json_extract(payload,'$.seconds'),0))
+		       sum(coalesce(jnum(payload->'seconds'), 0))
 		FROM events
 		WHERE run=? AND kind='request_end' AND at>=?
-		  AND coalesce(json_extract(payload,'$.detail'),'') LIKE '%api_retry%'
+		  AND coalesce((payload->>'detail'),'') ILIKE '%api_retry%'
 		GROUP BY 1`, run, since)
 	if err != nil {
 		return nil
@@ -627,6 +630,7 @@ func retryWaits(run string, window float64) map[string]float64 {
 			out[session] = secs
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
@@ -666,10 +670,10 @@ func shortPhases(run string, floor float64) map[string]float64 {
 	// one number for every phase, and the number only has to be long enough
 	// that a phase which truly did nothing has finished failing.
 	rows, err := db.Query(`
-		SELECT coalesce(e.phase,''), coalesce(json_extract(e.payload,'$.seconds'), 0)
+		SELECT coalesce(e.phase,''), coalesce(jnum(e.payload->'seconds'), 0)
 		FROM events e
-		WHERE e.run=? AND e.kind='phase_end' AND ifnull(e.phase,'') <> ''
-		  AND coalesce(json_extract(e.payload,'$.seconds'), 0) < ?
+		WHERE e.run=? AND e.kind='phase_end' AND coalesce(e.phase,'') <> ''
+		  AND coalesce(jnum(e.payload->'seconds'), 0) < ?
 		  AND e.id = (SELECT min(f.id) FROM events f
 		              WHERE f.run=e.run AND f.kind='phase_end'
 		                AND coalesce(f.phase,'')=coalesce(e.phase,'')
@@ -694,6 +698,7 @@ func shortPhases(run string, floor float64) map[string]float64 {
 			}
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
@@ -733,7 +738,7 @@ func chainStart(run string, started float64) (string, float64) {
 		}
 		var src string
 		mu.Lock()
-		db.QueryRow(`SELECT coalesce(json_extract(payload,'$.tags.resolved.source_run'),'')
+		db.QueryRow(`SELECT coalesce((payload->'tags'->'resolved'->>'source_run'),'')
 		             FROM events WHERE run=? AND kind='run_start' ORDER BY id ASC LIMIT 1`,
 			root).Scan(&src)
 		if src == "" || src == root {

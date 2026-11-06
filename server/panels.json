@@ -11,7 +11,7 @@
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT * FROM (SELECT at AS time, name AS metric, sum(idle) OVER (PARTITION BY run ORDER BY at) AS value FROM ( SELECT e.at AS at, e.run AS run, r.name AS name, CASE WHEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) > 120 THEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) ELSE 0 END AS idle FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.run IS NOT NULL) ORDER BY 1) WHERE time*1000 BETWEEN $__from AND $__to"
+    "SELECT * FROM (SELECT at AS time, name AS metric, sum(idle) OVER (PARTITION BY run ORDER BY at) AS value FROM ( SELECT e.at AS at, e.run AS run, r.name AS name, CASE WHEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) > 120 THEN e.at - lag(e.at) OVER (PARTITION BY e.run ORDER BY e.at) ELSE 0 END AS idle FROM events e JOIN runs r ON r.run = e.run WHERE e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND e.run IS NOT NULL) AS s2 ORDER BY 1) AS s1 WHERE time*1000 BETWEEN $__from AND $__to"
    ],
    "label": "Idle time per run",
    "scope": "window"
@@ -27,7 +27,7 @@
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, json_extract(payload,'$.seconds') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at",
+    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, jnum(payload->'seconds') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' ORDER BY at",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.request' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.request' AND at*1000 < $__from)) ORDER BY at"
    ],
    "label": "Request time",
@@ -44,7 +44,7 @@
    "unit": "requests/min",
    "height": 8,
    "queries": [
-    "SELECT CAST(at/60 AS INTEGER)*60 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' AND json_extract(payload,'$.ok') = 0 GROUP BY 1, 2 ORDER BY 1"
+    "SELECT trunc(at/60)::bigint*60 AS time, coalesce(nullif(agent,''),'?') AS metric, count(*) AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' AND jnum(payload->'ok') = 0 GROUP BY 1, 2 ORDER BY 1"
    ],
    "label": "Failed requests per minute"
   },
@@ -55,7 +55,7 @@
    "unit": "",
    "height": 8,
    "queries": [
-    "SELECT at AS at, run, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'') AS phase, ROUND(json_extract(payload,'$.seconds'),1) AS seconds, json_extract(payload,'$.error') AS error FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' AND json_extract(payload,'$.ok') = 0 ORDER BY id DESC LIMIT 100"
+    "SELECT at AS at, run, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'') AS phase, ROUND(jnum(payload->'seconds'),1) AS seconds, (payload->>'error') AS error FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'request_end' AND jnum(payload->'ok') = 0 ORDER BY id DESC LIMIT 100"
    ],
    "label": "Failed requests"
   },
@@ -70,7 +70,7 @@
    "unit": "currencyUSD",
    "height": 8,
    "queries": [
-    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, json_extract(payload,'$.usd') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at",
+    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, jnum(payload->'usd') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.usd_per_run' AND at*1000 < $__from)) ORDER BY at"
    ],
    "label": "Cost",
@@ -93,7 +93,7 @@
    ],
    "acc": "cumsum",
    "queries": [
-    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
+    "SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'?') AS phase, usd AS value FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + greatest(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) AS s1 WHERE at*1000 BETWEEN $__from AND $__to AND usd IS NOT NULL ORDER BY at"
    ],
    "why": "A turn reports its output twice: tokens_out is what the SDK said, and while a session is streaming that is the message_start placeholder - a handful of tokens, never the turn - and out_est is what the message was worth at four characters a token. The runner writes both rather than choose, because one of these is priced and an estimate written into a priced field is money nobody spent. The turns table keeps both columns as they came. Choosing is done in the query, and it is max: whichever number is real, it is the larger one. Every query that reads a turn's output takes the pair; simplifying it back to tokens_out alone brings the placeholder back into the bill. The spend events are the session's own bill and need none of this."
   },
@@ -104,7 +104,7 @@
    "unit": "",
    "height": 6,
    "queries": [
-    "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) WHERE at*1000 BETWEEN $__from AND $__to AND tier IS NULL GROUP BY model ORDER BY turns DESC"
+    "SELECT model, count(*) AS turns, min(at) AS first_seen FROM (SELECT t.at, t.run, t.agent, t.phase, t.branch, t.model, t.request, (coalesce(t.tokens_in,0)*p.input + greatest(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*p.output + coalesce(t.cache_read,0)*p.cache_read + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*p.cache_write + coalesce(t.cache_write_1h,0)*p.cache_write_1h)/1e6 * CASE WHEN t.geo='us' THEN p.us_surcharge ELSE 1 END AS usd, p.tier AS tier FROM turns t LEFT JOIN prices p ON p.model = t.model WHERE t.tokens_in IS NOT NULL) AS s1 WHERE at*1000 BETWEEN $__from AND $__to AND tier IS NULL GROUP BY model ORDER BY turns DESC"
    ],
    "why": "A turn reports its output twice: tokens_out is what the SDK said, and while a session is streaming that is the message_start placeholder - a handful of tokens, never the turn - and out_est is what the message was worth at four characters a token. The runner writes both rather than choose, because one of these is priced and an estimate written into a priced field is money nobody spent. The turns table keeps both columns as they came. Choosing is done in the query, and it is max: whichever number is real, it is the larger one. Every query that reads a turn's output takes the pair; simplifying it back to tokens_out alone brings the placeholder back into the bill. The spend events are the session's own bill and need none of this."
   },
@@ -155,7 +155,7 @@
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT time, metric, value FROM (SELECT e.at AS time, coalesce(nullif(e.phase,''),'?') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.phase ORDER BY e.at), r.finished, strftime('%s','now')) AS value, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run WHERE e.kind IN ('phase_start','phase_end') AND ifnull(e.phase,'') <> '') WHERE kind = 'phase_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
+    "SELECT time, metric, value FROM (SELECT e.at AS time, coalesce(nullif(e.phase,''),'?') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.phase ORDER BY e.at), r.finished, floor(extract(epoch from now()))::float8) AS value, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run WHERE e.kind IN ('phase_start','phase_end') AND coalesce(e.phase,'') <> '') AS s1 WHERE kind = 'phase_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
    ],
    "label": "Phase timeline"
   },
@@ -187,7 +187,7 @@
    "unit": "tokens",
    "height": 8,
    "queries": [
-    "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, max(coalesce(tokens_out,0), coalesce(out_est,0)) AS value FROM turns WHERE at*1000 BETWEEN $__from AND $__to AND max(coalesce(tokens_out,0), coalesce(out_est,0)) > 0 ORDER BY at"
+    "SELECT at*1000 AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, greatest(coalesce(tokens_out,0), coalesce(out_est,0)) AS value FROM turns WHERE at*1000 BETWEEN $__from AND $__to AND greatest(coalesce(tokens_out,0), coalesce(out_est,0)) > 0 ORDER BY at"
    ],
    "label": "Output per turn",
    "by": [
@@ -204,7 +204,7 @@
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT time, agent, phase, value FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM turns WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from))) WHERE value IS NOT NULL AND time*1000 BETWEEN $__from AND $__to ORDER BY time",
+    "SELECT time, agent, phase, value FROM (SELECT at AS time, coalesce(nullif(agent,''),'?') AS agent, coalesce(nullif(phase,''),'no phase') AS phase, at - lag(at) OVER (PARTITION BY run, coalesce(agent,'') ORDER BY at) AS value FROM turns WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from))) AS s1 WHERE value IS NOT NULL AND time*1000 BETWEEN $__from AND $__to ORDER BY time",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'timeouts.turn' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'timeouts.turn' AND at*1000 < $__from)) ORDER BY at"
    ],
    "label": "Silence between turns",
@@ -221,7 +221,7 @@
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT time, metric, value FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.agent ORDER BY e.at), r.finished, strftime('%s','now')) AS value, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run WHERE e.kind IN ('session_start','session_end') AND ifnull(e.agent,'') <> '') WHERE kind = 'session_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
+    "SELECT time, metric, value FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.agent ORDER BY e.at), r.finished, floor(extract(epoch from now()))::float8) AS value, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run WHERE e.kind IN ('session_start','session_end') AND coalesce(e.agent,'') <> '') AS s1 WHERE kind = 'session_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
    ],
    "label": "Session timeline"
   },
@@ -232,8 +232,8 @@
    "unit": "s",
    "height": 8,
    "queries": [
-    "SELECT time, metric, value, label FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') || CASE WHEN coalesce(e.branch,'')<>'' THEN '@' || e.branch ELSE '' END AS metric, lead(e.at) OVER (PARTITION BY e.run, e.session ORDER BY e.at) AS value, coalesce(nullif(json_extract(e.payload,'$.wait'),''),'wait') AS label, e.kind AS kind FROM events e WHERE e.kind IN ('request_start','request_end')) WHERE kind='request_start' AND value IS NOT NULL AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time",
-    "SELECT at AS time, coalesce(nullif(agent,''),'?') || CASE WHEN coalesce(branch,'')<>'' THEN '@' || branch ELSE '' END || ' tools' AS metric, at + max(seconds, 1) AS value, tool AS label FROM calls WHERE at*1000 BETWEEN $__from AND $__to AND seconds > 0 ORDER BY at"
+    "SELECT time, metric, value, label FROM (SELECT e.at AS time, coalesce(nullif(e.agent,''),'?') || CASE WHEN coalesce(e.branch,'')<>'' THEN '@' || e.branch ELSE '' END AS metric, lead(e.at) OVER (PARTITION BY e.run, e.session ORDER BY e.at) AS value, coalesce(nullif((e.payload->>'wait'),''),'wait') AS label, e.kind AS kind FROM events e WHERE e.kind IN ('request_start','request_end')) AS s1 WHERE kind='request_start' AND value IS NOT NULL AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time",
+    "SELECT at AS time, coalesce(nullif(agent,''),'?') || CASE WHEN coalesce(branch,'')<>'' THEN '@' || branch ELSE '' END || ' tools' AS metric, at + greatest(seconds, 1) AS value, tool AS label FROM calls WHERE at*1000 BETWEEN $__from AND $__to AND seconds > 0 ORDER BY at"
    ]
   },
   {
@@ -244,7 +244,7 @@
    "height": 8,
    "agg": "sum",
    "queries": [
-    "SELECT at AS time, coalesce(nullif(json_extract(payload,'$.stopped'),''),'(not reported)') AS metric, 1 AS value FROM events WHERE kind='session_end' AND (coalesce(json_extract(payload,'$.model'),'') <> '' OR coalesce(json_extract(payload,'$.turns'),0) > 0) AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
+    "SELECT at AS time, coalesce(nullif((payload->>'stopped'),''),'(not reported)') AS metric, 1 AS value FROM events WHERE kind='session_end' AND (coalesce((payload->>'model'),'') <> '' OR coalesce(jnum(payload->'turns'), 0) > 0) AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
    ]
   },
   {
@@ -258,7 +258,7 @@
    "unit": "tokens",
    "height": 8,
    "queries": [
-    "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(json_extract(payload,'$.tokens_out')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) WHERE time*1000 BETWEEN $__from AND $__to"
+    "SELECT * FROM (SELECT at AS time, (SELECT r.name FROM runs r WHERE r.run = events.run) AS metric, sum(jnum(payload->'tokens_out')) OVER (PARTITION BY (SELECT r.name FROM runs r WHERE r.run = events.run) ORDER BY at) AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' ORDER BY at) AS s1 WHERE time*1000 BETWEEN $__from AND $__to"
    ],
    "label": "Tokens out per run"
   },
@@ -269,7 +269,7 @@
    "unit": "tokens",
    "height": 8,
    "queries": [
-    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, json_extract(payload,'$.tokens_out') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
+    "SELECT at AS time, coalesce(nullif(phase,''),'no phase') AS phase, coalesce(nullif(agent,''),'?') AS agent, jnum(payload->'tokens_out') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY at"
    ],
    "label": "Tokens out",
    "by": [
@@ -286,7 +286,7 @@
    "unit": "tokens",
    "height": 8,
    "queries": [
-    "SELECT at AS time, 'read' AS metric, json_extract(payload,'$.cache_read') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at AS time, 'written' AS metric, json_extract(payload,'$.cache_write') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1"
+    "SELECT at AS time, 'read' AS metric, jnum(payload->'cache_read') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at AS time, 'written' AS metric, jnum(payload->'cache_write') AS value FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND kind = 'spend' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1"
    ],
    "label": "Cache: read vs written",
    "agg": "sum",
@@ -299,7 +299,7 @@
    "unit": "",
    "height": 9,
    "queries": [
-    "SELECT r.started AS started, r.name AS run, coalesce(r.verdict,'running') AS verdict, CAST(sum(json_extract(e.payload,'$.tokens_out')) AS INTEGER) AS tokens_out, CAST(sum(json_extract(e.payload,'$.cache_read')) AS INTEGER) AS cache_read, CAST(sum(json_extract(e.payload,'$.cache_write')) AS INTEGER) AS cache_write, ROUND(sum(json_extract(e.payload,'$.usd')), 2) AS usd FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' AND e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) GROUP BY e.run ORDER BY r.started DESC LIMIT 50"
+    "SELECT r.started AS started, r.name AS run, coalesce(r.verdict,'running') AS verdict, trunc(sum(jnum(e.payload->'tokens_out')))::bigint AS tokens_out, trunc(sum(jnum(e.payload->'cache_read')))::bigint AS cache_read, trunc(sum(jnum(e.payload->'cache_write')))::bigint AS cache_write, ROUND(sum(jnum(e.payload->'usd')), 2) AS usd FROM events e JOIN runs r ON r.run = e.run WHERE e.kind = 'spend' AND e.run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) GROUP BY e.run, r.run, r.started, r.name, r.verdict ORDER BY r.started DESC NULLS LAST LIMIT 50"
    ],
    "label": "Tokens and cost"
   },
@@ -314,7 +314,7 @@
    "unit": "mbytes",
    "height": 8,
    "queries": [
-    "SELECT s.at AS time, json_extract(s.payload,'$.container') AS container, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND ifnull(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND ifnull(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, json_extract(s.payload,'$.memory_mb') AS value FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' ORDER BY s.at",
+    "SELECT s.at AS time, (s.payload->>'container') AS container, coalesce((SELECT p.phase FROM events p WHERE p.kind = 'phase_start' AND coalesce(p.phase,'') <> '' AND p.at <= s.at ORDER BY p.at DESC LIMIT 1),'no phase') AS phase, coalesce((SELECT a.agent FROM events a WHERE a.kind = 'session_start' AND coalesce(a.agent,'') <> '' AND a.at <= s.at ORDER BY a.at DESC LIMIT 1),'nobody') AS agent, jnum(s.payload->'memory_mb') AS value FROM events s WHERE s.at*1000 BETWEEN $__from AND $__to AND s.kind = 'sample' ORDER BY s.at",
     "SELECT at AS time, name AS metric, value FROM limits WHERE name = 'limits.memory_mb' AND at*1000 <= $__to AND (at*1000 >= $__from OR at = (SELECT max(at) FROM limits WHERE name = 'limits.memory_mb' AND at*1000 < $__from)) ORDER BY at"
    ],
    "label": "Memory",
@@ -332,7 +332,7 @@
    "unit": "cores",
    "height": 8,
    "queries": [
-    "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.cpu_pct')/100.0 AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at"
+    "SELECT at AS time, (payload->>'container') AS metric, jnum(payload->'cpu_pct')/100.0 AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at"
    ]
   },
   {
@@ -342,7 +342,7 @@
    "unit": "processes",
    "height": 8,
    "queries": [
-    "SELECT at AS time, json_extract(payload,'$.container') AS metric, json_extract(payload,'$.pids') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at"
+    "SELECT at AS time, (payload->>'container') AS metric, jnum(payload->'pids') AS value FROM events WHERE at*1000 BETWEEN $__from AND $__to AND kind = 'sample' ORDER BY at"
    ]
   },
   {
@@ -352,7 +352,7 @@
    "unit": "",
    "height": 8,
    "queries": [
-    "SELECT time, metric, value, label FROM (SELECT e.at AS time, '#' || n.seq || ' ' || coalesce(r.name,'') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.phase ORDER BY e.at), r.finished, strftime('%s','now')) AS value, coalesce(nullif(e.phase,''),'?') AS label, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run JOIN (SELECT run, dense_rank() OVER (ORDER BY started) AS seq FROM runs) n ON n.run = e.run WHERE e.kind IN ('phase_start','phase_end') AND ifnull(e.phase,'') <> '') WHERE kind = 'phase_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
+    "SELECT time, metric, value, label FROM (SELECT e.at AS time, '#' || n.seq || ' ' || coalesce(r.name,'') AS metric, coalesce(lead(e.at) OVER (PARTITION BY e.run, e.phase ORDER BY e.at), r.finished, floor(extract(epoch from now()))::float8) AS value, coalesce(nullif(e.phase,''),'?') AS label, e.kind AS kind FROM events e JOIN runs r ON r.run = e.run JOIN (SELECT run, dense_rank() OVER (ORDER BY started) AS seq FROM runs) n ON n.run = e.run WHERE e.kind IN ('phase_start','phase_end') AND coalesce(e.phase,'') <> '') AS s1 WHERE kind = 'phase_start' AND value*1000 >= $__from AND time*1000 <= $__to ORDER BY time"
    ],
    "label": "Phases by run",
    "scope": "window"
@@ -368,7 +368,7 @@
    "unit": "",
    "height": 8,
    "queries": [
-    "SELECT max(at) AS time, 'rounds' AS metric, count(*) AS value, phase AS label FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'findings', sum(findings), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(e), 'minutes', round(sum(e-s)/60.0, 1), phase FROM (SELECT phase, min(s) s, max(e) e FROM (SELECT phase, s, e, sum(nw) OVER (PARTITION BY phase ORDER BY s ROWS UNBOUNDED PRECEDING) grp FROM (SELECT phase, s, e, CASE WHEN s > coalesce(max(e) OVER (PARTITION BY phase ORDER BY s ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), -1) THEN 1 ELSE 0 END nw FROM (SELECT phase, at-seconds s, at e FROM gates WHERE at*1000 BETWEEN $__from AND $__to))) GROUP BY phase, grp) GROUP BY phase ORDER BY 1"
+    "SELECT max(at) AS time, 'rounds' AS metric, count(*) AS value, phase AS label FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(at), 'findings', sum(findings), phase FROM gates WHERE at*1000 BETWEEN $__from AND $__to GROUP BY phase UNION ALL SELECT max(e), 'minutes', round(sum(e-s)/60.0, 1), phase FROM (SELECT phase, min(s) s, max(e) e FROM (SELECT phase, s, e, sum(nw) OVER (PARTITION BY phase ORDER BY s ROWS UNBOUNDED PRECEDING) grp FROM (SELECT phase, s, e, CASE WHEN s > coalesce(max(e) OVER (PARTITION BY phase ORDER BY s ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), -1) THEN 1 ELSE 0 END nw FROM (SELECT phase, at-seconds s, at e FROM gates WHERE at*1000 BETWEEN $__from AND $__to) AS s4) AS s3) AS s2 GROUP BY phase, grp) AS s1 GROUP BY phase ORDER BY 1"
    ],
    "label": "Gates"
   },
@@ -389,7 +389,7 @@
    "unit": "",
    "height": 9,
    "queries": [
-    "SELECT coalesce(nullif(s.branch,''),'(no branch)') AS branch, count(*) AS suite_runs, coalesce(l.laps,0) AS heal_laps, l.cap AS cap, l.decision AS last_lap, coalesce(h.minutes,0) AS heal_minutes, coalesce(m.usd,0) AS heal_usd, min(CASE WHEN s.n=1 THEN s.failed END) AS failed_first, min(CASE WHEN s.rn=1 THEN s.failed END) AS failed_last, min(CASE WHEN s.rn=1 THEN s.verdict END) AS last_suite, min(CASE WHEN s.rn=1 THEN s.reason END) AS why FROM (SELECT *, row_number() OVER (PARTITION BY branch ORDER BY at) AS n, row_number() OVER (PARTITION BY branch ORDER BY at DESC) AS rn FROM suites WHERE at*1000 BETWEEN $__from AND $__to) s LEFT JOIN (SELECT branch, max(lap) AS laps, max(cap) AS cap, max(CASE WHEN rn=1 THEN decision END) AS decision FROM (SELECT branch, lap, cap, decision, row_number() OVER (PARTITION BY branch ORDER BY at DESC) AS rn FROM heal_laps WHERE at*1000 BETWEEN $__from AND $__to) GROUP BY branch) l ON l.branch=s.branch LEFT JOIN (SELECT coalesce(json_extract(payload,'$.branch'),'') AS branch, round(sum(json_extract(payload,'$.seconds'))/60.0,1) AS minutes FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) h ON h.branch=s.branch LEFT JOIN (SELECT coalesce(json_extract(payload,'$.branch'),'') AS branch, round(sum(json_extract(payload,'$.usd')),2) AS usd FROM events WHERE kind='spend' AND json_extract(payload,'$.phase') LIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) m ON m.branch=s.branch GROUP BY s.branch ORDER BY heal_laps DESC, suite_runs DESC"
+    "SELECT coalesce(nullif(s.branch,''),'(no branch)') AS branch, count(*) AS suite_runs, coalesce(l.laps,0) AS heal_laps, l.cap AS cap, l.decision AS last_lap, coalesce(h.minutes,0) AS heal_minutes, coalesce(m.usd,0) AS heal_usd, min(CASE WHEN s.n=1 THEN s.failed END) AS failed_first, min(CASE WHEN s.rn=1 THEN s.failed END) AS failed_last, min(CASE WHEN s.rn=1 THEN s.verdict END) AS last_suite, min(CASE WHEN s.rn=1 THEN s.reason END) AS why FROM (SELECT *, row_number() OVER (PARTITION BY branch ORDER BY at) AS n, row_number() OVER (PARTITION BY branch ORDER BY at DESC) AS rn FROM suites WHERE at*1000 BETWEEN $__from AND $__to) s LEFT JOIN (SELECT branch, max(lap) AS laps, max(cap) AS cap, max(CASE WHEN rn=1 THEN decision END) AS decision FROM (SELECT branch, lap, cap, decision, row_number() OVER (PARTITION BY branch ORDER BY at DESC) AS rn FROM heal_laps WHERE at*1000 BETWEEN $__from AND $__to) AS s1 GROUP BY branch) l ON l.branch=s.branch LEFT JOIN (SELECT coalesce((payload->>'branch'),'') AS branch, round(sum(jnum(payload->'seconds'))/60.0,1) AS minutes FROM events WHERE kind='phase_end' AND (payload->>'phase') ILIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) h ON h.branch=s.branch LEFT JOIN (SELECT coalesce((payload->>'branch'),'') AS branch, round(sum(jnum(payload->'usd')),2) AS usd FROM events WHERE kind='spend' AND (payload->>'phase') ILIKE '%heal%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1) m ON m.branch=s.branch GROUP BY s.branch, l.laps, l.cap, l.decision, h.minutes, m.usd ORDER BY heal_laps DESC, suite_runs DESC"
    ]
   },
   {
@@ -403,7 +403,7 @@
    "unit": "",
    "height": 9,
    "queries": [
-    "SELECT r.started AS started, r.finished AS finished, r.name AS run, coalesce(r.verdict,'running') AS verdict, CAST((coalesce(r.finished, strftime('%s','now')) - r.started)/60 AS INTEGER) AS elapsed_min, CAST(((coalesce(r.finished, strftime('%s','now')) - r.started) - coalesce(g.idle,0))/60 AS INTEGER) AS busy_min, CAST(coalesce(g.idle,0)/60 AS INTEGER) AS idle_min, ROUND(100.0*coalesce(g.idle,0) / max(1.0, coalesce(r.finished, strftime('%s','now')) - r.started), 1) AS idle_pct, ROUND(coalesce(r.usd,0),2) AS usd FROM runs r LEFT JOIN ( SELECT run, sum(gap) AS idle FROM ( SELECT run, CASE WHEN at - lag(at) OVER (PARTITION BY run ORDER BY at) > 120 THEN at - lag(at) OVER (PARTITION BY run ORDER BY at) ELSE 0 END AS gap FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL) GROUP BY run) g ON g.run = r.run ORDER BY r.started DESC LIMIT 50"
+    "SELECT r.started AS started, r.finished AS finished, r.name AS run, coalesce(r.verdict,'running') AS verdict, trunc((coalesce(r.finished, floor(extract(epoch from now()))::float8) - r.started)/60)::bigint AS elapsed_min, trunc(((coalesce(r.finished, floor(extract(epoch from now()))::float8) - r.started) - coalesce(g.idle,0))/60)::bigint AS busy_min, trunc(coalesce(g.idle,0)/60)::bigint AS idle_min, ROUND(100.0*coalesce(g.idle,0) / greatest(1.0, coalesce(r.finished, floor(extract(epoch from now()))::float8) - r.started), 1) AS idle_pct, ROUND(coalesce(r.usd,0),2) AS usd FROM runs r LEFT JOIN ( SELECT run, sum(gap) AS idle FROM ( SELECT run, CASE WHEN at - lag(at) OVER (PARTITION BY run ORDER BY at) > 120 THEN at - lag(at) OVER (PARTITION BY run ORDER BY at) ELSE 0 END AS gap FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL) AS s1 GROUP BY run) g ON g.run = r.run ORDER BY r.started DESC LIMIT 50"
    ],
    "label": "Busy vs idle"
   },
@@ -414,7 +414,7 @@
    "unit": "",
    "height": 9,
    "queries": [
-    "SELECT * FROM (SELECT at AS at, run, coalesce(nullif(phase,''),'') AS phase, coalesce(nullif(agent,''),'') AS agent, CAST(gap/60 AS INTEGER) AS minutes FROM (SELECT at, run, phase, agent, at - lag(at) OVER (PARTITION BY run ORDER BY at) AS gap FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL) WHERE gap > 300 ORDER BY at DESC LIMIT 50) WHERE at*1000 BETWEEN $__from AND $__to"
+    "SELECT * FROM (SELECT at AS at, run, coalesce(nullif(phase,''),'') AS phase, coalesce(nullif(agent,''),'') AS agent, trunc(gap/60)::bigint AS minutes FROM (SELECT at, run, phase, agent, at - lag(at) OVER (PARTITION BY run ORDER BY at) AS gap FROM events WHERE run NOT IN (SELECT run FROM runs WHERE started*1000 > $__to OR (finished IS NOT NULL AND finished*1000 < $__from)) AND run IS NOT NULL) AS s2 WHERE gap > 300 ORDER BY at DESC LIMIT 50) AS s1 WHERE at*1000 BETWEEN $__from AND $__to"
    ],
    "label": "Longest gaps"
   },
@@ -447,7 +447,7 @@
    "unit": "",
    "height": 9,
    "queries": [
-    "SELECT started AS started, finished AS finished, name, coalesce(verdict,'running') AS verdict, CAST((coalesce(finished, strftime('%s','now')) - started)/60 AS INTEGER) AS minutes, ROUND(coalesce(usd,0),2) AS usd, coalesce(turns,0) AS turns, coalesce(summary,'') AS summary FROM runs ORDER BY started DESC LIMIT 50"
+    "SELECT started AS started, finished AS finished, name, coalesce(verdict,'running') AS verdict, trunc((coalesce(finished, floor(extract(epoch from now()))::float8) - started)/60)::bigint AS minutes, ROUND(coalesce(usd,0),2) AS usd, coalesce(turns,0) AS turns, coalesce(summary,'') AS summary FROM runs ORDER BY started DESC LIMIT 50"
    ]
   },
   {
@@ -472,7 +472,7 @@
    "unit": "",
    "height": 9,
    "queries": [
-    "SELECT agent, branch, kind, count(*) AS times, signature FROM calls WHERE at*1000 BETWEEN $__from AND $__to GROUP BY agent, branch, signature HAVING times > 1 ORDER BY times DESC LIMIT 60"
+    "SELECT agent, branch, max(kind) AS kind, count(*) AS times, signature FROM calls WHERE at*1000 BETWEEN $__from AND $__to GROUP BY agent, branch, signature HAVING count(*) > 1 ORDER BY times DESC LIMIT 60"
    ],
    "label": "Repeated calls"
   },
@@ -483,7 +483,7 @@
    "unit": "",
    "height": 9,
    "queries": [
-    "SELECT agent, branch, target, group_concat(DISTINCT kind) AS kinds, count(*) AS times, count(DISTINCT signature) AS ways FROM calls WHERE at*1000 BETWEEN $__from AND $__to AND ifnull(target,'') <> '' GROUP BY agent, branch, target HAVING times > 1 ORDER BY times DESC LIMIT 60"
+    "SELECT agent, branch, target, string_agg(DISTINCT kind, ',') AS kinds, count(*) AS times, count(DISTINCT signature) AS ways FROM calls WHERE at*1000 BETWEEN $__from AND $__to AND coalesce(target,'') <> '' GROUP BY agent, branch, target HAVING count(*) > 1 ORDER BY times DESC LIMIT 60"
    ],
    "label": "Repeated file touches"
   },

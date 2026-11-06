@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
-
-	_ "modernc.org/sqlite"
 )
 
 // What is weighed, what is done about it, and how it is written down.
@@ -1098,8 +1096,8 @@ func withContext(conf Config, ctx map[string]string) map[string]string {
 // #777). Read only as tags.where, APF-3239's host run of 2026-10-23 counted
 // as a stack run and held the docker stand's deploy and its next run.
 func whereOf(payload string) string {
-	return `coalesce(json_extract(` + payload + `, '$.tags.where'), json_extract(` + payload +
-		`, '$.tags.resolved.where'), json_extract(` + payload + `, '$.tags.params.where'))`
+	return `coalesce(` + payload + `->'tags'->>'where', ` + payload +
+		`->'tags'->'resolved'->>'where', ` + payload + `->'tags'->'params'->>'where')`
 }
 
 // hostRun is a run whose run_start says where = local: it runs on the

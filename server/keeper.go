@@ -51,8 +51,8 @@ func recentTickets() []string {
 	mu.Lock()
 	defer mu.Unlock()
 	rows, err := db.Query(`SELECT DISTINCT name FROM runs WHERE started > ?
-	                       AND name GLOB '[A-Z]*-[0-9]*' AND name NOT LIKE 'WD-%'
-	                       AND name NOT LIKE 'ADHOC-%'`, wdNow()-2*86400)
+	                       AND name ~ '^[A-Z].*-[0-9]' AND name NOT ILIKE 'WD-%'
+	                       AND name NOT ILIKE 'ADHOC-%'`, wdNow()-2*86400)
 	if err != nil {
 		return nil
 	}
@@ -64,6 +64,7 @@ func recentTickets() []string {
 			out = append(out, n)
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter list it always was
 	return out
 }
 

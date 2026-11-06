@@ -37,11 +37,11 @@ CREATE TABLE IF NOT EXISTS kb (
     kind       TEXT NOT NULL,
     body       TEXT NOT NULL,
     learned_by TEXT,
-    at         REAL NOT NULL,
-    stale      INTEGER NOT NULL DEFAULT 0,
+    at         double precision NOT NULL,
+    stale      bigint NOT NULL DEFAULT 0,
     stale_why  TEXT,
     stale_by   TEXT,
-    stale_at   REAL,
+    stale_at   double precision,
     PRIMARY KEY (project, topic)
 );`
 
@@ -109,7 +109,7 @@ func kbNow() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 // putKB writes or replaces one entry. Writing an entry again is how a stale one
 // is re-learned: the mark goes with the old body.
-func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func putKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	var in kbEntry
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
@@ -159,7 +159,7 @@ func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 }
 
 // staleKB marks an entry whose probe failed: {project, topic, why, run}.
-func staleKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func staleKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Project string `json:"project"`
 		Topic   string `json:"topic"`
@@ -192,7 +192,7 @@ func staleKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 
 // getKB answers ?project=<p>[&topic=<t>][&kind=<k>]: every entry of the
 // project, stale ones included and marked, so a run sees what it must re-learn.
-func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func getKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	project := strings.TrimSpace(q.Get("project"))
 	if project == "" {
@@ -230,7 +230,7 @@ func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 // listed the jobs and seen none - and the ticket named the job's task; marked
 // stale, they still came back to every question about that flag. Something
 // the ticket or its discussion contradicts is not kept at all.
-func forgetKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func forgetKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Project string `json:"project"`
 		Topic   string `json:"topic"`
@@ -258,7 +258,6 @@ func forgetKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request
 	for _, topic := range []string{in.Topic, "entry:" + in.Topic} {
 		docs := `SELECT id FROM kb_docs WHERE project = ? AND topic = ?`
 		for _, q := range []string{
-			`DELETE FROM kb_fts WHERE chunk IN (SELECT id FROM kb_chunks WHERE doc IN (` + docs + `))`,
 			`DELETE FROM kb_chunks WHERE doc IN (` + docs + `)`,
 		} {
 			if _, err := tx.ExecContext(r.Context(), q, in.Project, topic); err != nil {

@@ -13,7 +13,7 @@
    "unit": "percent",
    "height": 8,
    "queries": [
-    "SELECT at AS time, 'local: ' || json_extract(payload,'$.model') AS metric, json_extract(payload,'$.local_rate') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' UNION ALL SELECT at, 'sonnet', json_extract(payload,'$.sonnet_rate') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' ORDER BY 1"
+    "SELECT at AS time, 'local: ' || (payload->>'model') AS metric, jnum(payload->'local_rate') AS value FROM events WHERE kind='learning' AND (payload->>'item')='shadow_eval' UNION ALL SELECT at, 'sonnet', jnum(payload->'sonnet_rate') FROM events WHERE kind='learning' AND (payload->>'item')='shadow_eval' ORDER BY 1"
    ]
   },
   {
@@ -23,7 +23,7 @@
    "unit": "",
    "height": 7,
    "queries": [
-    "SELECT at, json_extract(payload,'$.model') AS model, json_extract(payload,'$.pairs') AS pairs, round(json_extract(payload,'$.sonnet_rate')) AS sonnet_pct, round(json_extract(payload,'$.local_rate')) AS local_pct, round(json_extract(payload,'$.sonnet_rate')-json_extract(payload,'$.local_rate')) AS gap FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='shadow_eval' ORDER BY at DESC"
+    "SELECT at, (payload->>'model') AS model, jnum(payload->'pairs') AS pairs, round(jnum(payload->'sonnet_rate'), 0) AS sonnet_pct, round(jnum(payload->'local_rate'), 0) AS local_pct, round(jnum(payload->'sonnet_rate')-jnum(payload->'local_rate'), 0) AS gap FROM events WHERE kind='learning' AND (payload->>'item')='shadow_eval' ORDER BY at DESC"
    ]
   },
   {
@@ -38,7 +38,7 @@
    "unit": "mbytes",
    "height": 8,
    "queries": [
-    "SELECT at AS time, 'shipped' AS metric, json_extract(payload,'$.kb')/1024.0 AS value, json_extract(payload,'$.ticket') AS label FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' ORDER BY 1"
+    "SELECT at AS time, 'shipped' AS metric, jnum(payload->'kb')/1024.0 AS value, (payload->>'ticket') AS label FROM events WHERE kind='learning' AND (payload->>'item')='hoard' ORDER BY 1"
    ]
   },
   {
@@ -48,7 +48,7 @@
    "unit": "files",
    "height": 8,
    "queries": [
-    "SELECT at AS time, 'transcripts' AS metric, json_extract(payload,'$.transcripts') AS value, json_extract(payload,'$.ticket') AS label FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' UNION ALL SELECT at, 'funcreq files', json_extract(payload,'$.funcreq'), json_extract(payload,'$.ticket') FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='hoard' ORDER BY 1"
+    "SELECT at AS time, 'transcripts' AS metric, jnum(payload->'transcripts') AS value, (payload->>'ticket') AS label FROM events WHERE kind='learning' AND (payload->>'item')='hoard' UNION ALL SELECT at, 'funcreq files', jnum(payload->'funcreq'), (payload->>'ticket') FROM events WHERE kind='learning' AND (payload->>'item')='hoard' ORDER BY 1"
    ]
   },
   {
@@ -63,7 +63,7 @@
    "unit": "",
    "height": 7,
    "queries": [
-    "SELECT at, json_extract(payload,'$.base') AS base, json_extract(payload,'$.model') AS model, json_extract(payload,'$.samples') AS samples, json_extract(payload,'$.epochs') AS epochs, json_extract(payload,'$.loss') AS loss, json_extract(payload,'$.minutes') AS minutes FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='tune' ORDER BY at DESC"
+    "SELECT at, (payload->>'base') AS base, (payload->>'model') AS model, jnum(payload->'samples') AS samples, jnum(payload->'epochs') AS epochs, jnum(payload->'loss') AS loss, jnum(payload->'minutes') AS minutes FROM events WHERE kind='learning' AND (payload->>'item')='tune' ORDER BY at DESC"
    ]
   },
   {
@@ -73,7 +73,7 @@
    "unit": "loss",
    "height": 8,
    "queries": [
-    "SELECT at AS time, json_extract(payload,'$.model') AS metric, json_extract(payload,'$.loss') AS value FROM events WHERE kind='learning' AND json_extract(payload,'$.item')='tune' ORDER BY 1"
+    "SELECT at AS time, (payload->>'model') AS metric, jnum(payload->'loss') AS value FROM events WHERE kind='learning' AND (payload->>'item')='tune' ORDER BY 1"
    ]
   }
  ]

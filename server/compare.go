@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
-
-	_ "modernc.org/sqlite"
 )
 
 // Two runs of the same ticket, side by side, in the four numbers that decide
@@ -192,9 +190,9 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// "": a guard that refuses without naming a rule is a thing worth seeing
 	// in the total rather than dropping.
 	scan(`SELECT coalesce(`+col+`,''),
-	      coalesce(json_extract(payload,'$.rule'),''), count(*)
+	      coalesce((payload->>'rule'),''), count(*)
 	      FROM events WHERE run=? AND kind='call'
-	      AND json_extract(payload,'$.ok')=0 GROUP BY 1,2`, []any{run},
+	      AND jnum(payload->'ok')=0 GROUP BY 1,2`, []any{run},
 		func(get func(...any) bool) {
 			var key, rule string
 			var n int64
@@ -210,7 +208,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// units.
 	scan(`SELECT coalesce(`+col+`,''), count(*),
 	      sum(coalesce(tokens_in,0)),
-	      sum(max(coalesce(tokens_out,0), coalesce(out_est,0)))
+	      sum(greatest(coalesce(tokens_out,0), coalesce(out_est,0)))
 	      FROM turns WHERE run=? GROUP BY 1`, []any{run}, func(get func(...any) bool) {
 		var key string
 		var n, in, out int64
@@ -228,9 +226,9 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// sends both is sending the same tokens twice, so the turn wins and the
 	// bill fills in only where the turn said nothing.
 	scan(`SELECT coalesce(`+col+`,''),
-	      sum(coalesce(json_extract(payload,'$.usd'),0)),
-	      sum(coalesce(json_extract(payload,'$.tokens_in'),0)),
-	      sum(coalesce(json_extract(payload,'$.tokens_out'),0))
+	      sum(coalesce(jnum(payload->'usd'), 0)),
+	      sum(coalesce(jnum(payload->'tokens_in'), 0)),
+	      sum(coalesce(jnum(payload->'tokens_out'), 0))
 	      FROM events WHERE run=? AND kind='spend' GROUP BY 1`, []any{run},
 		func(get func(...any) bool) {
 			var key string
@@ -263,7 +261,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	if by == "agent" {
 		span = "session_end"
 	}
-	scan(`SELECT coalesce(`+col+`,''), sum(coalesce(json_extract(payload,'$.seconds'),0))
+	scan(`SELECT coalesce(`+col+`,''), sum(coalesce(jnum(payload->'seconds'), 0))
 	      FROM events WHERE run=? AND kind=? GROUP BY 1`, []any{run, span},
 		func(get func(...any) bool) {
 			var key string
@@ -285,8 +283,8 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	      min(at), max(at) FROM (
 	        SELECT coalesce(`+col+`,'') AS g, at,
 	               at - lag(at) OVER (PARTITION BY coalesce(`+col+`,'') ORDER BY at) AS gap
-	        FROM events WHERE run=? AND ifnull(`+col+`,'') <> ''
-	      ) GROUP BY g`, []any{run}, func(get func(...any) bool) {
+	        FROM events WHERE run=? AND coalesce(`+col+`,'') <> ''
+	      ) AS gaps GROUP BY g`, []any{run}, func(get func(...any) bool) {
 		var key string
 		var idle, first, last float64
 		if get(&key, &idle, &first, &last) {
@@ -324,7 +322,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	_ = db.QueryRow(`SELECT coalesce(sum(CASE WHEN gap > `+fmt.Sprint(idleGap)+`
 	             THEN gap ELSE 0 END),0) FROM (
 	               SELECT at - lag(at) OVER (ORDER BY at) AS gap
-	               FROM events WHERE run=?)`, run).Scan(&total.Idle)
+	               FROM events WHERE run=?) AS gaps`, run).Scan(&total.Idle)
 	return rows, total
 }
 
@@ -340,6 +338,9 @@ func scan(query string, args []any, fn func(get func(...any) bool)) {
 	for rows.Next() {
 		fn(func(into ...any) bool { return rows.Scan(into...) == nil })
 	}
+	// A cut-off read is a shorter table, the same as before; the error is
+	// read so it is a decision and not an accident.
+	_ = rows.Err()
 }
 
 // published is the number this metric is shown as: money to four places,

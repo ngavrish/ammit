@@ -125,7 +125,7 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 		// buckets it leaves and joins are due again.
 		for _, t := range []string{"model_answers", "model_idle"} {
 			if rs, err := b.x.Query(`SELECT DISTINCT day, phase, coalesce(model,'') FROM `+t+`
-			        WHERE run=? AND branch=? AND agent=? AND model IS NOT ?`, run, branch, agent, model); err == nil {
+			        WHERE run=? AND branch=? AND agent=? AND model IS DISTINCT FROM ?`, run, branch, agent, model); err == nil {
 				for rs.Next() {
 					var k bucket
 					if rs.Scan(&k.day, &k.phase, &k.model) == nil {
@@ -136,9 +136,10 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 						b.dirty[k] = true
 					}
 				}
+				_ = rs.Err() // a cut-off read is the shorter answer it always was
 				closeRows(rs)
 			}
-			b.exec(`UPDATE `+t+` SET model=? WHERE run=? AND branch=? AND agent=? AND model IS NOT ?`,
+			b.exec(`UPDATE `+t+` SET model=? WHERE run=? AND branch=? AND agent=? AND model IS DISTINCT FROM ?`,
 				model, run, branch, agent, model)
 		}
 		return
@@ -163,8 +164,8 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 		if idle == "" || seconds == 0 {
 			return
 		}
-		b.exec(`INSERT OR IGNORE INTO model_idle (event_id, at, day, run, branch, agent, phase, model, kind, seconds)
-		        VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		b.exec(`INSERT INTO model_idle (event_id, at, day, run, branch, agent, phase, model, kind, seconds)
+		        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
 			id, at, dayOf(at), run, branch, agent, phase, nullable(m), idle, seconds)
 		if m != "" {
 			b.dirty[bucket{dayOf(at), phase, m}] = true
@@ -178,8 +179,8 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 	if msg != "AssistantMessage" {
 		return
 	}
-	b.exec(`INSERT OR IGNORE INTO model_answers (event_id, at, day, run, branch, agent, phase, model, seconds, retry_s)
-	        VALUES (?,?,?,?,?,?,?,?,?,?)`,
+	b.exec(`INSERT INTO model_answers (event_id, at, day, run, branch, agent, phase, model, seconds, retry_s)
+	        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
 		id, at, dayOf(at), run, branch, agent, phase, nullable(m), st.seconds, st.retry)
 	if m != "" {
 		b.dirty[bucket{dayOf(at), phase, m}] = true
@@ -192,23 +193,29 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 func (b *answerBatch) flush() {
 	for sk := range b.touched {
 		st := answerStreams[sk]
-		b.exec(`INSERT OR REPLACE INTO model_streams (run, branch, agent, phase, seconds, retry_s, at)
-		        VALUES (?,?,?,?,?,?,?)`, sk.run, sk.branch, sk.agent, sk.phase, st.seconds, st.retry, st.at)
+		b.exec(`INSERT INTO model_streams (run, branch, agent, phase, seconds, retry_s, at)
+		        VALUES (?,?,?,?,?,?,?)
+		        ON CONFLICT (run, branch, agent, phase) DO UPDATE SET seconds=excluded.seconds,
+		          retry_s=excluded.retry_s, at=excluded.at`, sk.run, sk.branch, sk.agent, sk.phase, st.seconds, st.retry, st.at)
 	}
 	for k := range b.dirty {
-		b.exec(`INSERT OR REPLACE INTO phase_model_times
+		b.exec(`INSERT INTO phase_model_times
 		          (day, phase, model, answers, min_s, sum_s, max_s, over_120, retry_s, background_s)
-		        SELECT ?1, ?2, ?3, count(*), min(seconds), coalesce(sum(seconds),0), max(seconds),
-		               coalesce(sum(seconds>120),0),
+		        SELECT ?1::bigint, ?2::text, ?3::text, count(*), min(seconds), coalesce(sum(seconds),0), max(seconds),
+		               coalesce(sum((seconds>120)::int),0),
 		               coalesce(sum(retry_s),0) + (SELECT coalesce(sum(seconds),0) FROM model_idle
 		                    WHERE day=?1 AND phase=?2 AND model=?3 AND kind='retry'),
 		               (SELECT coalesce(sum(seconds),0) FROM model_idle
 		                    WHERE day=?1 AND phase=?2 AND model=?3 AND kind='background')
-		        FROM model_answers WHERE day=?1 AND phase=?2 AND model=?3`, k.day, k.phase, k.model)
+		        FROM model_answers WHERE day=?1 AND phase=?2 AND model=?3
+		        ON CONFLICT (day, phase, model) DO UPDATE SET answers=excluded.answers,
+		          min_s=excluded.min_s, sum_s=excluded.sum_s, max_s=excluded.max_s,
+		          over_120=excluded.over_120, retry_s=excluded.retry_s,
+		          background_s=excluded.background_s`, k.day, k.phase, k.model)
 	}
 	if b.last > 0 {
 		b.exec(`INSERT INTO lift_marks (name, at) VALUES ('answers', ?)
-		        ON CONFLICT(name) DO UPDATE SET at=max(at, excluded.at)`, b.last)
+		        ON CONFLICT(name) DO UPDATE SET at=greatest(lift_marks.at, excluded.at)`, b.last)
 	}
 	b.touched, b.dirty = map[streamKey]bool{}, map[bucket]bool{}
 }
@@ -260,10 +267,10 @@ func backfillAnswers() {
 		}
 		b := newAnswerBatch(tx)
 		rs, err := tx.QueryContext(bg, `SELECT id, at, kind, coalesce(run,''), coalesce(branch,''), coalesce(phase,''),
-		        coalesce(agent,''), coalesce(json_extract(payload,'$.wait'),''),
-		        coalesce(json_extract(payload,'$.msg'),''), coalesce(json_extract(payload,'$.seconds'),0),
-		        instr(coalesce(json_extract(payload,'$.detail'),''),'api_retry')>0,
-		        coalesce(json_extract(payload,'$.model'),'')
+		        coalesce(agent,''), coalesce(payload->>'wait',''),
+		        coalesce(payload->>'msg',''), coalesce(jnum(payload->'seconds'),0),
+		        strpos(coalesce(payload->>'detail',''),'api_retry')>0,
+		        coalesce(payload->>'model','')
 		        FROM events WHERE kind IN ('request_end','turn') AND at > ? AND at <= ? ORDER BY at, id`, mark, to)
 		if err != nil {
 			_ = tx.Rollback()
@@ -285,6 +292,7 @@ func backfillAnswers() {
 				evs = append(evs, e)
 			}
 		}
+		_ = rs.Err() // a cut-off read is the shorter answer it always was
 		closeRows(rs)
 		for _, e := range evs {
 			b.add(e.id, e.at, e.kind, e.run, e.branch, e.phase, e.agent, e.wait, e.msg, e.s, e.retry, e.m)
@@ -323,6 +331,7 @@ func loadAnswerState() {
 				answerStreams[k] = st
 			}
 		}
+		_ = rs.Err() // a cut-off read is the shorter answer it always was
 		closeRows(rs)
 	}
 	if rs, err := db.QueryContext(bg, `SELECT run, branch, agent, model FROM model_of`); err == nil {
@@ -333,6 +342,7 @@ func loadAnswerState() {
 				streamModels[k] = m
 			}
 		}
+		_ = rs.Err() // a cut-off read is the shorter answer it always was
 		closeRows(rs)
 	}
 }
@@ -347,11 +357,11 @@ const answerSummary = `(WITH a AS (
   r AS (SELECT phase, model, seconds, retry_s,
           row_number() OVER (PARTITION BY phase, model ORDER BY seconds) - 1 AS i,
           count(*) OVER (PARTITION BY phase, model) AS n FROM a),
-  g AS (SELECT phase, model, n AS answers, min(seconds) AS mn, avg(seconds) AS av, max(seconds) AS mx,
+  g AS (SELECT phase, model, max(n) AS answers, min(seconds) AS mn, avg(seconds) AS av, max(seconds) AS mx,
           max(CASE WHEN i = n/2 THEN seconds END) AS p50,
-          max(CASE WHEN i = CAST(n*0.9 AS INTEGER) THEN seconds END) AS p90,
-          max(CASE WHEN i = CAST(n*0.99 AS INTEGER) THEN seconds END) AS p99,
-          100.0*sum(seconds > 120)/n AS over, sum(seconds) AS total, sum(retry_s) AS rs
+          max(CASE WHEN i = trunc(n*0.9) THEN seconds END) AS p90,
+          max(CASE WHEN i = trunc(n*0.99) THEN seconds END) AS p99,
+          100.0*sum((seconds > 120)::int)/max(n) AS over, sum(seconds) AS total, sum(retry_s) AS rs
         FROM r GROUP BY phase, model),
   idle AS (SELECT phase, model,
           sum(CASE WHEN kind='background' THEN seconds ELSE 0 END) AS bg,
@@ -362,9 +372,9 @@ const answerSummary = `(WITH a AS (
          round(mn,1) AS min_s, round(av,1) AS avg_s, round(p50,1) AS p50_s, round(p90,1) AS p90_s,
          round(p99,1) AS p99_s, round(mx,0) AS max_s, round(over,2) AS over_2min_pct,
          round(coalesce(rs,0) + coalesce(idle.rl,0), 0) AS retry_s,
-         round(100.0*(coalesce(rs,0) + coalesce(idle.rl,0))/max(total,1), 1) AS retry_pct,
+         round(100.0*(coalesce(rs,0) + coalesce(idle.rl,0))/greatest(total,1), 1) AS retry_pct,
          round(coalesce(idle.bg,0), 0) AS background_s
-  FROM g LEFT JOIN idle ON idle.phase = g.phase AND idle.model = g.model)`
+  FROM g LEFT JOIN idle ON idle.phase = g.phase AND idle.model = g.model) AS model_answers_summary`
 
 // fillAnswers expands the $__model_answers macro a panel reads the summary by.
 func fillAnswers(q string) string {

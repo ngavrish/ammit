@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -256,9 +257,9 @@ func scope(sql, run string) string {
 			// What the learning side reports - lessons stored, the hoard, shadow
 			// evals - belongs to a ticket, not a run, and arrives with no run.
 			// A run page keeps its ticket's; the window keeps them to its time.
-			where += fmt.Sprintf(" OR (run = '' AND kind = 'learning' AND json_extract(payload,'$.ticket') IN (SELECT name FROM main.runs WHERE run IN (%s)))", in)
+			where += fmt.Sprintf(" OR (run = '' AND kind = 'learning' AND payload->>'ticket' IN (SELECT name FROM public.runs WHERE run IN (%s)))", in)
 		}
-		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM main.%s WHERE %s)", t, t, where))
+		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM public.%s WHERE %s)", t, t, where))
 	}
 	return "WITH " + strings.Join(parts, ",\n     ") + "\n" + sql
 }
@@ -279,38 +280,33 @@ const _QUERY_DEADLINE = 60 * time.Second
 // rows runs one query and returns its columns and rows, whatever shape it has.
 // Reporting the error as data rather than as a status: a panel that cannot run
 // says so in its own box, and the other forty-two still draw.
-func rows(sql string) map[string]any {
+func rows(query string) map[string]any {
 	ctx, cancel := context.WithTimeout(context.Background(), _QUERY_DEADLINE)
 	defer cancel()
 	// Not under mu: mu serialises the writer, and this is the read-only
-	// connection, which WAL lets run beside it. Holding mu here stalled every
-	// POST /events for as long as one slow panel or /query ran - 59 s behind a
-	// runaway recursive CTE.
-	rs, err := readDB.QueryContext(ctx, sql)
-	if err != nil {
-		return map[string]any{"error": err.Error()}
-	}
-	defer rs.Close()
-	cols, _ := rs.Columns()
+	// pool, which runs beside it. Holding mu here stalled every POST /events
+	// for as long as one slow panel or /query ran - 59 s behind a runaway
+	// recursive CTE.
+	var cols []string
 	out := [][]any{}
-	for rs.Next() {
-		cells := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range cells {
-			ptrs[i] = &cells[i]
-		}
-		if rs.Scan(ptrs...) != nil {
-			continue
-		}
-		for i, c := range cells {
-			if b, ok := c.([]byte); ok {
-				cells[i] = string(b)
+	err := readOnly(ctx, query, func(rs *sql.Rows) error {
+		cols, _ = rs.Columns()
+		types := columnTypes(rs)
+		for rs.Next() {
+			cells, err := scanCells(rs, types)
+			if err != nil {
+				continue
+			}
+			out = append(out, cells)
+			if len(out) >= 20000 {
+				break
 			}
 		}
-		out = append(out, cells)
-		if len(out) >= 20000 {
-			break
-		}
+		_ = rs.Err() // a cut-off read is the shorter answer it always was
+		return nil
+	})
+	if err != nil {
+		return map[string]any{"error": err.Error()}
 	}
 	return map[string]any{"columns": cols, "rows": out}
 }
@@ -392,7 +388,7 @@ func serveCharts(mux *http.ServeMux) {
 		var args []any
 		q := r.URL.Query()
 		if v := strings.TrimSpace(q.Get("name")); v != "" {
-			where = append(where, "coalesce(name,'') LIKE ?")
+			where = append(where, "coalesce(name,'') ILIKE ?")
 			args = append(args, "%"+v+"%")
 		}
 		for _, f := range []struct{ param, col, op string }{
@@ -421,7 +417,7 @@ func serveCharts(mux *http.ServeMux) {
 		                     coalesce(finished,0), coalesce(verdict,''),
 		                     coalesce(usd,0), coalesce(turns,0)
 		                     FROM runs WHERE `+strings.Join(where, " AND ")+`
-		                     ORDER BY started DESC LIMIT 500`, args...)
+		                     ORDER BY started DESC NULLS LAST LIMIT 500`, args...)
 		type row struct {
 			Run      string  `json:"run"`
 			Name     string  `json:"name"`
@@ -440,6 +436,7 @@ func serveCharts(mux *http.ServeMux) {
 					out = append(out, x)
 				}
 			}
+			_ = rs.Err() // a cut-off read is the shorter answer it always was
 			rs.Close()
 		}
 		mu.Unlock()

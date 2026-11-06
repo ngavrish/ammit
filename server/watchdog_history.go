@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// `ammit watchdog-history <db> <days>`: the watchdog's drop detector, run
+// `ammit watchdog-history [dsn] [days]`: the watchdog's drop detector, run
 // read-only over a database's past runs. Prints, for every run started in
 // the window, whether the watchdog would have called it a drop, why, and the
 // phase a resume would have started from. Nothing is written: the database is
@@ -16,9 +16,11 @@ import (
 //
 // It exists because a detector is proved on the runs that actually dropped,
 // not on runs a test made up.
-func watchdogHistory(out io.Writer, dbPath string, days float64, conf Config) error {
+func watchdogHistory(out io.Writer, dsn string, days float64, conf Config) error {
+	// The read-only pool, as the writer: nothing below may write, and the
+	// database refusing it is the guarantee.
 	var err error
-	db, err = sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(30000)")
+	_, db, err = openPools(dsn)
 	if err != nil {
 		return err
 	}
@@ -34,6 +36,7 @@ func watchdogHistory(out io.Writer, dbPath string, days float64, conf Config) er
 			runs = append(runs, r)
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	rows.Close()
 	drops, waits := 0, 0
 	for _, run := range runs {
@@ -87,7 +90,7 @@ func longestStall(run string, until float64) (float64, string, bool) {
 	        SELECT at - lag(at) OVER (ORDER BY at) AS gap,
 	               lag(phase) OVER (ORDER BY at) AS phase
 	        FROM events WHERE run=? AND at <= ? AND kind IN ('`+strings.Join(wdProgress, "','")+`'))
-	      WHERE gap IS NOT NULL ORDER BY gap DESC LIMIT 1`, run, until).Scan(&gap, &phase)
+	      AS g WHERE gap IS NOT NULL ORDER BY gap DESC LIMIT 1`, run, until).Scan(&gap, &phase)
 	if err != nil {
 		return 0, "", false
 	}
