@@ -551,10 +551,8 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 	if fix := conf.str("watchdog", "fix_mode", "watchdogfix"); f.mode == fix {
 		return nil, "a watchdog fix run"
 	}
-	for _, j := range f.judgements {
-		if j.scope == "hand" && stops(j.action) {
-			return nil, "stopped by a person (" + j.rule + ")"
-		}
+	if how, by := stoppedByHand(f); by {
+		return nil, "stopped by a person (" + how + ")"
 	}
 	// A run on the host is not the stack's to fix: a fix run, a deploy and a
 	// resume all happen in the runner, which never ran it. 2026-10-12: the
@@ -1053,12 +1051,38 @@ func handStopped(run string) bool {
 	if err != nil {
 		return false
 	}
+	_, by := stoppedByHand(f)
+	return by
+}
+
+// stoppedByHand says whether a person put the run down, and how the record
+// shows it. Two ways: a stop through /act, which is a judgement of scope
+// "hand"; or a run-level .cancel that none of ammit's judgements wrote - the
+// host orchestrator's POST /cancel called straight, or a bare touch. The
+// runner ends either one on "ammit stopped this run ..." (RunStopped), and
+// every stop ammit itself orders is a judgement row of this run (stops), so
+// that summary with no such row is a hand outside ammit.
+//
+// 2026-11-06: e4420a99 of APF-1972 (host stand) was stopped at 14:14:01 with
+// no stop judgement; the keeper queued its resume 3f7ba7eb at 14:14:21 and
+// the watchdog opened WD-e4420a99-1 on it as limit:loops.laps_branchheal. At
+// 14:16:08 the .cancel naming 3f7ba7eb was written again, still with no
+// judgement, and the watchdog answered with WD-e4420a99-2 as phase_failed.
+func stoppedByHand(f *runFacts) (string, bool) {
+	ours := false
 	for _, j := range f.judgements {
-		if j.scope == "hand" && stops(j.action) {
-			return true
+		if !stops(j.action) {
+			continue
 		}
+		if j.scope == "hand" {
+			return j.rule, true
+		}
+		ours = true
 	}
-	return false
+	if !ours && strings.Contains(f.summary, "ammit stopped this run") {
+		return "a .cancel no judgement of ammit's wrote", true
+	}
+	return "", false
 }
 
 // startCycle opens the next cycle of a chain on a drop, or announces that the

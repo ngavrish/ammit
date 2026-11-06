@@ -101,10 +101,14 @@ func keepOne(ticket string) {
 	// A run a person stopped is not lying: it was put down. 2026-10-27: the
 	// keeper resumed APF-3301's 13c9a745, stopped by hand a minute earlier
 	// because a later run had superseded it.
+	// A stop through the host orchestrator's own /cancel is a person's too,
+	// though no /act judgement says so (stoppedByHand). 2026-11-06: this
+	// queued 3f7ba7eb twenty seconds after e4420a99 of APF-1972 was put down
+	// that way, and the same hand put the resume down two minutes later.
+	if _, by := stoppedByHand(f); by {
+		return
+	}
 	for _, j := range f.judgements {
-		if j.scope == "hand" && stops(j.action) {
-			return
-		}
 		// Over budget is a person's decision, read from the judgement and not
 		// from the summary: the runner's run_end lands after ammit's own close
 		// and rewrites it. 2026-10-28 01:28: 5a3d7c35 of APF-3122 was closed
