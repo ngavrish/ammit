@@ -289,7 +289,13 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// of the payload. Kept, one held-off try pinned an unpinned row to docker
 	// for good, and the shared queue never sent it to an idle host
 	// (ADHOC-20261103-075702 behind the UI regression's lease, 2026-11-03).
-	if !strings.Contains(outcome, `"run_id"`) && strings.Contains(outcome, "try again") {
+	// "already running" is the same: the ticket's last run is still closing.
+	// 2026-11-06 00:38: the watchdog queued APF-1972's fresh-budget resume
+	// three seconds after stopping fd5250ca, the orchestrator answered
+	// "already running: APF-1972", the row was closed, and the ticket lay
+	// stopped for eight hours.
+	if !strings.Contains(outcome, `"run_id"`) &&
+		(strings.Contains(outcome, "try again") || strings.Contains(outcome, "already running")) {
 		mu.Lock()
 		db.Exec(`UPDATE queue SET state='waiting', started=NULL, payload=? WHERE id=? AND ifnull(run,'') = ''`, asked, id)
 		mu.Unlock()
