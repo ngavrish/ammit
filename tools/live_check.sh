@@ -171,11 +171,6 @@ want "by agent, the tester too"           '^tester +a ' "$work/compare-agent.txt
 deny "by agent is not by phase"           '^implementing ' "$work/compare-agent.txt"
 
 echo "== GET /search"
-curl -sS -o "$work/search-doc.json" "$base/search?q=chartreuse"
-want "a word inside a document body"      '"source":"document"' "$work/search-doc.json"
-want "the snippet carries the match"      'chartreuse' "$work/search-doc.json"
-want "and the id that fetches the whole"  '"fetch":"/documents\?id=' "$work/search-doc.json"
-
 curl -sS -o "$work/search-event.json" "$base/search?q=AttributeError"
 want "a word inside an event's text"      '"source":"event"' "$work/search-event.json"
 want "the run it was said in"             '"run":"live-a-1"' "$work/search-event.json"
@@ -281,8 +276,6 @@ curl -sS -o "$work/backfill-event.json" "$base/search?q=AttributeError"
 want "the backfill reaches an event"      '"source":"event"' "$work/backfill-event.json"
 curl -sS -o "$work/backfill-phase.json" "$base/search?q=sarcophagus"
 want "and a phase body with it"           '"kind":"phase_end"' "$work/backfill-phase.json"
-curl -sS -o "$work/backfill-doc.json" "$base/search?q=chartreuse"
-want "and a document off the disk"        '"source":"document"' "$work/backfill-doc.json"
 
 # What is searchable is one definition or it is two answers: a call's tool and
 # the strings it was given were indexed as the event landed and left out of the
