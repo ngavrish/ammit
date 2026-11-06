@@ -933,6 +933,10 @@ func main() {
 		         VALUES (?,?,?,?,?,?)`,
 			at, in.Run, in.Kind, in.Phase, len(in.Body), path)
 		mu.Unlock()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 		reply := map[string]any{"path": path, "bytes": len(in.Body)}
 		if len(dropped) > 0 {
 			reply["dropped"] = dropped
