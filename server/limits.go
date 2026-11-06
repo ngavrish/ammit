@@ -40,10 +40,8 @@ func recordLimits(conf Config) {
 			if last, ok := limitsSeen[name]; ok && last.value == value && now-last.at < 60 {
 				continue
 			}
-			mu.Lock()
 			_, err = db.Exec("INSERT INTO limits (at, name, value) VALUES (?,?,?)",
 				now, name, value)
-			mu.Unlock()
 			if err != nil {
 				log.Printf("ammit: could not record limit %s: %v", name, err)
 				continue

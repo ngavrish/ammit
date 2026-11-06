@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -115,17 +117,17 @@ type runRef struct {
 // resolveRun takes either the run id or the ticket it was run for. A person
 // asks for APF-1934 and means the newest one; a query asks for the uuid and
 // means exactly that row.
-func resolveRun(want string) runRef {
+func resolveRun(parent context.Context, want string) runRef {
 	var r runRef
 	var name, verdict any
 	var finished any
-	mu.Lock()
-	defer mu.Unlock()
-	err := db.QueryRow(`SELECT run, name, coalesce(started,0), finished, verdict
+	ctx, cancel := readCtx(parent)
+	defer cancel()
+	err := readDB.QueryRowContext(ctx, `SELECT run, name, coalesce(started,0), finished, verdict
 	                    FROM runs WHERE run=?`, want).
 		Scan(&r.Run, &name, &r.Started, &finished, &verdict)
 	if err != nil {
-		err = db.QueryRow(`SELECT run, name, coalesce(started,0), finished, verdict
+		err = readDB.QueryRowContext(ctx, `SELECT run, name, coalesce(started,0), finished, verdict
 		                   FROM runs WHERE name=? ORDER BY started DESC LIMIT 1`, want).
 			Scan(&r.Run, &name, &r.Started, &finished, &verdict)
 	}
@@ -151,7 +153,7 @@ func resolveRun(want string) runRef {
 // Grouped by agent rather than by session id: a session id is a fresh twelve
 // hex characters every time, so two runs share none of them, and "the coder"
 // is the thing a comparison is actually about.
-func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
+func gather(parent context.Context, run, by string) (map[string]*cmpRow, *cmpRow) {
 	col := "phase"
 	if by == "agent" {
 		col = "agent"
@@ -171,11 +173,11 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// carried none.
 	var billedIn, billedOut float64
 
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(parent)
+	defer cancel()
 
 	// Calls, by what they were.
-	scan(`SELECT coalesce(`+col+`,''), coalesce(kind,'other'), count(*)
+	scan(ctx, `SELECT coalesce(`+col+`,''), coalesce(kind,'other'), count(*)
 	      FROM calls WHERE run=? GROUP BY 1,2`, []any{run}, func(get func(...any) bool) {
 		var key, kind string
 		var n int64
@@ -191,7 +193,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// tool and its input. A refused call with no rule on it is counted under
 	// "": a guard that refuses without naming a rule is a thing worth seeing
 	// in the total rather than dropping.
-	scan(`SELECT coalesce(`+col+`,''),
+	scan(ctx, `SELECT coalesce(`+col+`,''),
 	      coalesce(json_extract(payload,'$.rule'),''), count(*)
 	      FROM events WHERE run=? AND kind='call'
 	      AND json_extract(payload,'$.ok')=0 GROUP BY 1,2`, []any{run},
@@ -208,7 +210,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// count and out_est the runner's measure of the same message; the larger
 	// is the honest one, and taking it here is why this is not a sum of two
 	// units.
-	scan(`SELECT coalesce(`+col+`,''), count(*),
+	scan(ctx, `SELECT coalesce(`+col+`,''), count(*),
 	      sum(coalesce(tokens_in,0)),
 	      sum(max(coalesce(tokens_out,0), coalesce(out_est,0)))
 	      FROM turns WHERE run=? GROUP BY 1`, []any{run}, func(get func(...any) bool) {
@@ -227,7 +229,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// than on the turn. Not added to the turn's own counts: a client that
 	// sends both is sending the same tokens twice, so the turn wins and the
 	// bill fills in only where the turn said nothing.
-	scan(`SELECT coalesce(`+col+`,''),
+	scan(ctx, `SELECT coalesce(`+col+`,''),
 	      sum(coalesce(json_extract(payload,'$.usd'),0)),
 	      sum(coalesce(json_extract(payload,'$.tokens_in'),0)),
 	      sum(coalesce(json_extract(payload,'$.tokens_out'),0))
@@ -263,7 +265,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	if by == "agent" {
 		span = "session_end"
 	}
-	scan(`SELECT coalesce(`+col+`,''), sum(coalesce(json_extract(payload,'$.seconds'),0))
+	scan(ctx, `SELECT coalesce(`+col+`,''), sum(coalesce(json_extract(payload,'$.seconds'),0))
 	      FROM events WHERE run=? AND kind=? GROUP BY 1`, []any{run, span},
 		func(get func(...any) bool) {
 			var key string
@@ -281,7 +283,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// Idle: every gap longer than idleGap between two things this group said.
 	// The same definition the charts draw, so "the phase was quiet for eleven
 	// minutes" means one thing in this service and not two.
-	scan(`SELECT g, sum(CASE WHEN gap > `+fmt.Sprint(idleGap)+` THEN gap ELSE 0 END),
+	scan(ctx, `SELECT g, sum(CASE WHEN gap > `+fmt.Sprint(idleGap)+` THEN gap ELSE 0 END),
 	      min(at), max(at) FROM (
 	        SELECT coalesce(`+col+`,'') AS g, at,
 	               at - lag(at) OVER (PARTITION BY coalesce(`+col+`,'') ORDER BY at) AS gap
@@ -311,9 +313,9 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// cannot be checked against anything.
 	var started, finished, usd float64
 	var lastEvent float64
-	_ = db.QueryRow(`SELECT coalesce(started,0), coalesce(finished,0), coalesce(usd,0)
+	_ = readDB.QueryRowContext(ctx, `SELECT coalesce(started,0), coalesce(finished,0), coalesce(usd,0)
 	                 FROM runs WHERE run=?`, run).Scan(&started, &finished, &usd)
-	_ = db.QueryRow(`SELECT coalesce(max(at),0) FROM events WHERE run=?`, run).Scan(&lastEvent)
+	_ = readDB.QueryRowContext(ctx, `SELECT coalesce(max(at),0) FROM events WHERE run=?`, run).Scan(&lastEvent)
 	total.USD = usd
 	if finished == 0 {
 		finished = lastEvent
@@ -321,7 +323,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	if finished > started && started > 0 {
 		total.Wall = finished - started
 	}
-	_ = db.QueryRow(`SELECT coalesce(sum(CASE WHEN gap > `+fmt.Sprint(idleGap)+`
+	_ = readDB.QueryRowContext(ctx, `SELECT coalesce(sum(CASE WHEN gap > `+fmt.Sprint(idleGap)+`
 	             THEN gap ELSE 0 END),0) FROM (
 	               SELECT at - lag(at) OVER (ORDER BY at) AS gap
 	               FROM events WHERE run=?)`, run).Scan(&total.Idle)
@@ -331,14 +333,17 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 // scan runs a query and hands each row to fn through a getter that scans it.
 // A failed query leaves the numbers it would have filled at zero: half a
 // comparison beats an error page, and a zero row is visible as one.
-func scan(query string, args []any, fn func(get func(...any) bool)) {
-	rows, err := db.Query(query, args...)
+func scan(ctx context.Context, query string, args []any, fn func(get func(...any) bool)) {
+	rows, err := readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		fn(func(into ...any) bool { return rows.Scan(into...) == nil })
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: compare: %v", err)
 	}
 }
 
@@ -455,7 +460,7 @@ func serveCompare(mux *http.ServeMux) {
 		if by != "agent" {
 			by = "phase"
 		}
-		refA, refB := resolveRun(wantA), resolveRun(wantB)
+		refA, refB := resolveRun(r.Context(), wantA), resolveRun(r.Context(), wantB)
 		for want, ref := range map[string]runRef{wantA: refA, wantB: refB} {
 			if !ref.Found {
 				writeJSON(w, http.StatusNotFound,
@@ -463,8 +468,8 @@ func serveCompare(mux *http.ServeMux) {
 				return
 			}
 		}
-		rowsA, totalA := gather(refA.Run, by)
-		rowsB, totalB := gather(refB.Run, by)
+		rowsA, totalA := gather(r.Context(), refA.Run, by)
+		rowsB, totalB := gather(r.Context(), refB.Run, by)
 
 		keys := map[string]bool{}
 		for k := range rowsA {

@@ -65,9 +65,9 @@ func healCap(conf Config) (float64, string) {
 // fresh attempt was stopped by loops.laps_implrulefix as it entered its first
 // repair, and every phase after it ran in 0.05 s with nothing done.
 func phaseStarts(run, phase, attemptPhase string) map[string]int {
-	mu.Lock()
-	defer mu.Unlock()
-	rows, err := db.Query(`
+	ctx, cancel := readCtx(bg)
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, `
 		SELECT coalesce(e.branch,''), count(*) FROM events e
 		WHERE e.run=? AND e.kind='phase_start' AND e.phase=?
 		  AND e.at > coalesce((SELECT max(a.at) FROM events a
@@ -85,6 +85,9 @@ func phaseStarts(run, phase, attemptPhase string) map[string]int {
 		if rows.Scan(&branch, &n) == nil {
 			out[branch] = n
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: phaseStarts: %v", err)
 	}
 	return out
 }
@@ -117,10 +120,10 @@ func lapsOver(run string, caps map[string]float64, attemptPhase string) []lapBre
 // from the judgements table, not from memory: a restart of this service must
 // not stop and announce the same branch again.
 func lapsJudged(run, rule, subject string) bool {
-	mu.Lock()
-	defer mu.Unlock()
+	ctx, cancel := readCtx(bg)
+	defer cancel()
 	var n int
-	db.QueryRow(`SELECT count(*) FROM judgements WHERE run=? AND rule=? AND subject=?`,
+	readDB.QueryRowContext(ctx, `SELECT count(*) FROM judgements WHERE run=? AND rule=? AND subject=?`,
 		run, rule, subject).Scan(&n)
 	return n > 0
 }

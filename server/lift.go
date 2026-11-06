@@ -12,9 +12,11 @@ import (
 // them was json_extract over the whole event stream, the same expression
 // copied into every query, and a chart with a subquery per row that took
 // seconds. The event is still kept whole in events; this is the column view
-// of it, keyed by the event's own id so nothing is lifted twice.
-func lift(id int64, at float64, e event) {
-	liftAnswer(id, at, e)
+// of it, keyed by the event's own id so nothing is lifted twice. Inside
+// store's transaction; what it returns is a judgement to make after the
+// commit, which store starts on its own goroutine.
+func lift(x dbx, id int64, at float64, e event) func() {
+	liftAnswer(x, id, at, e)
 	switch e.s("kind") {
 	case "turn":
 		// Two provenances, two columns: tokens_out is exactly what the SDK
@@ -22,19 +24,19 @@ func lift(id int64, at float64, e event) {
 		// not folded here - a reader that wants "output" takes the larger in
 		// its query and knows it did; a column named tokens_out that is
 		// sometimes an estimate is a lie nothing downstream can undo.
-		execSQL(`INSERT OR IGNORE INTO turns (event_id, at, run, agent, phase, branch, request, model,
+		execSQL(x, `INSERT OR IGNORE INTO turns (event_id, at, run, agent, phase, branch, request, model,
 		        context, tokens_in, tokens_out, out_est, cache_read, cache_write, cache_write_1h, geo)
 		      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			id, at, e.s("run"), e.s("agent"), e.s("phase"), e.s("branch"), e.s("request"), e.s("model"),
 			int64(e.f("context")), e.opt("tokens_in"), e.opt("tokens_out"), e.opt("out_est"), e.opt("cache_read"),
 			e.opt("cache_write"), e.opt("cache_write_1h"), e.s("geo"))
 	case "suite":
-		execSQL(`INSERT OR IGNORE INTO suites (event_id, at, run, branch, verdict, total, passed, failed, reason)
+		execSQL(x, `INSERT OR IGNORE INTO suites (event_id, at, run, branch, verdict, total, passed, failed, reason)
 		      VALUES (?,?,?,?,?,?,?,?,?)`,
 			id, at, e.s("run"), e.s("branch"), e.s("verdict"), e.opt("total"), e.opt("passed"),
 			e.opt("failed"), e.s("reason"))
 	case "heal_lap":
-		execSQL(`INSERT OR IGNORE INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
+		execSQL(x, `INSERT OR IGNORE INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
 		      VALUES (?,?,?,?,?,?,?,?)`,
 			id, at, e.s("run"), e.s("branch"), e.s("phase"), int64(e.f("lap")), e.opt("cap"),
 			e.s("decision"))
@@ -42,11 +44,12 @@ func lift(id int64, at float64, e event) {
 		// it enforces itself, so the branch that was given up is in the same
 		// table as the run that was stopped.
 		if e.s("decision") == "gave_up" {
-			judgeLater(e)
+			return judgeLater(x, e)
 		}
 	case "limit":
-		judgeRunnerLimit(e)
+		return judgeRunnerLimit(e)
 	}
+	return nil
 }
 
 // judgeRunnerLimit writes down a limit the runner applied itself.
@@ -57,12 +60,14 @@ func lift(id int64, at float64, e event) {
 // bypassed, inside the runner with nothing here to count it - claim-9 of
 // APF-3296 went five laps on a cap of two. Recorded as a judgement with
 // scope "runner", so it reads beside the limits this service enforces, and
-// outside the lock store holds, as judgeLater does.
-func judgeRunnerLimit(e event) {
+// after store's transaction, as judgeLater is.
+func judgeRunnerLimit(e event) func() {
 	run, rule, action := e.s("run"), e.s("rule"), e.s("action")
 	threshold, observed := e.f("threshold"), e.f("observed")
 	subject := strings.TrimSpace(strings.Join([]string{e.s("phase"), e.s("branch"), e.s("agent")}, " "))
-	go judge("runner", run, subject, rule, threshold, observed, action, "applied by the runner")
+	return func() {
+		judge("runner", run, subject, rule, threshold, observed, action, "applied by the runner")
+	}
 }
 
 // opt is a number the event may not carry: NULL when absent, so a column can
@@ -74,8 +79,8 @@ func (e event) opt(key string) any {
 	return int64(e.f(key))
 }
 
-func execSQL(sql string, args ...any) {
-	if _, err := db.Exec(sql, args...); err != nil {
+func execSQL(x dbx, sql string, args ...any) {
+	if _, err := x.Exec(sql, args...); err != nil {
 		log.Printf("ammit: lift: %v", err)
 	}
 }
@@ -84,10 +89,9 @@ func execSQL(sql string, args ...any) {
 // start. Runs from before the runner posted suite and heal_lap events are
 // read from what they left: the branchrun phase's text for the suite, the
 // heal phases for the laps. Those rows say so in their reason and decision,
-// and they are not re-read once lifted.
+// and they are not re-read once lifted. On start, before anything else
+// writes.
 func liftHistory() {
-	mu.Lock()
-	defer mu.Unlock()
 	const text = "json_extract(payload,'$.text')"
 	for _, sql := range []string{
 		`INSERT OR IGNORE INTO turns (event_id, at, run, agent, phase, branch, request, model,
@@ -129,20 +133,21 @@ func liftHistory() {
 		       FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%'
 		         AND run NOT IN (SELECT run FROM events WHERE kind='heal_lap'))`,
 	} {
-		execSQL(sql)
+		execSQL(db, sql)
 	}
 }
 
-// judgeLater records a heal loop given up, outside the lock store holds.
-func judgeLater(e event) {
+// judgeLater records a heal loop given up, after store's transaction. The
+// run's name is read inside it, where the event is.
+func judgeLater(x dbx, e event) func() {
 	run, branch, cap, lap := e.s("run"), e.s("branch"), e.f("cap"), e.f("lap")
-	go func() {
-		var name string
-		mu.Lock()
-		db.QueryRow(`SELECT coalesce(name,'') FROM runs WHERE run=?`, run).Scan(&name)
-		mu.Unlock()
+	var name string
+	if err := x.QueryRow(`SELECT coalesce(name,'') FROM runs WHERE run=?`, run).Scan(&name); err != nil {
+		log.Printf("ammit: no name for run %s: %v", run, err)
+	}
+	return func() {
 		_, rule := healCap(loadConfig(env("AMMIT_CONFIG", "/config/limits.yml")))
 		judge("branch", run, name+" "+branch, rule, cap, lap, "none",
 			"the runner gave the branch up, unconverged")
-	}()
+	}
 }

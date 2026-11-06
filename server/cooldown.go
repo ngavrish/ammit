@@ -40,13 +40,13 @@ func cooldown(conf Config) {
 	}
 	var pending int
 	var lastRun, lastQueued float64
-	mu.Lock()
-	db.QueryRow(`SELECT count(*) FROM queue WHERE state IN ('waiting','running')`).
+	rctx, rcancel := readCtx(bg)
+	readDB.QueryRowContext(rctx, `SELECT count(*) FROM queue WHERE state IN ('waiting','running')`).
 		Scan(&pending)
-	db.QueryRow(`SELECT coalesce(max(started),0) FROM runs`).Scan(&lastRun)
-	db.QueryRow(`SELECT coalesce(max(coalesce(started,requested)),0) FROM queue`).
+	readDB.QueryRowContext(rctx, `SELECT coalesce(max(started),0) FROM runs`).Scan(&lastRun)
+	readDB.QueryRowContext(rctx, `SELECT coalesce(max(coalesce(started,requested)),0) FROM queue`).
 		Scan(&lastQueued)
-	mu.Unlock()
+	rcancel()
 	if pending > 0 {
 		return
 	}

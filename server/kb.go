@@ -3,10 +3,10 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -109,7 +109,7 @@ func kbNow() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 // putKB writes or replaces one entry. Writing an entry again is how a stale one
 // is re-learned: the mark goes with the old body.
-func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func putKB(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	var in kbEntry
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
@@ -133,13 +133,21 @@ func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	}
 	at := kbNow()
 	// Indexed in words as well, so a question that does not know the topic
-	// finds the entry (kb_docs.go). Embedded before the lock.
+	// finds the entry (kb_docs.go). Embedded before the transaction.
 	doc := kbDoc{Project: in.Project, Topic: "entry:" + in.Topic, Kind: in.Kind,
 		Text: kbEntryText(in), Cite: kbEntryCite(in), LearnedBy: in.LearnedBy}
 	emb := embedKBDoc(r.Context(), doc)
-	mu.Lock()
-	defer mu.Unlock()
-	_, err := db.ExecContext(r.Context(), `
+	// The entry and its words, one transaction; the words inside a savepoint,
+	// because an entry whose words could not be indexed is still kept, as it
+	// always was, and only the half-written words go.
+	ctx := r.Context()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO kb (project, topic, kind, body, learned_by, at, stale, stale_why, stale_by, stale_at)
 		VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL)
 		ON CONFLICT (project, topic) DO UPDATE SET kind = excluded.kind, body = excluded.body,
@@ -150,8 +158,21 @@ func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	_, embedded, derr := storeKBDoc(r.Context(), doc, emb)
+	var embedded bool
+	derr := errors.New("no savepoint")
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT kb_words`); err == nil {
+		_, embedded, derr = storeKBDocIn(ctx, tx, doc, emb)
+		if derr != nil {
+			_, _ = tx.ExecContext(ctx, `ROLLBACK TO kb_words`)
+		}
+		_, _ = tx.ExecContext(ctx, `RELEASE kb_words`)
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	if derr != nil {
+		embedded = false
 		log.Printf("ammit: kb entry %s/%s not indexed for /kb/ask: %v", in.Project, in.Topic, derr)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "project": in.Project, "topic": in.Topic, "at": at,
@@ -159,7 +180,7 @@ func putKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 }
 
 // staleKB marks an entry whose probe failed: {project, topic, why, run}.
-func staleKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func staleKB(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Project string `json:"project"`
 		Topic   string `json:"topic"`
@@ -170,9 +191,14 @@ func staleKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "need project and topic"})
 		return
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	res, err := db.ExecContext(r.Context(), `
+	// The entry and its documents go stale together, one transaction.
+	tx, err := db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(r.Context(), `
 		UPDATE kb SET stale = 1, stale_why = ?, stale_by = ?, stale_at = ?
 		WHERE project = ? AND topic = ?`, in.Why, in.Run, kbNow(), in.Project, in.Topic)
 	if err != nil {
@@ -181,8 +207,12 @@ func staleKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 	}
 	n, _ := res.RowsAffected()
 	// A document of the same topic, or the entry's own words, go stale with it.
-	n += staleKBDoc(r.Context(), in.Project, in.Topic, in.Why)
-	n += staleKBDoc(r.Context(), in.Project, "entry:"+in.Topic, in.Why)
+	n += staleKBDoc(r.Context(), tx, in.Project, in.Topic, in.Why)
+	n += staleKBDoc(r.Context(), tx, in.Project, "entry:"+in.Topic, in.Why)
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	if n == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such entry"})
 		return
@@ -192,7 +222,7 @@ func staleKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 
 // getKB answers ?project=<p>[&topic=<t>][&kind=<k>]: every entry of the
 // project, stale ones included and marked, so a run sees what it must re-learn.
-func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func getKB(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	project := strings.TrimSpace(q.Get("project"))
 	if project == "" {
@@ -200,7 +230,6 @@ func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	topic, kind := strings.TrimSpace(q.Get("topic")), strings.TrimSpace(q.Get("kind"))
-	mu.Lock()
 	out := []kbEntry{}
 	// An empty filter matches every row: one statement, no SQL built from parts.
 	err := kbEach(r.Context(), func(rows *sql.Rows) {
@@ -216,7 +245,6 @@ func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		       coalesce(stale_why, ''), coalesce(stale_by, ''), coalesce(stale_at, 0)
 		FROM kb WHERE project = ? AND (? = '' OR topic = ?) AND (? = '' OR kind = ?)
 		ORDER BY kind, topic`, project, topic, topic, kind, kind)
-	mu.Unlock()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -230,7 +258,7 @@ func getKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 // listed the jobs and seen none - and the ticket named the job's task; marked
 // stale, they still came back to every question about that flag. Something
 // the ticket or its discussion contradicts is not kept at all.
-func forgetKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func forgetKB(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Project string `json:"project"`
 		Topic   string `json:"topic"`
@@ -241,8 +269,6 @@ func forgetKB(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "need project, topic and why"})
 		return
 	}
-	mu.Lock()
-	defer mu.Unlock()
 	tx, err := db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

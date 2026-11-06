@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -436,9 +437,9 @@ CREATE TABLE IF NOT EXISTS queue (
 var (
 	docsDir string
 	db      *sql.DB
-	// readDB: the same file, opened read-only, for SQL a caller wrote (/query, charts).
+	// readDB: the same file, opened read-only, for every pure read - SQL a
+	// caller wrote (/query, charts) and this service's own. See wal.go.
 	readDB *sql.DB
-	mu     sync.Mutex
 	dryRun = os.Getenv("AMMIT_DRY_RUN") == "1"
 )
 
@@ -446,7 +447,10 @@ var (
 // own — {"key":"APF-1934"} — and those are not holes.
 var placeholder = regexp.MustCompile(`\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
 
-var reanimations = map[string]int{}
+var (
+	reanimationsMu sync.Mutex
+	reanimations   = map[string]int{}
+)
 
 // The timeout names this service owns. A client cannot claim one of these as a
 // kind, because "my module took longer than timeouts.run" is not a sentence
@@ -456,10 +460,10 @@ var reserved = map[string]bool{
 	"request_tool": true, "turn": true, "wait": true, "progress": true,
 }
 
-func rows2json(w http.ResponseWriter, query string, args ...any) {
-	mu.Lock()
-	rows, err := db.Query(query, args...)
-	mu.Unlock()
+func rows2json(w http.ResponseWriter, r *http.Request, query string, args ...any) {
+	ctx, cancel := readCtx(r.Context())
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -485,6 +489,9 @@ func rows2json(w http.ResponseWriter, query string, args ...any) {
 		}
 		out = append(out, row)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ammit: rows2json: %v", err)
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -505,19 +512,23 @@ func openDB(dbPath string) error {
 		log.Printf("ammit: could not make the data directory: %v", err)
 	}
 	var err error
-	db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
+	db, err = sql.Open("sqlite", writerDSN(dbPath))
 	if err != nil {
 		return err
 	}
+	// The one writer: database/sql hands this connection to one caller at a
+	// time, which is the serialisation SQLite needs and the only one (wal.go).
+	db.SetMaxOpenConns(1)
 	// The handle free-form SQL runs on: /query and the charts, whose queries
 	// anyone can save. The SELECT/WITH prefix check let `WITH x AS (SELECT 1)
 	// DELETE FROM events` and `SELECT 1; DROP TABLE runs` through - both ran,
 	// on a throwaway instance, and emptied the table. Read-only here is the
 	// database's own refusal, however the statement is spelled.
-	readDB, err = sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(30000)")
+	readDB, err = sql.Open("sqlite", readerDSN(dbPath))
 	if err != nil {
 		return err
 	}
+	readDB.SetMaxOpenConns(readConns)
 	dropOldPrices()
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("could not make the tables: %w", err)
@@ -604,14 +615,19 @@ func main() {
 		if gate.err != nil {
 			log.Fatalf("ammit: the charts page breaks %s: %v", gate.name, gate.err)
 		}
-
-		if err := openDB(dbPath); err != nil {
-			log.Fatalf("ammit: no database: %v", err)
-		}
+	}
+	// Once, after the gates: inside their loop it ran once per gate, and the
+	// second call left the first writer pool open beside the one in use - two
+	// writers, where wal.go promises one.
+	if err := openDB(dbPath); err != nil {
+		log.Fatalf("ammit: no database: %v", err)
 	}
 	// The answers table replays history on its own thread, a slice at a time:
 	// serving starts now, and the live path takes over when it has caught up.
 	go backfillAnswers()
+
+	// The WAL folded back and cut to nothing every few minutes (wal.go).
+	go checkpointLoop(confPath, dbPath)
 
 	// Progress on the clock: one event per open run every timeouts.progress
 	// seconds, whether or not anything happened (progress.go).
@@ -754,7 +770,8 @@ func main() {
 		// month into a column that does not exist finds out on its first
 		// send rather than on the day somebody goes looking for the number.
 		kept, dropped := recordOf(e)
-		store(kept)
+		// Kept whether or not the sender waits for the answer.
+		storeCtx(context.WithoutCancel(r.Context()), kept)
 		reply := map[string]any{"ok": true}
 		if len(dropped) > 0 {
 			reply["dropped"] = dropped
@@ -767,8 +784,6 @@ func main() {
 	// (WD-9a6e5611-3) sat waiting behind APF-3301 and the only way to take it
 	// out was an UPDATE on the database by hand.
 	withdrawWaiting := func(query string, args ...any) int64 {
-		mu.Lock()
-		defer mu.Unlock()
 		res, err := db.Exec(query, append([]any{nowWall()}, args...)...)
 		if err != nil {
 			return 0
@@ -804,25 +819,23 @@ func main() {
 			return
 		}
 		payload, _ := json.Marshal(in.Payload)
-		mu.Lock()
 		db.Exec(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?)`,
 			in.Name, string(payload), float64(time.Now().UnixNano())/1e9)
-		mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]string{"queued": in.Name})
 	})
 	// What the deploy is doing, so a run can decline to start into it.
 	mux.HandleFunc("POST /deploy", func(w http.ResponseWriter, r *http.Request) {
-		putDeploy(db, &mu, w, r)
+		putDeploy(db, w, r)
 	})
 	mux.HandleFunc("GET /deploy", func(w http.ResponseWriter, r *http.Request) {
-		getDeploy(db, &mu, w, r)
+		getDeploy(readDB, w, r)
 	})
 	// What a run undertook to cover, and what proves it. See coverage.go.
 	mux.HandleFunc("POST /coverage", func(w http.ResponseWriter, r *http.Request) {
-		putCoverage(db, &mu, w, r)
+		putCoverage(db, w, r)
 	})
 	mux.HandleFunc("GET /coverage", func(w http.ResponseWriter, r *http.Request) {
-		getCoverage(db, &mu, w, r)
+		getCoverage(readDB, w, r)
 	})
 	// The proofs of each test, and the one door to their files. See evidence.go.
 	evidence, evidenceUnconfigured = openEvidenceStore()
@@ -830,41 +843,41 @@ func main() {
 		log.Printf("ammit: evidence store off - POST /evidence answers 503: %s", evidenceUnconfigured)
 	}
 	mux.HandleFunc("POST /evidence", func(w http.ResponseWriter, r *http.Request) {
-		postEvidence(db, &mu, evidence, w, r)
+		postEvidence(db, evidence, w, r)
 	})
 	mux.HandleFunc("GET /evidence", func(w http.ResponseWriter, r *http.Request) {
-		getEvidence(db, &mu, w, r)
+		getEvidence(readDB, w, r)
 	})
 	mux.HandleFunc("GET /evidence/file/{sha256}", func(w http.ResponseWriter, r *http.Request) {
-		serveEvidenceFile(db, &mu, evidence, w, r)
+		serveEvidenceFile(readDB, evidence, w, r)
 	})
 	// What a product's runs learned about switching its features on and where
 	// its tests can run. See kb.go.
 	mux.HandleFunc("POST /kb", func(w http.ResponseWriter, r *http.Request) {
-		putKB(db, &mu, w, r)
+		putKB(db, w, r)
 	})
 	mux.HandleFunc("POST /kb/stale", func(w http.ResponseWriter, r *http.Request) {
-		staleKB(db, &mu, w, r)
+		staleKB(db, w, r)
 	})
 	// The same base in words: documents chunked and embedded, and a question
 	// answered with the nearest chunks and their citations (kb_docs.go).
 	mux.HandleFunc("POST /kb/docs", func(w http.ResponseWriter, r *http.Request) {
-		putKBDoc(&mu, w, r)
+		putKBDoc(w, r)
 	})
 	mux.HandleFunc("DELETE /kb/docs", func(w http.ResponseWriter, r *http.Request) {
-		forgetKB(db, &mu, w, r)
+		forgetKB(db, w, r)
 	})
 	mux.HandleFunc("GET /kb/docs", func(w http.ResponseWriter, r *http.Request) {
-		getKBDocs(&mu, w, r)
+		getKBDocs(w, r)
 	})
 	mux.HandleFunc("GET /kb/ask", func(w http.ResponseWriter, r *http.Request) {
-		askKB(&mu, w, r)
+		askKB(w, r)
 	})
 	mux.HandleFunc("POST /kb/ask", func(w http.ResponseWriter, r *http.Request) {
-		askKB(&mu, w, r)
+		askKB(w, r)
 	})
 	mux.HandleFunc("GET /kb", func(w http.ResponseWriter, r *http.Request) {
-		getKB(db, &mu, w, r)
+		getKB(w, r)
 	})
 	mux.HandleFunc("POST /documents", func(w http.ResponseWriter, r *http.Request) {
 		// A phase's artefact — a framework map, the requirements, a report. The
@@ -941,20 +954,28 @@ func main() {
 			return
 		}
 		at := float64(time.Now().UnixNano()) / 1e9
-		mu.Lock()
-		res, err := db.Exec(`INSERT INTO documents (at, run, kind, phase, bytes, path)
+		// The row and its words, one transaction: a document is findable
+		// the moment it is listed, never listed and missing from /search.
+		wctx := context.WithoutCancel(r.Context())
+		txErr := inTxCtx(wctx, func(tx dbx) error {
+			res, err := tx.ExecContext(wctx, `INSERT INTO documents (at, run, kind, phase, bytes, path)
 		         VALUES (?,?,?,?,?,?)`,
-			at, in.Run, in.Kind, in.Phase, len(in.Body), path)
-		if err == nil {
+				at, in.Run, in.Kind, in.Phase, len(in.Body), path)
+			if err != nil {
+				return err
+			}
 			// Searchable the moment it lands, from the body in hand: the file
 			// is on a disk this process may not be able to read back after a
 			// volume is remounted, and an artefact nobody can find is an
 			// artefact nobody has.
 			if id, idErr := res.LastInsertId(); idErr == nil {
-				indexDocument(id, at, in.Run, in.Kind, in.Phase, in.Body)
+				indexDocument(tx, id, at, in.Run, in.Kind, in.Phase, in.Body)
 			}
+			return nil
+		})
+		if txErr != nil {
+			log.Printf("ammit: could not keep a document: %v", txErr)
 		}
-		mu.Unlock()
 		reply := map[string]any{"path": path, "bytes": len(in.Body)}
 		if len(dropped) > 0 {
 			reply["dropped"] = dropped
@@ -967,9 +988,9 @@ func main() {
 			// when the volume lost it. The newest-of-a-kind form below cannot
 			// walk a run's phases; this can.
 			var path string
-			mu.Lock()
-			err := db.QueryRow(`SELECT path FROM documents WHERE id=?`, id).Scan(&path)
-			mu.Unlock()
+			ctx, cancel := readCtx(r.Context())
+			err := readDB.QueryRowContext(ctx, `SELECT path FROM documents WHERE id=?`, id).Scan(&path)
+			cancel()
 			if err != nil {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such document"})
 				return
@@ -980,11 +1001,11 @@ func main() {
 		if run := r.URL.Query().Get("run"); run != "" && r.URL.Query().Get("kind") != "" {
 			// The newest of that kind, as the file itself.
 			var path string
-			mu.Lock()
-			err := db.QueryRow(`SELECT path FROM documents WHERE run=? AND kind=?
+			ctx, cancel := readCtx(r.Context())
+			err := readDB.QueryRowContext(ctx, `SELECT path FROM documents WHERE run=? AND kind=?
 			                    ORDER BY id DESC LIMIT 1`, run,
 				r.URL.Query().Get("kind")).Scan(&path)
-			mu.Unlock()
+			cancel()
 			if err != nil {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such document"})
 				return
@@ -992,7 +1013,7 @@ func main() {
 			http.ServeFile(w, r, path)
 			return
 		}
-		rows2json(w, `SELECT id, at, run, kind, coalesce(phase,'') phase, bytes, path
+		rows2json(w, r, `SELECT id, at, run, kind, coalesce(phase,'') phase, bytes, path
 		              FROM documents ORDER BY id DESC LIMIT 200`)
 	})
 	// One free-form question against the whole record, for the chat, the CLI
@@ -1072,7 +1093,7 @@ func main() {
 			}
 			ctx[byPerson] = "yes"
 		}
-		outcome := act(in.Command, conf, ctx)
+		outcome := actCtx(context.WithoutCancel(r.Context()), in.Command, conf, ctx)
 		judge("hand", in.Run, in.Name, "hand."+in.Command, 0, 0, in.Command, outcome)
 		writeJSON(w, http.StatusOK, map[string]string{"outcome": outcome})
 	})
@@ -1081,7 +1102,7 @@ func main() {
 	// with its evidence and every fix/merge/resume cycle, or one chain's when
 	// ?run= names a run in it. The fix run reads its history here.
 	mux.HandleFunc("GET /watchdog", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, watchdogState(r.URL.Query().Get("run")))
+		writeJSON(w, http.StatusOK, watchdogState(r.Context(), r.URL.Query().Get("run")))
 	})
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "db": dbPath})
@@ -1102,7 +1123,7 @@ func main() {
 	// the person reading it was told the wrong thing the whole time. A fact
 	// nobody has to derive cannot be derived wrongly.
 	mux.HandleFunc("GET /runs", func(w http.ResponseWriter, r *http.Request) {
-		rows2json(w, `SELECT r.*, `+spentExpr+` AS usd,
+		rows2json(w, r, `SELECT r.*, `+spentExpr+` AS usd,
 		                (SELECT e.phase FROM events e
 		                  WHERE e.run = r.run AND e.phase IS NOT NULL AND e.phase <> ''
 		                  ORDER BY e.at DESC LIMIT 1) AS phase,
@@ -1137,23 +1158,33 @@ func main() {
 			in.TTL = 1200
 		}
 		now := float64(time.Now().UnixNano()) / 1e9
-		mu.Lock()
 		var holder string
 		var at, expires float64
-		err := db.QueryRow(`SELECT holder, at, expires FROM leases WHERE name=?`,
-			in.Name).Scan(&holder, &at, &expires)
-		held := err == nil && expires > now && holder != in.Holder
-		if !held {
+		var held bool
+		// The look and the take, one transaction: two deploys asking at once
+		// must not both find the lease free.
+		wctx := context.WithoutCancel(r.Context())
+		txErr := inTxCtx(wctx, func(tx dbx) error {
+			err := tx.QueryRowContext(wctx, `SELECT holder, at, expires FROM leases WHERE name=?`,
+				in.Name).Scan(&holder, &at, &expires)
+			held = err == nil && expires > now && holder != in.Holder
+			if held {
+				return nil
+			}
 			if err != nil || holder != in.Holder {
 				at = now
 			}
-			db.Exec(`INSERT INTO leases (name, holder, at, expires) VALUES (?,?,?,?)
+			_, err = tx.ExecContext(wctx, `INSERT INTO leases (name, holder, at, expires) VALUES (?,?,?,?)
 			         ON CONFLICT(name) DO UPDATE SET holder=excluded.holder,
 			                                        at=excluded.at,
 			                                        expires=excluded.expires`,
 				in.Name, in.Holder, at, now+in.TTL)
+			return err
+		})
+		if txErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": txErr.Error()})
+			return
 		}
-		mu.Unlock()
 		if held {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"taken": false, "holder": holder, "since": at, "expires": expires})
@@ -1173,9 +1204,7 @@ func main() {
 		// Only the holder gives it back. A deploy that timed out and a deploy
 		// that started afterwards are two different holders, and the late one
 		// must not release the live one's lease on its way out.
-		mu.Lock()
 		res, _ := db.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, name, holder)
-		mu.Unlock()
 		n := int64(0)
 		if res != nil {
 			n, _ = res.RowsAffected()
@@ -1185,16 +1214,16 @@ func main() {
 	mux.HandleFunc("GET /lease", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
 		if name == "" {
-			rows2json(w, `SELECT * FROM leases ORDER BY name`)
+			rows2json(w, r, `SELECT * FROM leases ORDER BY name`)
 			return
 		}
 		now := float64(time.Now().UnixNano()) / 1e9
-		mu.Lock()
 		var holder string
 		var at, expires float64
-		err := db.QueryRow(`SELECT holder, at, expires FROM leases WHERE name=?`,
+		ctx, cancel := readCtx(r.Context())
+		err := readDB.QueryRowContext(ctx, `SELECT holder, at, expires FROM leases WHERE name=?`,
 			name).Scan(&holder, &at, &expires)
-		mu.Unlock()
+		cancel()
 		if err != nil || expires <= now {
 			writeJSON(w, http.StatusOK, map[string]any{"held": false})
 			return
@@ -1203,7 +1232,7 @@ func main() {
 			"held": true, "holder": holder, "since": at, "expires": expires})
 	})
 	mux.HandleFunc("GET /gates", func(w http.ResponseWriter, r *http.Request) {
-		rows2json(w, `SELECT * FROM gates ORDER BY id DESC LIMIT 500`)
+		rows2json(w, r, `SELECT * FROM gates ORDER BY id DESC LIMIT 500`)
 	})
 
 	// Every call, newest first. ?run= narrows it; ?repeats=1 keeps only the ones
@@ -1216,7 +1245,7 @@ func main() {
 		if run := r.URL.Query().Get("run"); run != "" {
 			where, args = "run=?", []any{run}
 		}
-		rows2json(w, `SELECT * FROM flows WHERE `+where+` ORDER BY at DESC LIMIT 50`,
+		rows2json(w, r, `SELECT * FROM flows WHERE `+where+` ORDER BY at DESC LIMIT 50`,
 			args...)
 	})
 
@@ -1228,7 +1257,7 @@ func main() {
 		if r.URL.Query().Get("repeats") != "" {
 			where += " AND repeat > 1"
 		}
-		rows2json(w, `SELECT * FROM calls WHERE `+where+
+		rows2json(w, r, `SELECT * FROM calls WHERE `+where+
 			` ORDER BY id DESC LIMIT 2000`, args...)
 	})
 
@@ -1241,7 +1270,7 @@ func main() {
 		if run := r.URL.Query().Get("run"); run != "" {
 			where, args = where+" AND run=?", append(args, run)
 		}
-		rows2json(w, `SELECT max(run) AS run, agent, branch, kind, tool, target,
+		rows2json(w, r, `SELECT max(run) AS run, agent, branch, kind, tool, target,
 		              signature, count(*) AS times, round(sum(seconds),1) AS seconds
 		              FROM calls WHERE `+where+`
 		              GROUP BY agent, branch, signature
@@ -1258,7 +1287,7 @@ func main() {
 		// Every kind that touched it, not whichever row the group happened to
 		// yield: a file that was searched six times and written once came back
 		// labelled "write", which is the opposite of what it says.
-		rows2json(w, `SELECT max(run) AS run, agent, branch, target,
+		rows2json(w, r, `SELECT max(run) AS run, agent, branch, target,
 		              group_concat(DISTINCT kind) AS kinds,
 		              count(*) AS times, count(DISTINCT signature) AS ways
 		              FROM calls WHERE `+where+` AND ifnull(target,'') <> ''
@@ -1298,7 +1327,7 @@ func main() {
 		if r.URL.Query().Get("slow") != "" {
 			order = "seconds DESC"
 		}
-		rows2json(w, `SELECT at, run, agent, branch, phase, session,
+		rows2json(w, r, `SELECT at, run, agent, branch, phase, session,
 		              json_extract(payload,'$.seconds') AS seconds,
 		              json_extract(payload,'$.out')     AS out,
 		              json_extract(payload,'$.ok')      AS ok,
@@ -1341,14 +1370,14 @@ func main() {
 			if br, ok := r.URL.Query()["branch"]; ok {
 				where, args = where+" AND branch = ?", append(args, br[0])
 			}
-			rows2json(w, `SELECT phase, model, count(*) AS answers, round(min(seconds),1) AS min_s,
+			rows2json(w, r, `SELECT phase, model, count(*) AS answers, round(min(seconds),1) AS min_s,
 			              round(avg(seconds),1) AS avg_s, round(max(seconds),0) AS max_s,
 			              round(100.0*sum(seconds > 120)/count(*),2) AS over_2min_pct
 			              FROM model_answers WHERE `+where+` GROUP BY phase, model ORDER BY phase, model`, args...)
 			return
 		}
 		if r.URL.Query().Get("by") == "day" {
-			rows2json(w, `SELECT date(day*86400,'unixepoch') AS day, phase, model, answers,
+			rows2json(w, r, `SELECT date(day*86400,'unixepoch') AS day, phase, model, answers,
 			              round(min_s,1) AS min_s, round(sum_s/max(answers,1),1) AS avg_s,
 			              round(max_s,0) AS max_s, round(100.0*over_120/max(answers,1),2) AS over_2min_pct,
 			              round(retry_s,0) AS retry_s, round(background_s,0) AS background_s
@@ -1356,7 +1385,7 @@ func main() {
 			              ORDER BY day, phase, model`, (from/1000)/86400, min)
 			return
 		}
-		rows2json(w, fill(`SELECT * FROM $__model_answers WHERE answers >= `+strconv.Itoa(min)+
+		rows2json(w, r, fill(`SELECT * FROM $__model_answers WHERE answers >= `+strconv.Itoa(min)+
 			` ORDER BY avg_s DESC`, from, to))
 	})
 
@@ -1365,7 +1394,7 @@ func main() {
 		if run := r.URL.Query().Get("run"); run != "" {
 			where, args = where+" AND run=?", append(args, run)
 		}
-		rows2json(w, `SELECT agent, phase, count(*) AS times,
+		rows2json(w, r, `SELECT agent, phase, count(*) AS times,
 		              round(sum(json_extract(payload,'$.seconds')),1) AS seconds,
 		              round(avg(json_extract(payload,'$.seconds')),1) AS mean,
 		              sum(json_extract(payload,'$.out')) AS out,
@@ -1394,8 +1423,9 @@ func main() {
 				quiet = n
 			}
 		}
-		mu.Lock()
-		rows, err := db.Query(`SELECT r.run, coalesce(r.name,''), r.started,
+		ctx, cancel := readCtx(r.Context())
+		defer cancel()
+		rows, err := readDB.QueryContext(ctx, `SELECT r.run, coalesce(r.name,''), r.started,
 		                       coalesce(max(e.at), r.started) AS last
 		                       FROM runs r LEFT JOIN events e ON e.run = r.run
 		                       WHERE r.finished IS NULL GROUP BY r.run`)
@@ -1417,9 +1447,11 @@ func main() {
 					}
 				}
 			}
+			if err := rows.Err(); err != nil {
+				log.Printf("ammit: main: %v", err)
+			}
 			rows.Close()
 		}
-		mu.Unlock()
 		if out == nil {
 			out = []live{}
 		}
@@ -1439,7 +1471,7 @@ func main() {
 			where += " AND json_extract(payload,'$.service') = ?"
 			args = append(args, svc)
 		}
-		rows2json(w, `SELECT at, run,
+		rows2json(w, r, `SELECT at, run,
 		              json_extract(payload,'$.service')  AS service,
 		              json_extract(payload,'$.level')    AS level,
 		              json_extract(payload,'$.logger')   AS logger,
@@ -1449,10 +1481,10 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /judgements", func(w http.ResponseWriter, r *http.Request) {
-		rows2json(w, `SELECT * FROM judgements ORDER BY id DESC LIMIT 200`)
+		rows2json(w, r, `SELECT * FROM judgements ORDER BY id DESC LIMIT 200`)
 	})
 	mux.HandleFunc("GET /queue", func(w http.ResponseWriter, r *http.Request) {
-		rows2json(w, `SELECT * FROM queue ORDER BY id DESC LIMIT 100`)
+		rows2json(w, r, `SELECT * FROM queue ORDER BY id DESC LIMIT 100`)
 	})
 	mux.HandleFunc("GET /prices", servePrices)
 	mux.HandleFunc("GET /limits", func(w http.ResponseWriter, r *http.Request) {
@@ -1504,11 +1536,20 @@ func archive(conf Config, dbPath string) {
 		return
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
+	// The writer's one connection, held from the count to the VACUUM: the
+	// moves are one transaction on it, and ATTACH, DETACH and VACUUM, which
+	// SQLite refuses inside a transaction, run on the same connection either
+	// side of it - an ATTACH on one pooled connection is invisible to the
+	// next. Every other writer waits for it to be given back.
+	conn, err := db.Conn(bg)
+	if err != nil {
+		log.Printf("ammit: no writer for the archive (%v)", err)
+		return
+	}
+	defer func() { _ = conn.Close() }()
 
 	var due int
-	if err := db.QueryRow(`SELECT count(*) FROM runs WHERE finished IS NOT NULL
+	if err := conn.QueryRowContext(bg, `SELECT count(*) FROM runs WHERE finished IS NOT NULL
 	                       AND finished < ?`, cutoff).Scan(&due); err != nil || due == 0 {
 		return
 	}
@@ -1520,11 +1561,29 @@ func archive(conf Config, dbPath string) {
 	}
 	name := fmt.Sprintf("%s/ammit-%s.db", dir, time.Now().Format("2006-01"))
 
-	if _, err := db.Exec(`ATTACH DATABASE ? AS archive`, name); err != nil {
+	if _, err := conn.ExecContext(bg, `ATTACH DATABASE ? AS archive`, name); err != nil {
 		log.Printf("ammit: could not open the archive (%v)", err)
 		return
 	}
-	defer db.Exec(`DETACH DATABASE archive`)
+	defer func() {
+		if _, err := conn.ExecContext(bg, `DETACH DATABASE archive`); err != nil {
+			log.Printf("ammit: could not detach the archive (%v)", err)
+		}
+	}()
+
+	// The copy and the delete, one transaction: a move that stops halfway
+	// leaves both databases as they were, never a run in neither or in both.
+	tx, err := conn.BeginTx(bg, nil)
+	if err != nil {
+		log.Printf("ammit: could not begin the archive (%v)", err)
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
 	for _, ddl := range []string{
 		`CREATE TABLE IF NOT EXISTS archive.runs AS SELECT * FROM runs WHERE 0`,
@@ -1532,7 +1591,7 @@ func archive(conf Config, dbPath string) {
 		`CREATE TABLE IF NOT EXISTS archive.judgements AS SELECT * FROM judgements WHERE 0`,
 		`CREATE TABLE IF NOT EXISTS archive.limits AS SELECT * FROM limits WHERE 0`,
 	} {
-		if _, err := db.Exec(ddl); err != nil {
+		if _, err := tx.ExecContext(bg, ddl); err != nil {
 			log.Printf("ammit: archive schema (%v)", err)
 			return
 		}
@@ -1565,7 +1624,7 @@ func archive(conf Config, dbPath string) {
 		`DELETE FROM runs WHERE finished IS NOT NULL AND finished < ?`,
 	}
 	for _, q := range moves {
-		if _, err := db.Exec(q, cutoff); err != nil {
+		if _, err := tx.ExecContext(bg, q, cutoff); err != nil {
 			log.Printf("ammit: archiving stopped (%v)", err)
 			return
 		}
@@ -1574,8 +1633,15 @@ func archive(conf Config, dbPath string) {
 	// points at, and the alternative to rebuilding is one 'delete' command per
 	// row with the body it was indexed under, which means keeping the bodies
 	// that were just thrown away.
-	rebuildFTS()
-	db.Exec(`VACUUM`)
+	rebuildFTS(tx)
+	if err := tx.Commit(); err != nil {
+		log.Printf("ammit: archiving stopped at the commit (%v)", err)
+		return
+	}
+	committed = true
+	if _, err := conn.ExecContext(bg, `VACUUM`); err != nil {
+		log.Printf("ammit: archived, but VACUUM failed (%v)", err)
+	}
 	log.Printf("ammit: archived %d run(s) older than %.0f days into %s", due, days, name)
 }
 

@@ -138,17 +138,17 @@ func searchable(e event) string {
 	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
-// indexEvent files one event's words. Called from store, which holds the lock.
-func indexEvent(id int64, at float64, e event) {
+// indexEvent files one event's words, inside store's transaction.
+func indexEvent(x dbx, id int64, at float64, e event) {
 	body := searchable(e)
 	if body == "" {
 		return
 	}
-	indexRow("event", id, e.s("run"), e.s("kind"), at, e.s("phase"), e.s("session"), body)
+	indexRow(x, "event", id, e.s("run"), e.s("kind"), at, e.s("phase"), e.s("session"), body)
 }
 
 // indexDocument files a document's body, up to indexMaxBytes.
-func indexDocument(id int64, at float64, run, kind, phase, body string) {
+func indexDocument(x dbx, id int64, at float64, run, kind, phase, body string) {
 	if len(body) > indexMaxBytes {
 		body = body[:indexMaxBytes]
 		// Cut on a rune boundary: half a character in the index is a token
@@ -160,7 +160,7 @@ func indexDocument(id int64, at float64, run, kind, phase, body string) {
 	if strings.TrimSpace(body) == "" {
 		return
 	}
-	indexRow("document", id, run, kind, at, phase, "", body)
+	indexRow(x, "document", id, run, kind, at, phase, "", body)
 }
 
 // insertSearchText keeps one row of searchable text and returns its rowid, or
@@ -169,9 +169,9 @@ func indexDocument(id int64, at float64, run, kind, phase, body string) {
 // ignores leaves the connection's last rowid where the previous insert left
 // it, so a conflict would otherwise report the wrong row as new and file its
 // body into the index a second time.
-func insertSearchText(source string, ref int64, run, kind string, at float64,
+func insertSearchText(x dbx, source string, ref int64, run, kind string, at float64,
 	phase, session, body string) (int64, bool) {
-	res, err := db.Exec(`INSERT OR IGNORE INTO search_text
+	res, err := x.Exec(`INSERT OR IGNORE INTO search_text
 	                     (source, ref, run, kind, at, phase, session, body)
 	                     VALUES (?,?,?,?,?,?,?,?)`,
 		source, ref, run, kind, at, phase, session, body)
@@ -190,13 +190,13 @@ func insertSearchText(source string, ref int64, run, kind string, at float64,
 	return rowid, true
 }
 
-func indexRow(source string, ref int64, run, kind string, at float64,
+func indexRow(x dbx, source string, ref int64, run, kind string, at float64,
 	phase, session, body string) {
-	rowid, fresh := insertSearchText(source, ref, run, kind, at, phase, session, body)
+	rowid, fresh := insertSearchText(x, source, ref, run, kind, at, phase, session, body)
 	if !fresh || !searchFTS {
 		return
 	}
-	if _, err := db.Exec(`INSERT INTO search_fts (rowid, body) VALUES (?,?)`,
+	if _, err := x.Exec(`INSERT INTO search_fts (rowid, body) VALUES (?,?)`,
 		rowid, body); err != nil {
 		log.Printf("ammit: could not index a %s for search: %v", source, err)
 	}
@@ -211,10 +211,9 @@ const backfillBatch = 2000
 // through the same searchable() the write path uses, the documents by reading
 // the files back off the disk. Runs once on start, and picks up where it
 // stopped, so a database that predates this index becomes searchable without
-// anybody replaying anything.
+// anybody replaying anything. On start, before anything else writes, so
+// each statement on the writer is its own transaction.
 func indexHistory() {
-	mu.Lock()
-	defer mu.Unlock()
 	stale := indexMark() != indexGeneration
 	if stale {
 		log.Printf("ammit: the search index was built by an older version; " +
@@ -230,7 +229,7 @@ func indexHistory() {
 	// heals a database indexed by the version that could not: nothing new to
 	// file there, and an index that answers nothing either way.
 	if events > 0 || documents > 0 || stale || ftsLost() {
-		rebuildFTS()
+		rebuildFTS(db)
 	}
 }
 
@@ -321,7 +320,7 @@ func backfillEvents(fromTheStart bool) int {
 			if body == "" {
 				continue // it said nothing in words; a heartbeat is not a hit
 			}
-			if _, fresh := insertSearchText("event", k.id, k.run, k.kind, k.at,
+			if _, fresh := insertSearchText(db, "event", k.id, k.run, k.kind, k.at,
 				k.phase, k.session, body); fresh {
 				indexed++
 			}
@@ -357,7 +356,7 @@ func backfillDocuments() int {
 		if err != nil {
 			continue // the volume lost it; the row stays, the words are gone
 		}
-		indexDocument(d.id, d.at, d.run, d.kind, d.phase, string(raw))
+		indexDocument(db, d.id, d.at, d.run, d.kind, d.phase, string(raw))
 	}
 	return len(todo)
 }
@@ -377,15 +376,15 @@ func indexMark() string {
 // right after a bulk load into an external-content table: such a table has no
 // rowids of its own to compare against, so "insert what the index has not got"
 // cannot be written as a query.
-func rebuildFTS() {
+func rebuildFTS(x dbx) {
 	if !searchFTS {
 		return
 	}
-	if _, err := db.Exec(`INSERT INTO search_fts(search_fts) VALUES('rebuild')`); err != nil {
+	if _, err := x.Exec(`INSERT INTO search_fts(search_fts) VALUES('rebuild')`); err != nil {
 		log.Printf("ammit: could not rebuild the search index: %v", err)
 		return
 	}
-	if _, err := db.Exec(`INSERT INTO search_meta (key, value)
+	if _, err := x.Exec(`INSERT INTO search_meta (key, value)
 	                      VALUES ('fts_generation', ?)
 	                      ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 		indexGeneration); err != nil {
@@ -471,7 +470,7 @@ func serveSearch(mux *http.ServeMux) {
 		if run := r.URL.Query().Get("run"); run != "" {
 			// By id or by ticket, the same as /compare: whoever is searching
 			// knows the ticket, not the twelve hex characters.
-			ref := resolveRun(run)
+			ref := resolveRun(r.Context(), run)
 			id := run
 			if ref.Found {
 				id = ref.Run
@@ -515,8 +514,9 @@ func serveSearch(mux *http.ServeMux) {
 		args = append(args, limit)
 
 		out := []hit{}
-		mu.Lock()
-		rows, err := db.Query(query, args...)
+		ctx, cancel := readCtx(r.Context())
+		defer cancel()
+		rows, err := readDB.QueryContext(ctx, query, args...)
 		if err == nil {
 			for rows.Next() {
 				var h hit
@@ -532,9 +532,11 @@ func serveSearch(mux *http.ServeMux) {
 				}
 				out = append(out, h)
 			}
+			if err := rows.Err(); err != nil {
+				log.Printf("ammit: serveSearch: %v", err)
+			}
 			rows.Close()
 		}
-		mu.Unlock()
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

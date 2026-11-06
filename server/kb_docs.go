@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -271,10 +270,9 @@ func embedKBDoc(ctx context.Context, d kbDoc) kbEmbedded {
 // storeKBDoc replaces a document and its chunks, with their vectors when the
 // model answered. A model that did not answer leaves the chunks without
 // vectors; the next ask embeds them (kbBackfill), so nothing is lost to an
-// outage. The caller holds the database mutex.
+// outage. One transaction on the writer.
 func storeKBDoc(ctx context.Context, d kbDoc, e kbEmbedded) (chunks int, embedded bool, err error) {
-	parts, vecs, model, eerr := e.parts, e.vecs, e.model, e.err
-	if len(parts) == 0 {
+	if len(e.parts) == 0 {
 		return 0, false, errors.New("text is empty")
 	}
 	tx, err := db.BeginTx(ctx, nil)
@@ -282,6 +280,19 @@ func storeKBDoc(ctx context.Context, d kbDoc, e kbEmbedded) (chunks int, embedde
 		return 0, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	chunks, embedded, err = storeKBDocIn(ctx, tx, d, e)
+	if err != nil {
+		return 0, false, err
+	}
+	return chunks, embedded, tx.Commit()
+}
+
+// storeKBDocIn is storeKBDoc inside a transaction the caller holds.
+func storeKBDocIn(ctx context.Context, tx dbx, d kbDoc, e kbEmbedded) (chunks int, embedded bool, err error) {
+	parts, vecs, model, eerr := e.parts, e.vecs, e.model, e.err
+	if len(parts) == 0 {
+		return 0, false, errors.New("text is empty")
+	}
 	var old sql.NullInt64
 	_ = tx.QueryRowContext(ctx, `SELECT id FROM kb_docs WHERE project = ? AND topic = ?`, d.Project, d.Topic).Scan(&old)
 	if old.Valid {
@@ -321,7 +332,7 @@ func storeKBDoc(ctx context.Context, d kbDoc, e kbEmbedded) (chunks int, embedde
 			}
 		}
 	}
-	return len(parts), eerr == nil, tx.Commit()
+	return len(parts), eerr == nil, nil
 }
 
 // kbEntryText is a structured entry as words: what it is, and its body flattened
@@ -387,7 +398,7 @@ func kbEntryCite(e kbEntry) string {
 	return "kb:" + e.Project + "/" + e.Topic
 }
 
-func putKBDoc(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func putKBDoc(w http.ResponseWriter, r *http.Request) {
 	var d kbDoc
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
@@ -407,8 +418,6 @@ func putKBDoc(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e := embedKBDoc(r.Context(), d)
-	mu.Lock()
-	defer mu.Unlock()
 	n, embedded, err := storeKBDoc(r.Context(), d, e)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -419,9 +428,12 @@ func putKBDoc(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 }
 
 // kbEach runs a query and hands every row to each; the rows are closed and
-// their error returned, whatever each did.
+// their error returned, whatever each did. On the read pool, under the read
+// deadline.
 func kbEach(ctx context.Context, each func(*sql.Rows), query string, args ...any) error {
-	rows, err := db.QueryContext(ctx, query, args...)
+	ctx, cancel := context.WithTimeout(ctx, _QUERY_DEADLINE)
+	defer cancel()
+	rows, err := readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -444,10 +456,10 @@ func kbSortedKinds() []string {
 // kbBackfill embeds chunks stored while no model answered, and chunks a
 // different model embedded - their vectors are not comparable with the
 // question's. Bounded per call: an ask is a question, not a migration. Reads
-// and writes under the mutex, asks the model outside it.
-func kbBackfill(ctx context.Context, mu *sync.Mutex, project, model string) {
-	mu.Lock()
-	defer mu.Unlock()
+// on the read pool, asks the model with nothing held, writes the vectors in
+// one transaction. A chunk replaced meanwhile is a row id that matches
+// nothing, and its replacement is embedded by the next ask.
+func kbBackfill(ctx context.Context, project, model string) {
 	var ids []int64
 	var texts []string
 	err := kbEach(ctx, func(rows *sql.Rows) {
@@ -460,15 +472,19 @@ func kbBackfill(ctx context.Context, mu *sync.Mutex, project, model string) {
 	if err != nil || len(ids) == 0 {
 		return
 	}
-	mu.Unlock()
 	vecs, model, err := kbEmbedder(ctx, texts, false)
-	mu.Lock()
 	if err != nil {
 		return
 	}
-	for i, id := range ids {
-		_, _ = db.ExecContext(ctx, `UPDATE kb_chunks SET model = ?, vec = ? WHERE id = ?`, model, kbVecBlob(vecs[i]), id)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return
 	}
+	defer func() { _ = tx.Rollback() }()
+	for i, id := range ids {
+		_, _ = tx.ExecContext(ctx, `UPDATE kb_chunks SET model = ?, vec = ? WHERE id = ?`, model, kbVecBlob(vecs[i]), id)
+	}
+	_ = tx.Commit()
 }
 
 type kbHit struct {
@@ -493,7 +509,7 @@ func scanKBHit(sc interface{ Scan(...any) error }, extra ...any) (kbHit, error) 
 }
 
 // askKB answers {project, q, k} (POST) or ?project=&q=&k= (GET).
-func askKB(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func askKB(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Project string `json:"project"`
 		Q       string `json:"q"`
@@ -520,10 +536,8 @@ func askKB(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	qv, model, eerr := kbEmbedder(ctx, []string{in.Q}, true)
 	if eerr == nil {
-		kbBackfill(ctx, mu, in.Project, model)
+		kbBackfill(ctx, in.Project, model)
 	}
-	mu.Lock()
-	defer mu.Unlock()
 	if eerr == nil {
 		var hits []kbHit
 		err := kbEach(ctx, func(rows *sql.Rows) {
@@ -639,9 +653,10 @@ func kbWordHits(ctx context.Context, project, q string, k int) ([]kbHit, string,
 	return hits, "fts5", err
 }
 
-// staleKBDoc marks a document whose content a run found false.
-func staleKBDoc(ctx context.Context, project, topic, why string) int64 {
-	res, err := db.ExecContext(ctx, `UPDATE kb_docs SET stale = 1, stale_why = ? WHERE project = ? AND topic = ?`,
+// staleKBDoc marks a document whose content a run found false, inside the
+// caller's transaction.
+func staleKBDoc(ctx context.Context, x dbx, project, topic, why string) int64 {
+	res, err := x.ExecContext(ctx, `UPDATE kb_docs SET stale = 1, stale_why = ? WHERE project = ? AND topic = ?`,
 		why, project, topic)
 	if err != nil {
 		return 0
@@ -651,14 +666,12 @@ func staleKBDoc(ctx context.Context, project, topic, why string) int64 {
 }
 
 // getKBDocs lists ?project= documents (no chunks), stale ones marked.
-func getKBDocs(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func getKBDocs(w http.ResponseWriter, r *http.Request) {
 	project := strings.TrimSpace(r.URL.Query().Get("project"))
 	if project == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "need project"})
 		return
 	}
-	mu.Lock()
-	defer mu.Unlock()
 	out := []map[string]any{}
 	err := kbEach(r.Context(), func(rows *sql.Rows) {
 		var topic, kind, cite, by, why string
