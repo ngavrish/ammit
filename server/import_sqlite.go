@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -607,8 +608,17 @@ func convert(v any, c column) (any, bool) {
 		return nil, false
 	default: // text
 		s := textOf(v)
+		fit := true
+		// A body cut at a byte count can end inside a character; SQLite kept
+		// the half, Postgres refuses the row (calls row 145190, 2026-11-06).
+		if !utf8.ValidString(s) {
+			s, fit = strings.ToValidUTF8(s, "�"), false
+		}
 		if strings.IndexByte(s, 0) >= 0 {
 			return strings.ReplaceAll(s, "\x00", "�"), false
+		}
+		if !fit {
+			return s, false
 		}
 		_, isString := v.(string)
 		return s, isString
