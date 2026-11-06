@@ -43,13 +43,16 @@ func keepTick(conf Config) {
 
 // recentTickets is every ticket with a run started in the last two days:
 // watchdog.keep "all" watches each run without anyone listing its ticket.
+// Ad-hoc questions are not tickets: on 2026-11-06 the keeper resumed two of
+// them every tick into "no such ticket" and "no such flow".
 // 2026-11-05: keep was empty, so the keeper watched nothing, and APF-1972
 // lay stopped while a person asked in a chat why nothing picked it up.
 func recentTickets() []string {
 	mu.Lock()
 	defer mu.Unlock()
 	rows, err := db.Query(`SELECT DISTINCT name FROM runs WHERE started > ?
-	                       AND name GLOB '[A-Z]*-[0-9]*' AND name NOT LIKE 'WD-%'`, wdNow()-2*86400)
+	                       AND name GLOB '[A-Z]*-[0-9]*' AND name NOT LIKE 'WD-%'
+	                       AND name NOT LIKE 'ADHOC-%'`, wdNow()-2*86400)
 	if err != nil {
 		return nil
 	}
