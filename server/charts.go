@@ -334,7 +334,9 @@ func serveCharts(mux *http.ServeMux) {
 				http.Error(w, "a panel needs a title", http.StatusBadRequest)
 				return
 			}
-			if len(p.Queries) == 0 {
+			// A row is a section heading: it groups the panels under it and
+			// asks the database nothing.
+			if len(p.Queries) == 0 && p.Kind != "row" {
 				http.Error(w, "a panel needs a query", http.StatusBadRequest)
 				return
 			}
