@@ -22,20 +22,20 @@ func lift(id int64, at float64, e event) {
 		// not folded here - a reader that wants "output" takes the larger in
 		// its query and knows it did; a column named tokens_out that is
 		// sometimes an estimate is a lie nothing downstream can undo.
-		execSQL(`INSERT OR IGNORE INTO turns (event_id, at, run, agent, phase, branch, request, model,
+		execSQL(`INSERT INTO turns (event_id, at, run, agent, phase, branch, request, model,
 		        context, tokens_in, tokens_out, out_est, cache_read, cache_write, cache_write_1h, geo)
-		      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
 			id, at, e.s("run"), e.s("agent"), e.s("phase"), e.s("branch"), e.s("request"), e.s("model"),
 			int64(e.f("context")), e.opt("tokens_in"), e.opt("tokens_out"), e.opt("out_est"), e.opt("cache_read"),
 			e.opt("cache_write"), e.opt("cache_write_1h"), e.s("geo"))
 	case "suite":
-		execSQL(`INSERT OR IGNORE INTO suites (event_id, at, run, branch, verdict, total, passed, failed, reason)
-		      VALUES (?,?,?,?,?,?,?,?,?)`,
+		execSQL(`INSERT INTO suites (event_id, at, run, branch, verdict, total, passed, failed, reason)
+		      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
 			id, at, e.s("run"), e.s("branch"), e.s("verdict"), e.opt("total"), e.opt("passed"),
 			e.opt("failed"), e.s("reason"))
 	case "heal_lap":
-		execSQL(`INSERT OR IGNORE INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
-		      VALUES (?,?,?,?,?,?,?,?)`,
+		execSQL(`INSERT INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
+		      VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
 			id, at, e.s("run"), e.s("branch"), e.s("phase"), int64(e.f("lap")), e.opt("cap"),
 			e.s("decision"))
 		// The runner enforces this one; ammit writes it down beside the limits
@@ -88,46 +88,55 @@ func execSQL(sql string, args ...any) {
 func liftHistory() {
 	mu.Lock()
 	defer mu.Unlock()
-	const text = "json_extract(payload,'$.text')"
+	// The history is replayed with the same reading of a payload the live
+	// path makes: jnum for what the event sent as a number (json_extract's
+	// number, see schema.go), ->> for text, lead_int for SQLite's CAST of a
+	// string to INTEGER - the leading digits, 0 when there are none.
+	const text = "(payload->>'text')"
 	for _, sql := range []string{
-		`INSERT OR IGNORE INTO turns (event_id, at, run, agent, phase, branch, request, model,
+		`INSERT INTO turns (event_id, at, run, agent, phase, branch, request, model,
 		        context, tokens_in, tokens_out, out_est, cache_read, cache_write, cache_write_1h, geo)
-		 SELECT id, at, run, agent, phase, branch, json_extract(payload,'$.request'),
-		        json_extract(payload,'$.model'), json_extract(payload,'$.context'),
-		        json_extract(payload,'$.tokens_in'),
-		        json_extract(payload,'$.tokens_out'), json_extract(payload,'$.out_est'),
-		        json_extract(payload,'$.cache_read'), json_extract(payload,'$.cache_write'),
-		        json_extract(payload,'$.cache_write_1h'), json_extract(payload,'$.geo')
-		 FROM events WHERE kind='turn' AND id > (SELECT coalesce(max(event_id),0) FROM turns)`,
-		`INSERT OR IGNORE INTO suites (event_id, at, run, branch, verdict, total, passed, failed, reason)
-		 SELECT id, at, run, coalesce(json_extract(payload,'$.branch'),''), json_extract(payload,'$.verdict'),
-		        json_extract(payload,'$.total'), json_extract(payload,'$.passed'), json_extract(payload,'$.failed'),
-		        coalesce(json_extract(payload,'$.reason'),'')
-		 FROM events WHERE kind='suite'`,
+		 SELECT id, at, run, agent, phase, branch, payload->>'request',
+		        payload->>'model', trunc(jnum(payload->'context')),
+		        trunc(jnum(payload->'tokens_in')),
+		        trunc(jnum(payload->'tokens_out')), trunc(jnum(payload->'out_est')),
+		        trunc(jnum(payload->'cache_read')), trunc(jnum(payload->'cache_write')),
+		        trunc(jnum(payload->'cache_write_1h')), payload->>'geo'
+		 FROM events WHERE kind='turn' AND id > (SELECT coalesce(max(event_id),0) FROM turns)
+		 ON CONFLICT DO NOTHING`,
+		`INSERT INTO suites (event_id, at, run, branch, verdict, total, passed, failed, reason)
+		 SELECT id, at, run, coalesce(payload->>'branch',''), payload->>'verdict',
+		        trunc(jnum(payload->'total')), trunc(jnum(payload->'passed')), trunc(jnum(payload->'failed')),
+		        coalesce(payload->>'reason','')
+		 FROM events WHERE kind='suite'
+		 ON CONFLICT DO NOTHING`,
 		// Before the suite event: the SUITE line of the branchrun phase, taken
 		// apart once here and never again. The whole line is the reason.
-		`INSERT OR IGNORE INTO suites (event_id, at, run, branch, verdict, total, passed, failed, reason)
-		 SELECT id, at, run, coalesce(json_extract(payload,'$.branch'),''),
-		        CASE WHEN instr(` + text + `,'SUITE GREEN')>0 THEN 'green' ELSE 'red' END,
-		        CAST(substr(substr(` + text + `, instr(` + text + `,'SUITE ')), instr(substr(` + text + `, instr(` + text + `,'SUITE ')),': ')+2) AS INTEGER),
-		        CAST(substr(` + text + `, instr(` + text + `,'scenarios, ')+11) AS INTEGER),
-		        CAST(substr(` + text + `, instr(` + text + `,'passed, ')+8) AS INTEGER),
-		        'from the phase text: ' || substr(substr(` + text + `, instr(` + text + `,'SUITE ')), 1, 120)
-		 FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase')='branchrun'
-		   AND run NOT IN (SELECT run FROM events WHERE kind='suite')`,
-		`INSERT OR IGNORE INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
-		 SELECT id, at, run, coalesce(json_extract(payload,'$.branch'),''), phase,
-		        json_extract(payload,'$.lap'), json_extract(payload,'$.cap'), json_extract(payload,'$.decision')
-		 FROM events WHERE kind='heal_lap'`,
+		`INSERT INTO suites (event_id, at, run, branch, verdict, total, passed, failed, reason)
+		 SELECT id, at, run, coalesce(payload->>'branch',''),
+		        CASE WHEN strpos(` + text + `,'SUITE GREEN')>0 THEN 'green' ELSE 'red' END,
+		        lead_int(substr(substr(` + text + `, strpos(` + text + `,'SUITE ')), strpos(substr(` + text + `, strpos(` + text + `,'SUITE ')),': ')+2)),
+		        lead_int(substr(` + text + `, strpos(` + text + `,'scenarios, ')+11)),
+		        lead_int(substr(` + text + `, strpos(` + text + `,'passed, ')+8)),
+		        'from the phase text: ' || substr(substr(` + text + `, strpos(` + text + `,'SUITE ')), 1, 120)
+		 FROM events WHERE kind='phase_end' AND payload->>'phase'='branchrun'
+		   AND run NOT IN (SELECT run FROM events WHERE kind='suite')
+		 ON CONFLICT DO NOTHING`,
+		`INSERT INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
+		 SELECT id, at, run, coalesce(payload->>'branch',''), phase,
+		        trunc(jnum(payload->'lap')), trunc(jnum(payload->'cap')), payload->>'decision'
+		 FROM events WHERE kind='heal_lap'
+		 ON CONFLICT DO NOTHING`,
 		// Before the heal_lap event: one lap per heal phase that ended, numbered
 		// in order within its branch; the cap was not recorded, the decision
 		// is not known.
-		`INSERT OR IGNORE INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
+		`INSERT INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
 		 SELECT id, at, run, branch, phase,
 		        row_number() OVER (PARTITION BY run, branch ORDER BY at), NULL, 'unknown'
-		 FROM (SELECT id, at, run, coalesce(json_extract(payload,'$.branch'),'') AS branch, phase
-		       FROM events WHERE kind='phase_end' AND json_extract(payload,'$.phase') LIKE '%heal%'
-		         AND run NOT IN (SELECT run FROM events WHERE kind='heal_lap'))`,
+		 FROM (SELECT id, at, run, coalesce(payload->>'branch','') AS branch, phase
+		       FROM events WHERE kind='phase_end' AND payload->>'phase' ILIKE '%heal%'
+		         AND run NOT IN (SELECT run FROM events WHERE kind='heal_lap')) AS h
+		 ON CONFLICT DO NOTHING`,
 	} {
 		execSQL(sql)
 	}

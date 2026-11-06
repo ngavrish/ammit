@@ -1,0 +1,118 @@
+{
+ "hidden": [],
+ "panels": [
+  {
+   "kind": "series",
+   "title": "Network probe",
+   "about": "TLS handshake to the API host, per sampling tick",
+   "unit": "ms",
+   "height": 8,
+   "queries": [
+    "SELECT at AS time, CASE jnum(payload->'ok') WHEN 1 THEN 'probe ms' ELSE 'failed' END AS metric, jnum(payload->'latency_ms') AS value FROM events WHERE kind='netprobe' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "series",
+   "title": "Model answer health",
+   "about": "avg and worst model-request duration per 10-minute window - the night the tail went to 900s, this line would have said so live",
+   "unit": "s",
+   "height": 8,
+   "queries": [
+    "SELECT trunc(at/600)::bigint*600 AS time, 'avg s' AS metric, avg(jnum(payload->'seconds')) AS value FROM events WHERE kind='request_end' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1 UNION ALL SELECT trunc(at/600)::bigint*600 AS time, 'max s' AS metric, max(jnum(payload->'seconds')) AS value FROM events WHERE kind='request_end' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1 ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "series",
+   "title": "Model request retries",
+   "about": "how often the watchdog had to cut a hung model wait - spikes here mean the provider is sick, whatever the probes say",
+   "unit": "short",
+   "height": 8,
+   "queries": [
+    "SELECT trunc(at/600)::bigint*600 AS time, 'retries' AS metric, count(*) AS value FROM judgements WHERE rule ILIKE 'timeouts.request%' AND at*1000 BETWEEN $__from AND $__to GROUP BY 1 ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "row",
+   "title": "Learning",
+   "about": "",
+   "unit": "",
+   "height": 0,
+   "queries": null
+  },
+  {
+   "kind": "series",
+   "title": "Lessons in the global memory",
+   "about": "total LESSON lines after each store/ingest; fresh and confirmed witnesses per event - a flat line here while heal laps stay high means nothing is being learned",
+   "unit": "short",
+   "height": 8,
+   "queries": [
+    "SELECT at AS time, 'total' AS metric, jnum(payload->'total') AS value FROM events WHERE kind='learning' AND (payload->>'item')='lessons' AND at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at AS time, 'fresh' AS metric, jnum(payload->'fresh') AS value FROM events WHERE kind='learning' AND (payload->>'item')='lessons' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "series",
+   "title": "Dataset odometer",
+   "about": "runs hoarded into pipeline-training, cumulative - the LoRA threshold is ~25 runs (~300 funcreq pairs); when this line crosses it, the fine-tune announces itself",
+   "unit": "short",
+   "height": 8,
+   "queries": [
+    "SELECT time, metric, value FROM (SELECT at AS time, 'hoarded runs' AS metric, count(*) OVER (ORDER BY at) AS value FROM events WHERE kind='learning' AND (payload->>'item')='hoard') AS s1 WHERE time*1000 BETWEEN $__from AND $__to ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "series",
+   "title": "Shadow eval: local model vs sonnet",
+   "about": "gate-pass rate of the local candidate against the shipped sonnet rows, same mechanical judge - the local model earns a place in the flow when its line holds the sonnet line",
+   "unit": "percent",
+   "height": 8,
+   "queries": [
+    "SELECT at AS time, 'local %' AS metric, jnum(payload->'local_rate') AS value FROM events WHERE kind='learning' AND (payload->>'item')='shadow_eval' AND at*1000 BETWEEN $__from AND $__to UNION ALL SELECT at AS time, 'sonnet %' AS metric, jnum(payload->'sonnet_rate') AS value FROM events WHERE kind='learning' AND (payload->>'item')='shadow_eval' AND at*1000 BETWEEN $__from AND $__to ORDER BY 1"
+   ]
+  },
+  {
+   "kind": "bars",
+   "title": "Funcreq bill per run",
+   "about": "what the requirement author costs, per run - the line the local model exists to cut (run 13: $41.74, seventy percent of the whole bill)",
+   "unit": "currencyUSD",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'funcreq $' AS metric, (SELECT sum(jnum(e.payload->'usd')) FROM events e WHERE e.run=r.run AND e.kind='spend' AND (e.payload->>'phase')='funcreqs') AS value FROM runs r ORDER BY 1"
+   ],
+   "scope": "lifetime"
+  },
+  {
+   "kind": "bars",
+   "title": "Learning loop: heal laps per run",
+   "about": "branchheal+implrulefix phase starts per run, over run start time - the number the whole memory is judged on: it must FALL as lessons accumulate",
+   "unit": "short",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'heal+rulefix laps' AS metric, (SELECT count(*) FROM events e WHERE e.run=r.run AND e.kind='phase_start' AND e.phase IN ('branchheal','implrulefix')) AS value FROM runs r ORDER BY 1"
+   ],
+   "scope": "lifetime"
+  },
+  {
+   "kind": "bars",
+   "title": "Learning loop: memory usage per run",
+   "label": "Memory: stored and injected, per run",
+   "about": "Per run: how many times the runner stored the run's case into the ticket's memory (after a heal or revise phase) and how many times it injected past cases into a batch. Sessions do not ask the memory themselves by design; the runner asks for them.",
+   "unit": "short",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'stored' AS metric, (SELECT count(*) FROM events e WHERE e.run=r.run AND e.kind='log' AND (e.payload->>'text') ILIKE 'memory stored%') AS value FROM runs r UNION ALL SELECT r.started AS time, 'injected' AS metric, (SELECT count(*) FROM events e WHERE e.run=r.run AND e.kind='log' AND (e.payload->>'text') ILIKE 'memory injected%') AS value FROM runs r ORDER BY 1"
+   ],
+   "scope": "lifetime"
+  },
+  {
+   "kind": "bars",
+   "title": "Time to first branchrun",
+   "about": "minutes from run start to the first suite execution - authoring and gate fat lives entirely to the left of this line (run 12: 203m, run 13: 104m)",
+   "unit": "m",
+   "height": 8,
+   "queries": [
+    "SELECT r.started AS time, 'min to branchrun' AS metric, ((SELECT min(e.at) FROM events e WHERE e.run=r.run AND e.kind='phase_start' AND e.phase='branchrun')-r.started)/60.0 AS value FROM runs r WHERE EXISTS (SELECT 1 FROM events e WHERE e.run=r.run AND e.phase='branchrun') ORDER BY 1"
+   ],
+   "scope": "lifetime"
+  }
+ ]
+}

@@ -104,14 +104,17 @@ type livePhase struct {
 func currentPhases(run string) []livePhase {
 	mu.Lock()
 	defer mu.Unlock()
+	// The starts are folded to (phase, branch) first: Postgres lets HAVING's
+	// subquery see a grouped column, not the expression the group was made of.
 	rows, err := db.Query(`
-		SELECT coalesce(s.phase,''), coalesce(s.branch,''), max(s.at), count(*) FROM events s
-		WHERE s.run=? AND s.kind='phase_start' AND ifnull(s.phase,'') <> ''
-		GROUP BY 1, 2
+		SELECT s.phase, s.branch, max(s.at), count(*) FROM (
+		  SELECT run, coalesce(phase,'') AS phase, coalesce(branch,'') AS branch, at, id
+		  FROM events WHERE run=? AND kind='phase_start' AND coalesce(phase,'') <> '') AS s
+		GROUP BY s.run, s.phase, s.branch
 		HAVING max(s.id) > coalesce((SELECT max(e.id) FROM events e
 		        WHERE e.run=s.run AND e.kind='phase_end'
-		          AND coalesce(e.phase,'')=coalesce(s.phase,'')
-		          AND coalesce(e.branch,'')=coalesce(s.branch,'')), 0)
+		          AND coalesce(e.phase,'')=s.phase
+		          AND coalesce(e.branch,'')=s.branch), 0)
 		ORDER BY 3`, run)
 	if err != nil {
 		return nil
@@ -126,6 +129,7 @@ func currentPhases(run string) []livePhase {
 			out = append(out, p)
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter list it always was
 	return out
 }
 
@@ -135,12 +139,12 @@ func lastRed(run string) (string, string, float64) {
 	defer mu.Unlock()
 	var phase, text string
 	var at float64
-	err := db.QueryRow(`SELECT coalesce(phase,''), coalesce(json_extract(payload,'$.text'),
-	                           json_extract(payload,'$.error'),''), at
+	err := db.QueryRow(`SELECT coalesce(phase,''), coalesce((payload->>'text'),
+	                           (payload->>'error'),''), at
 	                    FROM events WHERE run=? AND kind='phase_end'
-	                      AND (json_extract(payload,'$.ok') IN (0, 'false')
-	                           OR json_extract(payload,'$.failed') IN (1, 'true')
-	                           OR json_extract(payload,'$.text') LIKE '%RED%')
+	                      AND (payload->'ok' IN ('0', 'false', '"false"')
+	                           OR payload->'failed' IN ('1', 'true', '"true"')
+	                           OR (payload->>'text') ILIKE '%RED%')
 	                    ORDER BY id DESC LIMIT 1`, run).Scan(&phase, &text, &at)
 	if err != nil {
 		return "", "", 0
@@ -188,9 +192,9 @@ func lastAsked(run, request string) string {
 		return ""
 	}
 	var text sql.NullString
-	db.QueryRow(`SELECT json_extract(payload,'$.text') FROM events
+	db.QueryRow(`SELECT (payload->>'text') FROM events
 	             WHERE run=? AND kind='log' AND agent=? AND at<=?
-	               AND json_extract(payload,'$.level')='tool'
+	               AND (payload->>'level')='tool'
 	             ORDER BY id DESC LIMIT 1`, run, agent, started).Scan(&text)
 	return text.String
 }

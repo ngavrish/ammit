@@ -7,8 +7,6 @@ import (
 	"math"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 // The queue and the sweep: what starts next, what was abandoned.
@@ -42,13 +40,13 @@ func sweepQueue(conf Config) {
 	now := float64(time.Now().UnixNano()) / 1e9
 	// Tied to a run that is over.
 	db.Exec(`UPDATE queue SET state='done', finished=?
-	         WHERE state='running' AND ifnull(run,'') <> ''
+	         WHERE state='running' AND coalesce(run,'') <> ''
 	           AND run IN (SELECT run FROM runs WHERE finished IS NOT NULL)`, now)
 	// Never tied to anything, and older than a run is allowed to take. Whatever
 	// it was, it is not running now.
 	if limit, ok := conf.num("timeouts", "run"); ok && limit > 0 {
 		db.Exec(`UPDATE queue SET state='done', finished=?
-		         WHERE state='running' AND ifnull(run,'') = ''
+		         WHERE state='running' AND coalesce(run,'') = ''
 		           AND coalesce(started, requested) < ?`, now, now-limit)
 	}
 }
@@ -74,6 +72,7 @@ func sweepAbandoned(conf Config) {
 				found = append(found, q)
 			}
 		}
+		_ = rows.Err() // a cut-off read is the shorter answer it always was
 		rows.Close()
 	}
 	mu.Unlock()
@@ -153,7 +152,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// second item sent into it then waits in its runner for the clone.
 	starting := map[string]int{}
 	if rows, err := db.Query(`SELECT coalesce(payload,'') FROM queue
-	                           WHERE state='running' AND ifnull(run,'') = '' AND started > ?`,
+	                           WHERE state='running' AND coalesce(run,'') = '' AND started > ?`,
 		float64(time.Now().Add(-3*time.Minute).UnixNano())/1e9); err == nil {
 		for rows.Next() {
 			var p string
@@ -161,6 +160,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 				starting[standOf(p)]++
 			}
 		}
+		_ = rows.Err() // a cut-off read is the shorter answer it always was
 		rows.Close()
 	}
 	docker += starting["docker"] + starting[""]
@@ -178,6 +178,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 				waiting = append(waiting, it)
 			}
 		}
+		_ = rows.Err() // a cut-off read is the shorter answer it always was
 		rows.Close()
 	}
 	// Not into a deploy that is going or waiting (deploys.go, deployClear):
@@ -297,7 +298,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	if !strings.Contains(outcome, `"run_id"`) &&
 		(strings.Contains(outcome, "try again") || strings.Contains(outcome, "already running")) {
 		mu.Lock()
-		db.Exec(`UPDATE queue SET state='waiting', started=NULL, payload=? WHERE id=? AND ifnull(run,'') = ''`, asked, id)
+		db.Exec(`UPDATE queue SET state='waiting', started=NULL, payload=? WHERE id=? AND coalesce(run,'') = ''`, asked, id)
 		mu.Unlock()
 		log.Printf("ammit: queue row %d (%s) held off on %s, waits again: %s", id, name, stand, outcome)
 		held[stand] = true
@@ -306,7 +307,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	}
 	if !strings.Contains(outcome, `"run_id"`) {
 		mu.Lock()
-		db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND ifnull(run,'') = ''`,
+		db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND coalesce(run,'') = ''`,
 			nowWall(), id)
 		mu.Unlock()
 		log.Printf("ammit: queue row %d (%s) refused on %s, closed: %s", id, name, stand, outcome)
@@ -359,7 +360,7 @@ func placed(payload, stand string) string {
 // and a run that never reached its end kept the stand: on 2026-11-04 the host
 // stand stayed ADHOC-20261103-075702's from 13:52 to 23:05. The caller holds mu.
 func releaseEndedStandLeases() {
-	rows, err := db.Query(`SELECT name, holder FROM leases WHERE name LIKE 'stand-%'`)
+	rows, err := db.Query(`SELECT name, holder FROM leases WHERE name ILIKE 'stand-%'`)
 	if err != nil {
 		return
 	}
@@ -371,6 +372,7 @@ func releaseEndedStandLeases() {
 			held = append(held, l)
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter answer it always was
 	rows.Close()
 	for _, l := range held {
 		ticket := strings.Fields(l.holder)

@@ -4,8 +4,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	_ "modernc.org/sqlite"
 )
 
 // The config as it stood: limits.yml read on every tick, and the hands-off switch.

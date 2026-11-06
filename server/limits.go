@@ -4,8 +4,6 @@ import (
 	"log"
 	"strconv"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 // The limits, as a record: every number every chart is drawn against, and when it changed.

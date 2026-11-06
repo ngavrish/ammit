@@ -40,11 +40,10 @@ timeouts:
   watchdog_deploy: 3600
   watchdog_start: 900
 retention:
-  # Finished runs older than this move into archive/ammit-YYYY-MM.db and leave
-  # the live database small. Nothing is deleted: an archive is a database like
-  # any other, and ATTACH brings an old run back when somebody asks.
+  # Finished runs older than this move into the archive schema (archive.runs,
+  # archive.events, ...) and leave the live tables small. Nothing is deleted:
+  # SELECT ... FROM archive.events brings an old run back when somebody asks.
   days: 30
-  dir: /data/archive
 
 # Twice a limit is a different event from a limit. Crossing one is ordinary and a
 # warning is the right size of answer; crossing it twice over says the limit no

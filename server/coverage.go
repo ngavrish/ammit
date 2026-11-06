@@ -52,7 +52,7 @@ var coverageKinds = map[string]bool{
 	"requirement": true, "funcreq": true, "claim": true,
 }
 
-func putCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func putCoverage(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	var in coverageIn
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "not json"})
@@ -103,7 +103,7 @@ func putCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Requ
 
 // getCoverage answers the traceability question for one ticket or one run:
 // every row, with what it covers and what proves it.
-func getCoverage(db *sql.DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
+func getCoverage(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	ticket := strings.TrimSpace(r.URL.Query().Get("ticket"))
 	run := strings.TrimSpace(r.URL.Query().Get("run"))
 	// Three whole statements rather than one with a clause pasted into it.

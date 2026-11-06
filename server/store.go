@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 // What an event becomes when it lands.
@@ -46,24 +44,25 @@ func store(e event) {
 	// stored" has to be true of this service's own events too, or the page is
 	// a rule for other people.
 	e, _ = recordOf(e)
+	// jsonb refuses a NUL inside a string, and so does every text column.
+	noNUL(e)
 	at := e.f("at")
 	if at == 0 {
 		at = float64(time.Now().UnixNano()) / 1e9
 	}
 	payload, _ := json.Marshal(e)
-	res, err := db.Exec(
+	var id int64
+	err := db.QueryRow(
 		`INSERT INTO events (at, kind, run, phase, session, agent, branch, payload)
-		 VALUES (?,?,?,?,?,?,?,?)`,
+		 VALUES (?,?,?,?,?,?,?,?) RETURNING id`,
 		at, e.s("kind"), e.s("run"), e.s("phase"), e.s("session"), e.s("agent"),
-		e.s("branch"), string(payload))
+		e.s("branch"), string(payload)).Scan(&id)
 	if err != nil {
 		log.Printf("ammit: could not keep an event: %v", err)
 		return
 	}
-	if id, err := res.LastInsertId(); err == nil {
-		lift(id, at, e)
-		indexEvent(id, at, e)
-	}
+	lift(id, at, e)
+	indexEvent(id, at, e)
 	// A run this store has never heard of gets a row on its first event.
 	//
 	// The start event travels the same wire as everything else, and that wire
@@ -72,7 +71,8 @@ func store(e event) {
 	// to the queue's idea of what is running. The row is what makes a run real
 	// here, so any event may create it and run_start merely fills in the name.
 	if run := e.s("run"); run != "" && e.s("kind") != "run_start" {
-		db.Exec(`INSERT OR IGNORE INTO runs (run, name, started) VALUES (?,?,?)`,
+		db.Exec(`INSERT INTO runs (run, name, started) VALUES (?,?,?)
+		         ON CONFLICT DO NOTHING`,
 			run, run, at)
 	}
 
@@ -92,7 +92,7 @@ func store(e event) {
 		// just started.
 		db.Exec(`UPDATE queue SET run = ? WHERE id = (
 		           SELECT id FROM queue WHERE name = ? AND state = 'running'
-		             AND ifnull(run,'') = '' ORDER BY id LIMIT 1)`,
+		             AND coalesce(run,'') = '' ORDER BY id LIMIT 1)`,
 			e.s("run"), e.s("name"))
 		// A new run of a ticket supersedes any older run still open under the
 		// same name. The two share one directory (/runs/<name>), and stop_run
@@ -119,8 +119,10 @@ func store(e event) {
 			e.s("run"), e.s("name"), at)
 	case "flow":
 		phases, _ := json.Marshal(e["phases"])
-		db.Exec(`INSERT OR REPLACE INTO flows (run, at, mode, phases)
-		         VALUES (?,?,?,?)`,
+		db.Exec(`INSERT INTO flows (run, at, mode, phases)
+		         VALUES (?,?,?,?)
+		         ON CONFLICT (run) DO UPDATE SET at=excluded.at, mode=excluded.mode,
+		                                        phases=excluded.phases`,
 			e.s("run"), at, e.s("mode"), string(phases))
 	case "run_end":
 		db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,

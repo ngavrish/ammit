@@ -146,14 +146,18 @@ they are the invisible half.
 ## The server
 
 ```bash
+# AMMIT_DSN carries no password; it is read from Vault's sut/ store
+# (AMMIT_PG_VAULT names the secret, VAULT_ADDR and SUT_VAULT_TOKEN reach it).
 docker run -p 8099:8099 \
+  -e AMMIT_DSN=postgres://ammit@postgres:5432/ammit \
+  -e AMMIT_PG_VAULT=ammit/postgres.env -e VAULT_ADDR -e SUT_VAULT_TOKEN \
   -v "$PWD/limits.yml:/config/limits.yml:ro" \
   -v ammit-data:/data \
   -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/ngavrish/ammit
 ```
 
-One Go binary, one sqlite file. Keeps every event, weighs on a tick, acts by
+One Go binary, one Postgres database. Keeps every event, weighs on a tick, acts by
 running a command.
 
 ## The scales
@@ -331,7 +335,7 @@ which is the short version of the charts for when the charts are one tab too man
 
 ## The dashboard
 
-`deploy/` ships a Grafana that reads the same sqlite file the server judges by,
+`deploy/` ships a Grafana that reads the same database the server judges by,
 so what is drawn and what was acted on cannot disagree.
 
 **Every limit is on the chart it applies to**, the way a level is on a trading

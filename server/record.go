@@ -3,8 +3,6 @@ package main
 import (
 	"sort"
 	"sync"
-
-	_ "modernc.org/sqlite"
 )
 
 // The record, as a list, enforced where events land.

@@ -86,6 +86,7 @@ func phaseStarts(run, phase, attemptPhase string) map[string]int {
 			out[branch] = n
 		}
 	}
+	_ = rows.Err() // a cut-off read is the shorter map it always was
 	return out
 }
 

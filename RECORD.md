@@ -216,12 +216,13 @@ the phase and the session that make a hit worth reading. `archive` takes the
 index rows out with the events they mirror, which is what stops the larger half
 from being the permanent half.
 
-The index is rebuilt rather than topped up in two places: a start that found
-anything to file, and every archive. A rebuild is linear and cheap by the row,
-0.030s over 10k rows and 0.78s over 318k, about 2.4 microseconds each, so a
-year of runs at a million rows adds some two and a half seconds to a start and
-about that again to the daily archive. It is the whole index either time, not
-the part that changed, which is worth knowing before the number matters.
+Those numbers were taken on SQLite with FTS5. In Postgres the words are a
+column of `search_text` itself - a tsvector the database makes from the body as
+the row lands, under a GIN index - so there is no second index to rebuild: a
+start files what is missing and stops, and `archive` takes a row's words out
+with the row. The tokenizer is FTS5's unicode61 in SQL (every run of letters
+and digits is a word, case folded, nothing stemmed), so the same words match;
+the order among matches is `ts_rank`'s where it was bm25's.
 
 ## Adding a field
 

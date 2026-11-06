@@ -53,7 +53,9 @@ func prices() priceSheet {
 // start; nothing in it is worth migrating.
 func dropOldPrices() {
 	var n int
-	_ = db.QueryRow(`SELECT count(*) FROM pragma_table_info('prices') WHERE name = 'family'`).Scan(&n)
+	_ = db.QueryRow(`SELECT count(*) FROM information_schema.columns
+	                     WHERE table_schema = current_schema() AND table_name = 'prices'
+	                       AND column_name = 'family'`).Scan(&n)
 	if n > 0 {
 		if _, err := db.Exec(`DROP TABLE prices`); err != nil {
 			log.Printf("ammit: prices: %v", err)
@@ -97,15 +99,15 @@ func seedPrices() {
 const spentSQL = `
 WITH billed AS (
 	SELECT coalesce(agent,'') a, coalesce(phase,'') ph, coalesce(branch,'') br,
-	       sum(coalesce(json_extract(payload,'$.usd'), 0)) usd
+	       sum(coalesce(jnum(payload->'usd'), 0)) usd
 	FROM events
 	WHERE run = ? AND kind = 'session_end'
-	  AND coalesce(json_extract(payload,'$.usd'), 0) > 0
+	  AND coalesce(jnum(payload->'usd'), 0) > 0
 	GROUP BY 1, 2, 3
 ), counted AS (
 	SELECT coalesce(t.agent,'') a, coalesce(t.phase,'') ph, coalesce(t.branch,'') br,
 	       sum((coalesce(t.tokens_in,0)*pr.input
-	            + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*pr.output
+	            + greatest(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*pr.output
 	            + coalesce(t.cache_read,0)*pr.cache_read
 	            + (coalesce(t.cache_write,0) - coalesce(t.cache_write_1h,0))*pr.cache_write
 	            + coalesce(t.cache_write_1h,0)*pr.cache_write_1h)/1e6
@@ -122,15 +124,15 @@ SELECT coalesce((SELECT sum(usd) FROM billed), 0)
 // spentExpr is spentSQL as a scalar subquery against the row's own run, so a
 // listing and a judgement cannot drift apart: one formula, two callers.
 const spentExpr = `(
-	coalesce((SELECT sum(coalesce(json_extract(e.payload,'$.usd'),0))
+	coalesce((SELECT sum(coalesce(jnum(e.payload->'usd'),0))
 	          FROM events e
 	          WHERE e.run = r.run AND e.kind = 'session_end'
-	            AND coalesce(json_extract(e.payload,'$.usd'),0) > 0), 0)
+	            AND coalesce(jnum(e.payload->'usd'),0) > 0), 0)
 	+ coalesce((SELECT sum(u.usd) FROM (
 	     SELECT coalesce(t.agent,'') a, coalesce(t.phase,'') ph,
 	            coalesce(t.branch,'') br,
 	            sum((coalesce(t.tokens_in,0)*pr.input
-	                 + max(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*pr.output
+	                 + greatest(coalesce(t.tokens_out,0), coalesce(t.out_est,0))*pr.output
 	                 + coalesce(t.cache_read,0)*pr.cache_read
 	                 + (coalesce(t.cache_write,0)-coalesce(t.cache_write_1h,0))*pr.cache_write
 	                 + coalesce(t.cache_write_1h,0)*pr.cache_write_1h)/1e6
@@ -141,10 +143,10 @@ const spentExpr = `(
 	   WHERE NOT EXISTS (
 	     SELECT 1 FROM events e2
 	     WHERE e2.run = r.run AND e2.kind = 'session_end'
-	       AND coalesce(json_extract(e2.payload,'$.usd'),0) > 0
-	       AND coalesce(json_extract(e2.payload,'$.agent'),'') = u.a
-	       AND coalesce(json_extract(e2.payload,'$.phase'),'') = u.ph
-	       AND coalesce(json_extract(e2.payload,'$.branch'),'') = u.br)), 0))`
+	       AND coalesce(jnum(e2.payload->'usd'),0) > 0
+	       AND coalesce(e2.payload->>'agent','') = u.a
+	       AND coalesce(e2.payload->>'phase','') = u.ph
+	       AND coalesce(e2.payload->>'branch','') = u.br)), 0))`
 
 // spentUSD is a run's spend, once: every session's bill where it sent one, and
 // the price of its turns where it did not.

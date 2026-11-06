@@ -2,7 +2,7 @@ package main
 
 import (
 	"math"
-	"path/filepath"
+	"os"
 	"testing"
 	"time"
 )
@@ -12,7 +12,12 @@ import (
 // that waited past deafAfter for the writer moves the absence clock; one that
 // did not leaves it where it was.
 func TestStoreWaitRearmsAbsence(t *testing.T) {
-	if err := openDB(filepath.Join(t.TempDir(), "ammit.db")); err != nil {
+	// The record is Postgres now: a scratch database, never the live one.
+	dsn := os.Getenv("AMMIT_TEST_DSN")
+	if dsn == "" {
+		t.Skip("AMMIT_TEST_DSN is not set: no scratch Postgres to open")
+	}
+	if err := openDB(dsn); err != nil {
 		t.Fatal(err)
 	}
 	was := _deafAfter.Load()

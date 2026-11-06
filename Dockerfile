@@ -1,6 +1,7 @@
 # The server is Go, the image is what the actions need: a container client for
 # the ones that restart something, curl for the ones that call a webhook. Its
-# whole state is one sqlite file on a volume, and it draws its own charts.
+# record is in Postgres (AMMIT_DSN, the password from Vault); the volume keeps
+# the documents and the configuration store, and it draws its own charts.
 #
 # Grafana lived in here for an afternoon and cost six hundred and thirty-one
 # megabytes — a plugin process, a provisioning tree, a second port and a
@@ -20,6 +21,6 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /ammit .
 FROM alpine:3.22
 RUN apk add --no-cache docker-cli curl ca-certificates
 COPY --from=build /ammit /usr/local/bin/ammit
-ENV AMMIT_DB=/data/ammit.db AMMIT_CONFIG=/config/limits.yml
+ENV AMMIT_DATA=/data AMMIT_CONFIG=/config/limits.yml
 EXPOSE 8099
 ENTRYPOINT ["ammit"]
