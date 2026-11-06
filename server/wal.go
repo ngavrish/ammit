@@ -51,30 +51,6 @@ func readCtx(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, _QUERY_DEADLINE)
 }
 
-// mu is no longer a lock anything in the service takes. It is the writer held
-// by hand - Lock takes the one writer connection, Unlock gives it back - kept
-// under the old name for absence_test.go, which holds the writer to make a
-// record wait for it. Lock and Unlock from one goroutine at a time.
-var mu writerHold
-
-type writerHold struct{ conn *sql.Conn }
-
-func (h *writerHold) Lock() {
-	conn, err := db.Conn(bg)
-	if err != nil {
-		log.Printf("ammit: could not hold the writer: %v", err)
-		return
-	}
-	h.conn = conn
-}
-
-func (h *writerHold) Unlock() {
-	if h.conn != nil {
-		_ = h.conn.Close()
-		h.conn = nil
-	}
-}
-
 // readTx runs fn over one snapshot on the read pool: every statement in it
 // sees the database as the first one did, so facts gathered by several reads
 // agree with each other, as they did when a global lock kept writes out from
