@@ -45,7 +45,56 @@ var (
 	intoPath = regexp.MustCompile(`--into\s+([^\s<>|;&]+)`)
 	redirect = regexp.MustCompile(`(?:^|[^<>0-9&])>{1,2}\s*([^\s<>|;&]+)`)
 	teePath  = regexp.MustCompile(`(?:^|[\s|;&])tee\s+(?:-a\s+)?([^\s<>|;&]+)`)
+	// A redirect's token is what the shell was handed, not the file it
+	// wrote: `cd /runs/X; cat >> a.md` wrote /runs/X/a.md, and
+	// `F=a.md; cat >> "$F"` wrote a.md. Run 61eca0ae (APF-3313) had its two
+	// writes to a bug draft recorded as `a.md` and as `"$F"`, and the data
+	// trace, asking whether a session of this run wrote that draft, was
+	// told no, and stayed red over a line the run had written itself.
+	leadCd = regexp.MustCompile(`^\s*cd\s+("[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;)`)
+	assign = regexp.MustCompile(`(?:^|[\s;&|(])([A-Za-z_]\w*)=("[^"$]*"|'[^']*'|[^\s;&|<>()'"$]+)`)
+	varRef = regexp.MustCompile(`\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)`)
 )
+
+// resolveWrite names the file a shell write went to, from the whole command:
+// the variables it assigned before the write and the directory a leading cd
+// moved to. What it cannot work out is left as it was written - a target
+// that says `$F` is honest about not knowing, one that guesses is not.
+func resolveWrite(cmd, target string) string {
+	at := strings.Index(cmd, target)
+	if at < 0 {
+		at = len(cmd)
+	}
+	vars := map[string]string{}
+	for _, m := range assign.FindAllStringSubmatchIndex(cmd, -1) {
+		if m[0] < at {
+			vars[cmd[m[2]:m[3]]] = unquote(cmd[m[4]:m[5]])
+		}
+	}
+	known := true
+	t := varRef.ReplaceAllStringFunc(unquote(target), func(ref string) string {
+		if v, ok := vars[strings.Trim(ref, "${}")]; ok {
+			return v
+		}
+		known = false
+		return ref
+	})
+	if !known || t == "" || strings.ContainsAny(t, "$`*?~") {
+		return target
+	}
+	if !strings.HasPrefix(t, "/") {
+		m := leadCd.FindStringSubmatch(cmd)
+		if m == nil {
+			return t
+		}
+		dir := unquote(m[1])
+		if !strings.HasPrefix(dir, "/") || strings.Contains(dir, "$") {
+			return t
+		}
+		t = path.Join(dir, t)
+	}
+	return path.Clean(t)
+}
 
 // classify turns one tool call into (kind, target, signature).
 //
@@ -81,8 +130,16 @@ func classify(tool string, input map[string]any) (kind, target, signature string
 		b, _ := json.Marshal(input)
 		return "map", tool, tool + " " + string(b)
 	case tool == "Bash":
-		cmd := spaces.ReplaceAllString(cdPrefix.ReplaceAllString(str("command"), ""), " ")
-		return bashKind(cmd)
+		raw := str("command")
+		cmd := spaces.ReplaceAllString(cdPrefix.ReplaceAllString(raw, ""), " ")
+		kind, target, signature = bashKind(cmd)
+		// put_rows and write_block resolve their --into names themselves,
+		// against the run directory and not the shell's, so only a
+		// redirect or a tee is resolved here.
+		if kind == "write" && !ourTool.MatchString(cmd) {
+			target = resolveWrite(spaces.ReplaceAllString(raw, " "), target)
+		}
+		return kind, target, signature
 	}
 	b, _ := json.Marshal(input)
 	return "other", tool, tool + " " + string(b)
