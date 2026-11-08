@@ -504,6 +504,15 @@ func sweepActions(conf Config) {
 		   closed=?1, why='watchdog cycle ' || c.id || ' is ' || c.state
 		 FROM watchdog_cycles c WHERE a.state='open' AND a.kind='fix' AND c.id = a.cycle_id
 		   AND c.state NOT IN ` + moving + ` RETURNING a.ticket, a.kind, a.why`,
+		// A cycle left in 'resumed' after its resumed run finished is not
+		// moving: cycle 477 sat so from 10:52 on 2026-11-08 and its action
+		// held APF-3313 against every resume for the rest of the day.
+		`UPDATE ticket_actions a SET state='done', closed=?1,
+		   why='watchdog cycle ' || c.id || ' resumed ' || c.resumed_run || ', which has finished'
+		 FROM watchdog_cycles c, runs r
+		 WHERE a.state='open' AND a.kind='fix' AND c.id = a.cycle_id
+		   AND c.state = '` + wdResumed + `' AND r.run = c.resumed_run AND r.finished IS NOT NULL
+		 RETURNING a.ticket, a.kind, a.why`,
 		`UPDATE ticket_actions a SET state='failed', closed=?1, why='its watchdog cycle is gone'
 		 WHERE a.state='open' AND a.kind='fix'
 		   AND NOT EXISTS (SELECT 1 FROM watchdog_cycles c WHERE c.id = a.cycle_id)
