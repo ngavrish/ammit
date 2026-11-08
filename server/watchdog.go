@@ -1350,6 +1350,20 @@ func over(c wdCycle, conf Config, key string, since float64) bool {
 }
 
 func stepCycle(c wdCycle, conf Config, limit float64) {
+	// A cycle whose resumed run finished an hour ago and that is still in
+	// 'resumed' was never stepped on: cycle 477 of APF-3313 sat so from
+	// 2026-11-08 10:52, and every tick took the ticket back for it
+	// (ticket_actions 12 ... 2410), so each later resume was filed as its own.
+	if c.state == wdResumed && c.resumedRun != "" {
+		var finished sql.NullFloat64
+		_ = db.QueryRow(`SELECT finished FROM runs WHERE run=?`, c.resumedRun).Scan(&finished)
+		if finished.Valid && wdNow()-finished.Float64 > 3600 {
+			wdUpdate(c.id, "state=?, why=?", wdLeft,
+				"the resumed run "+c.resumedRun+" finished over an hour ago and the cycle was never stepped on")
+			closeCycleAction(c.id, wdLeft)
+			return
+		}
+	}
 	d, ok := dropOfRun(c.run)
 	if !ok {
 		return
