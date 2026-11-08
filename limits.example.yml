@@ -39,6 +39,11 @@ timeouts:
   watchdog_ci: 3600
   watchdog_deploy: 3600
   watchdog_start: 900
+  # A stopped run is "closing" until its row is finished, and nothing resumes
+  # or fixes its ticket meanwhile (ticket_actions). A run that has not
+  # acknowledged the stop this long after it was ordered is closed by ammit,
+  # BLOCKED. 0 never closes it; absent is 300.
+  run_close: 300
 retention:
   # Finished runs older than this move into the archive schema (archive.runs,
   # archive.events, ...) and leave the live tables small. Nothing is deleted:

@@ -62,6 +62,13 @@ func (d *DB) QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows
 func (d *DB) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row {
 	return d.DB.QueryRowContext(ctx, rebind(q), clean(args)...)
 }
+func (d *DB) Begin() (*Tx, error) {
+	tx, err := d.DB.Begin() //nolint:noctx // the callers' choice, as before
+	if err != nil {
+		return nil, err
+	}
+	return &Tx{tx}, nil
+}
 func (d *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
 	tx, err := d.DB.BeginTx(ctx, opts)
 	if err != nil {
@@ -75,6 +82,9 @@ func (t *Tx) Exec(q string, args ...any) (sql.Result, error) {
 }
 func (t *Tx) Query(q string, args ...any) (*sql.Rows, error) {
 	return t.Tx.Query(rebind(q), clean(args)...) //nolint:noctx // the callers' choice, as before
+}
+func (t *Tx) QueryRow(q string, args ...any) *sql.Row {
+	return t.Tx.QueryRow(rebind(q), clean(args)...) //nolint:noctx // the callers' choice, as before
 }
 func (t *Tx) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
 	return t.Tx.ExecContext(ctx, rebind(q), clean(args)...)

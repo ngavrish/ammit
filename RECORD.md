@@ -161,6 +161,30 @@ evidence lines), `watchdog_cycles` (one row per fix/merge/deploy/resume cycle)
 and `watchdog_meta`. They are written by this service only, and `GET
 /watchdog` serves them.
 
+Who has a ticket is `ticket_actions`: one row per action on a ticket - `kind`
+`resume` (a queued resume: the keeper's, the watchdog's fresh budget, a
+person's through `POST /queue`), `fix` (a watchdog cycle, from its start to its
+end; its own resume is queued under it) or `stop` (a stop ordered through
+`/act` or by a judgement, until the run's row is finished) - with its `owner`
+(`keeper`, `watchdog`, `person`, `ammit`), the `run`, `cycle_id` and `queue_id`
+it is tied to, `state` (`open`, `done`, `failed`), `opened`, `closed` and
+`why`. A unique index on `ticket WHERE state = 'open'` allows one open action
+per ticket: whoever inserts first has it, and the keeper and the watchdog
+leave a held ticket to its holder. A stop takes over any open action; a
+person's resume replaces a waiting one or becomes a fix cycle's resume. The
+tick closes an action whose queue row, cycle or run says it is over, with the
+reason in `why`, and closes the row of a run that has not acknowledged its
+stop within `timeouts.run_close` (300 s unless set), BLOCKED. `GET /runs`
+carries `state`: `running`, `closing` (a stop is open) or `finished`.
+
+The keeper resumes a ticket's first BLOCKED. If a BLOCKED run matches the
+ticket's previous run, which also ended BLOCKED, the keeper hands it to the
+watchdog as a fix cycle instead of resuming it again (judgement
+`keeper.escalate`). Two runs match when their summaries are the same once
+lower-cased, with hex ids and numbers replaced by `#` and whitespace
+collapsed, and the phase a resume would start from is also the same. The
+cycle counts against `loops.laps_watchdog`.
+
 ## Documents
 
 `POST /documents` takes four fields and no others: `run`, `kind`, `phase`,

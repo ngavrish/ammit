@@ -287,7 +287,21 @@ func act(name string, conf Config, ctx map[string]string) string {
 	if dryRun {
 		return "[dry run] " + tmpl
 	}
+	// A stop is the ticket's action until the run's row is finished: the run
+	// is closing, and nothing resumes or fixes the ticket meanwhile. A stop
+	// takes over whatever held it (actions.go).
+	var stop int64
+	if stops(name) || name == "stop_run_host" {
+		owner := ctx[actionOwner]
+		if owner == "" {
+			owner = "ammit"
+		}
+		stop = openStop(ctx["run"], ctx["name"], owner)
+	}
 	out, err := exec.Command("sh", "-c", tmpl).CombinedOutput()
+	if err != nil {
+		stopNotSent(stop, err.Error())
+	}
 	said := strings.TrimSpace(string(out))
 	if len(said) > 200 {
 		// On a rune boundary: a cut through a Cyrillic letter left a broken
@@ -320,6 +334,7 @@ func finish(run, verdict, summary string) {
 	db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
 		now, verdict, summary, run)
 	db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, now, run)
+	closeStopsOf(run, now)
 	mu.Unlock()
 	closeSpansOf(run, now, "the run ended")
 }
