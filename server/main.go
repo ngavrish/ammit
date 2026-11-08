@@ -685,6 +685,7 @@ func main() {
 				}
 				sweepAbandoned(conf)
 				sweepQueue(conf)
+				sweepActions(conf)
 				// The late-tick guard above measures from one round's start to
 				// the next, so a round that starts on time and then waits on the
 				// writer inside it is not late by that measure - and it judges
@@ -791,11 +792,14 @@ func main() {
 			return
 		}
 		payload, _ := json.Marshal(in.Payload)
-		mu.Lock()
-		db.Exec(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?)`,
-			in.Name, string(payload), float64(time.Now().UnixNano())/1e9)
-		mu.Unlock()
-		writeJSON(w, http.StatusCreated, map[string]string{"queued": in.Name})
+		// A resume goes through ticket_actions; a person's is always queued,
+		// and replaces or joins what holds the ticket (actions.go).
+		id, said := queueByRequest(in.Name, string(payload))
+		reply := map[string]any{"queued": in.Name, "id": id}
+		if said != "" {
+			reply["action"] = said
+		}
+		writeJSON(w, http.StatusCreated, reply)
 	})
 	// What the deploy is doing, so a run can decline to start into it.
 	mux.HandleFunc("POST /deploy", func(w http.ResponseWriter, r *http.Request) {
@@ -1054,6 +1058,8 @@ func main() {
 			}
 			ctx[byPerson] = "yes"
 		}
+		// A stop ordered here is a person's ticket action (actions.go).
+		ctx[actionOwner] = "person"
 		outcome := act(in.Command, conf, ctx)
 		judge("hand", in.Run, in.Name, "hand."+in.Command, 0, 0, in.Command, outcome)
 		writeJSON(w, http.StatusOK, map[string]string{"outcome": outcome})
@@ -1090,7 +1096,11 @@ func main() {
 		                  ORDER BY e.at DESC LIMIT 1) AS phase,
 		                (SELECT `+whereOf("e.payload")+` FROM events e
 		                  WHERE e.run = r.run AND e.kind = 'run_start'
-		                  ORDER BY e.at LIMIT 1) AS "where"
+		                  ORDER BY e.at LIMIT 1) AS "where",
+		                CASE WHEN r.finished IS NOT NULL THEN 'finished'
+		                     WHEN EXISTS (SELECT 1 FROM ticket_actions a WHERE a.kind = 'stop'
+		                                  AND a.run = r.run AND a.state = 'open') THEN 'closing'
+		                     ELSE 'running' END AS state
 		              FROM runs r ORDER BY r.started DESC NULLS LAST LIMIT 50`)
 	})
 	// The stack lease: POST to take it, DELETE to give it back, GET to ask.

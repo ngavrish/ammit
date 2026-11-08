@@ -94,6 +94,9 @@ func store(e event) {
 		           SELECT id FROM queue WHERE name = ? AND state = 'running'
 		             AND coalesce(run,'') = '' ORDER BY id LIMIT 1)`,
 			e.s("run"), e.s("name"))
+		// The resume that row was queued under has done its job: the ticket
+		// is a live run now, which every reader sees (ticket_actions).
+		closeResumesStarted(e.s("run"), at)
 		// A new run of a ticket supersedes any older run still open under the
 		// same name. The two share one directory (/runs/<name>), and stop_run
 		// is addressed by name: on 28 August a worker restart orphaned a run
@@ -128,6 +131,7 @@ func store(e event) {
 		db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
 			at, e.s("verdict"), e.s("summary"), e.s("run"))
 		db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, at, e.s("run"))
+		closeStopsOf(e.s("run"), at)
 		// A run that ended having done nothing.
 		//
 		// Every rule here is about overshoot — too many turns, too long, too

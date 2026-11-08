@@ -828,6 +828,11 @@ func wdMove(id int64, state, set string, args ...any) {
 		set = ", " + set
 	}
 	wdUpdate(id, "state=?, entered=?"+set, append([]any{state, wdNow()}, args...)...)
+	// A cycle that ended lets go of its ticket (ticket_actions, actions.go).
+	switch state {
+	case wdDone, wdAgain, wdFailed, wdLeft:
+		closeCycleAction(id, state)
+	}
 }
 
 // spentCycles is how many cycles a chain has taken: every one that was
@@ -1014,7 +1019,14 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 			most = 2
 		}
 		if done := budgetRenewals(d.name); float64(done) < most {
-			if q := queueFreshResume(d); q != 0 {
+			q, holder := queueFreshResume(d)
+			if holder != nil {
+				wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
+					"the ticket is over timeouts.ticket and is held by "+holder.String()+
+						"; no fresh-budget resume is queued beside it")
+				return
+			}
+			if q != 0 {
 				wdSay(d.run, d.phase, "resumed", d.cause, spentCycles(root), limit, nil,
 					fmt.Sprintf("the ticket is over timeouts.ticket; resumed from %s on a fresh budget "+
 						"(renewal %d of %.0f today, queue %d)", orDash(d.phase), done+1, most, q))
@@ -1119,12 +1131,33 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 		return
 	}
 	branch := fmt.Sprintf("watchdog/%s-%d", shortRun(root), n)
+	// The cycle and its fix action on the ticket are one insert: a ticket
+	// another action holds (a resume queued, a stop closing) is that
+	// holder's, and no cycle is opened or spent on it. If the holder's run
+	// drops, that drop is answered on its own.
 	mu.Lock()
 	var id int64
-	err := db.QueryRow(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, started,
+	var holder *ticketAction
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err == nil {
+		err = tx.QueryRowContext(context.Background(), `INSERT INTO watchdog_cycles (root, run, cycle, state, branch, started,
 	                       entered, updated) VALUES (?,?,?,?,?,?,?,?) RETURNING id`,
-		root, d.run, n, wdFixing, branch, now, now, now).Scan(&id)
+			root, d.run, n, wdFixing, branch, now, now, now).Scan(&id)
+		if err == nil {
+			holder, err = openCycleAction(tx, d.name, d.run, id)
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			_ = tx.Rollback()
+		}
+	}
 	mu.Unlock()
+	if holder != nil {
+		wdSay(d.run, d.phase, "recorded", d.cause, n-1, limit, nil,
+			"the ticket is held by "+holder.String()+"; no fix cycle is opened - the holder answers it")
+		return
+	}
 	if err != nil {
 		log.Printf("ammit: watchdog could not open a cycle for %s: %v", d.run, err)
 		return
@@ -1320,6 +1353,13 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 	d, ok := dropOfRun(c.run)
 	if !ok {
 		return
+	}
+	// A moving cycle holds its ticket (ticket_actions): one opened before the
+	// table existed, or one whose action a stop took over, takes it back here
+	// once the ticket is free.
+	own, holder := holdCycle(c, d.name)
+	if own == nil {
+		sayHeldOnce(fmt.Sprintf("watchdog cycle %d", c.id), d.name, holder)
 	}
 	// The rule classifyDrop applies to a new drop holds for a chain already
 	// moving: a run on the host is not the stack's to fix, and a cycle of it
@@ -1581,7 +1621,27 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 				d.phase = resumeFrom(f)
 			}
 		}
-		q := queueResume(c, d)
+		// The resume is queued under the cycle's action, never beside
+		// another: a ticket held by someone else (a stop closing, a resume
+		// queued before this table) waits here until it is let go. A
+		// person's resume taken under the action is the cycle's resume.
+		if own == nil {
+			return
+		}
+		mu.Lock()
+		taken := pendingRow(db, own.queue)
+		mu.Unlock()
+		if taken {
+			wdMove(c.id, wdResumed, "deployed_at=?, resume_queue=?", at, own.queue.Int64)
+			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs, fmt.Sprintf(
+				"deployed; a person's resume (queue %d) is already queued and is the cycle's resume",
+				own.queue.Int64))
+			return
+		}
+		q := queueResume(own, c, d)
+		if q == 0 {
+			return
+		}
 		wdMove(c.id, wdResumed, "deployed_at=?, resume_queue=?", at, q)
 		wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs, fmt.Sprintf(
 			"deployed at %s; %s queued to resume from %s (source run %s)",
@@ -1772,14 +1832,16 @@ func startParams(run string) map[string]any {
 // queueResume queues the dropped ticket to continue from the phase that
 // dropped, with the dropped run as the source of its artefacts. Through the
 // queue, so it waits behind any live run: the runner has one clone.
-func queueResume(c wdCycle, d *dropFact) int64 {
-	return queueResumeOf(c.run, d, false)
+// It is queued under the cycle's fix action (ticket_actions).
+func queueResume(own *ticketAction, c wdCycle, d *dropFact) int64 {
+	return queueCycleResume(own, d.name, resumePayload(c.run, d, false))
 }
 
 // queueFreshResume queues the ticket stopped by its budget to continue from
-// the run that stopped, on a budget of its own.
-func queueFreshResume(d *dropFact) int64 {
-	return queueResumeOf(d.run, d, true)
+// the run that stopped, on a budget of its own, under a resume action of its
+// own: 0 and the holder when the ticket is held.
+func queueFreshResume(d *dropFact) (int64, *ticketAction) {
+	return queueUnderAction(d.name, "watchdog", d.run, resumePayload(d.run, d, true))
 }
 
 // budgetRenewals is how many fresh-budget resumes the ticket has been given
@@ -1794,7 +1856,8 @@ func budgetRenewals(name string) int {
 	return n
 }
 
-func queueResumeOf(run string, d *dropFact, fresh bool) int64 {
+// resumePayload is the queue row of a resume of the dropped ticket from run.
+func resumePayload(run string, d *dropFact, fresh bool) string {
 	body := map[string]any{"key": d.name, "rerun": "resume", "source_run": run}
 	if fresh {
 		body["fresh_budget"] = true
@@ -1813,14 +1876,7 @@ func queueResumeOf(run string, d *dropFact, fresh bool) int64 {
 		body["from_phase"] = d.phase
 	}
 	payload, _ := json.Marshal(body)
-	mu.Lock()
-	defer mu.Unlock()
-	var id int64
-	if err := db.QueryRow(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?) RETURNING id`,
-		d.name, string(payload), wdNow()).Scan(&id); err != nil {
-		return 0
-	}
-	return id
+	return string(payload)
 }
 
 // startAnswer is what the start command answered when the queue started

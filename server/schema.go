@@ -103,6 +103,7 @@ func migrate() error {
 		{"compat", compatSchema},
 		{"tables", schema},
 		{"watchdog", watchdogSchema},
+		{"ticket actions", actionsSchema},
 		{"knowledge base", kbSchema},
 		{"knowledge base documents", kbDocsSchema},
 		{"search", searchSchema},

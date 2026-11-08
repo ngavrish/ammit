@@ -132,11 +132,18 @@ func keepOne(ticket string) {
 		body[k] = v
 	}
 	payload, _ := json.Marshal(body)
-	mu.Lock()
-	db.Exec(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?)`, ticket, string(payload), wdNow())
-	mu.Unlock()
-	text := fmt.Sprintf("keeper: %s was lying since run %s ended %s; resume queued from %s",
-		ticket, shortRun(run), orDash(verdict), orDash(phase))
+	// Through ticket_actions (actions.go): a ticket a watchdog cycle is
+	// fixing, a stop is closing or another resume is queued for is held, and
+	// the keeper leaves it to its holder. 2026-11-07: the keeper resumed
+	// APF-3313 a minute into cycle 3's fix run WD-9519cad8-3, the resume hit
+	// the same red gate, and the cycle was spent before its PR was merged.
+	q, holder := queueUnderAction(ticket, "keeper", run, string(payload))
+	if q == 0 {
+		sayHeldOnce("keeper", ticket, holder)
+		return
+	}
+	text := fmt.Sprintf("keeper: %s was lying since run %s ended %s; resume queued from %s (queue %d)",
+		ticket, shortRun(run), orDash(verdict), orDash(phase), q)
 	store(event{"kind": "keeper", "run": run, "text": text})
 	log.Printf("ammit: %s", text)
 }
