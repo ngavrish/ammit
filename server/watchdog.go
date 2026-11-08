@@ -107,6 +107,52 @@ var wdMergeAsked = map[string]float64{}
 
 const wdMergeEvery = 300.0
 
+// What the stand last said when asked whether it carries a cycle's merge, by
+// cycle id, for the why the cycle fails with. Only watchdogTick touches it.
+var wdNotCarried = map[int64]string{}
+
+// wdCarriesDefault is commands.watchdog_deployed when limits.yml names none
+// and does name the worker: the worker, where the runs read their code, is
+// asked whether what the PRs merged is on its mounts
+// (agentic-v-model engine/tools/stand_carries.py; exit 0 only when it is).
+//
+// A deploy's success is the deploy job's, not the tree's. On 2026-11-08 the
+// deploy after agentic-v-model#1207 (chiron-actions run 42535093469) said
+// ".: uncommitted changes, left alone" about the stack's checkout, then
+// "OUTCOME: success"; this resumed APF-3313 as run 8841c037 twelve seconds
+// later, both its redgate laps read the gate from before #1207, and the run
+// dropped on the finding #1207 had fixed (chain a725a3a8, cycle 2). The
+// engine got #1207's files thirteen minutes after the resume. A stand that
+// cannot answer - the tool not there, because the tree it would come with was
+// left behind - is a stand that does not carry the merge.
+const wdCarriesDefault = "docker exec {worker} python3 /engine/tools/stand_env.py --exec " +
+	"python3 /engine/tools/stand_carries.py --prs '{pr}'"
+
+// deployedCheck is the command whose exit 0 a deploy's success needs before a
+// cycle resumes its run, "" when there is none to ask.
+func deployedCheck(conf Config) string {
+	if tmpl := conf.str("commands", "watchdog_deployed", ""); tmpl != "" {
+		return tmpl
+	}
+	if conf.str("context", "worker", "") != "" && !dryRun {
+		return wdCarriesDefault
+	}
+	return ""
+}
+
+// notCarriedSaid is the stand's answer, cut for a why: the lines it printed,
+// or the error when it printed none.
+func notCarriedSaid(out string, err error) string {
+	said := strings.Join(strings.Fields(strings.TrimSpace(out)), " ")
+	if said == "" {
+		said = err.Error()
+	}
+	if len(said) > 600 {
+		said = said[:600] + "..."
+	}
+	return said
+}
+
 // Verdicts that are not a drop. SKIPPED is a run that found its ticket
 // already being run by another: the ticket is not dropped, it is busy.
 var wdNotDropped = map[string]bool{
@@ -1290,7 +1336,12 @@ func (p prView) ci() string {
 // act() keeps 200 bytes of an answer for the judgement line; a PR listing is
 // data, and data cut at 200 bytes is not JSON.
 func command(name string, conf Config, ctx map[string]string) (string, error) {
-	tmpl := conf.str("commands", name, "")
+	return commandOf(name, conf.str("commands", name, ""), conf, ctx)
+}
+
+// commandOf is command for a template the caller holds: one limits.yml names,
+// or the default it stands for when limits.yml names none.
+func commandOf(name, tmpl string, conf Config, ctx map[string]string) (string, error) {
 	if tmpl == "" {
 		return "", errors.New("no command named " + name)
 	}
@@ -1602,22 +1653,30 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			"merged "+strings.Join(urlsOf(prs), " ")+said)
 	case wdDeploying:
 		at, ok := deployedAfter(c.mergedAt.Float64)
-		if ok && conf.str("commands", "watchdog_deployed", "") != "" {
+		if check := deployedCheck(conf); ok && check != "" {
 			ctx := map[string]string{"pr": strings.Join(c.prs, " "), "run": c.run, "name": d.name}
 			for k, v := range conf["context"] {
 				ctx[k] = v
 			}
-			if _, err := command("watchdog_deployed", conf, ctx); err != nil {
+			if out, err := commandOf("watchdog_deployed", check, conf, ctx); err != nil {
 				ok = false
+				wdNotCarried[c.id] = notCarriedSaid(out, err)
 			}
 		}
 		if !ok {
 			if over(c, conf, "watchdog_deploy", c.mergedAt.Float64) {
-				fail("no deploy reported success after the merge within timeouts.watchdog_deploy" +
-					deploysSaid(c.mergedAt.Float64))
+				why := "no deploy reported success after the merge within timeouts.watchdog_deploy" +
+					deploysSaid(c.mergedAt.Float64)
+				if said := wdNotCarried[c.id]; said != "" {
+					why = "a deploy reported success after the merge, but within " +
+						"timeouts.watchdog_deploy the stand never carried it: " + said
+				}
+				delete(wdNotCarried, c.id)
+				fail(why)
 			}
 			return
 		}
+		delete(wdNotCarried, c.id)
 		// The resume may already be going: a person, or the fix run itself,
 		// started it while this cycle waited on the deploy. A second one in the
 		// queue would replay the same run again behind it.
