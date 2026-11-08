@@ -177,6 +177,14 @@ reason in `why`, and closes the row of a run that has not acknowledged its
 stop within `timeouts.run_close` (300 s unless set), BLOCKED. `GET /runs`
 carries `state`: `running`, `closing` (a stop is open) or `finished`.
 
+The keeper resumes a ticket's first BLOCKED. If a BLOCKED run matches the
+ticket's previous run, which also ended BLOCKED, the keeper hands it to the
+watchdog as a fix cycle instead of resuming it again (judgement
+`keeper.escalate`). Two runs match when their summaries are the same once
+lower-cased, with hex ids and numbers replaced by `#` and whitespace
+collapsed, and the phase a resume would start from is also the same. The
+cycle counts against `loops.laps_watchdog`.
+
 ## Documents
 
 `POST /documents` takes four fields and no others: `run`, `kind`, `phase`,

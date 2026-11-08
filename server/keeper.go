@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 )
 
@@ -36,7 +37,7 @@ func keepTick(conf Config) {
 	}
 	for _, t := range list {
 		if t = strings.TrimSpace(t); t != "" {
-			keepOne(t)
+			keepOne(t, conf)
 		}
 	}
 }
@@ -68,7 +69,7 @@ func recentTickets() []string {
 	return out
 }
 
-func keepOne(ticket string) {
+func keepOne(ticket string, conf Config) {
 	mu.Lock()
 	var busy int
 	db.QueryRow(`SELECT (SELECT count(*) FROM runs WHERE name=? AND finished IS NULL)
@@ -120,7 +121,18 @@ func keepOne(ticket string) {
 			return
 		}
 	}
+	// A held ticket is its holder's, whatever the keeper would do with it.
+	mu.Lock()
+	holder := openActionOf(db, ticket, false)
+	mu.Unlock()
+	if holder != nil {
+		sayHeldOnce("keeper", ticket, holder)
+		return
+	}
 	phase := resumeFrom(f)
+	if handToFixer(ticket, f, phase, conf) {
+		return
+	}
 	body := map[string]any{"key": ticket, "rerun": "resume", "source_run": run}
 	if f.mode != "" {
 		body["mode"] = f.mode
@@ -146,4 +158,81 @@ func keepOne(ticket string) {
 		ticket, shortRun(run), orDash(verdict), orDash(phase), q)
 	store(event{"kind": "keeper", "run": run, "text": text})
 	log.Printf("ammit: %s", text)
+}
+
+// What a BLOCKED run is compared on: its stored summary with run ids, numbers
+// and spacing taken out, and the phase a resume of it would start from. "gate
+// funcreqrules red on 3 branch(es) in 4ef880b4" and the same line a run later
+// with 5 branches and another id are one blocker.
+var blockedNoise = regexp.MustCompile(`\b[0-9a-f]{8,}\b|[0-9]+(\.[0-9]+)?`)
+
+func blockedKey(summary, phase string) string {
+	s := blockedNoise.ReplaceAllString(strings.ToLower(summary), "#")
+	return strings.Join(strings.Fields(s), " ") + " @ " + orDash(phase)
+}
+
+// handToFixer hands a ticket to the fixer instead of resuming it again, and
+// says whether the keeper must leave it: the run ended BLOCKED the same way
+// (blockedKey) as the ticket's run before it. A first BLOCKED is resumed as it
+// always was; the second in a row is not something a resume changes. The
+// hand-over is the watchdog's own entry - the drop fact, recordDrop,
+// startCycle - so it is a cycle like any other: its fix action on the ticket,
+// the fix run with the evidence, PR, merge, deploy, resume, counted against
+// loops.laps_watchdog on the run's chain. Once per run: a ticket handed over
+// is the cycle's, or with the cycles spent a person's.
+func handToFixer(ticket string, f *runFacts, phase string, conf Config) bool {
+	if f.verdict != "BLOCKED" {
+		return false
+	}
+	var prev, verdict string
+	mu.Lock()
+	db.QueryRow(`SELECT run, coalesce(verdict,'') FROM runs
+	             WHERE name=? AND finished IS NOT NULL AND run<>? AND started < ?
+	             ORDER BY started DESC LIMIT 1`, ticket, f.run, f.started).Scan(&prev, &verdict)
+	mu.Unlock()
+	if prev == "" || strings.ToUpper(verdict) != "BLOCKED" {
+		return false
+	}
+	pf, err := readRunFacts(prev)
+	if err != nil {
+		return false
+	}
+	key := blockedKey(f.summary, phase)
+	if key != blockedKey(pf.summary, resumeFrom(pf)) {
+		return false
+	}
+	if _, done := wdMeta("escalated:" + f.run); done {
+		return true
+	}
+	d, why := classifyDrop(f, conf)
+	if d == nil {
+		log.Printf("ammit: keeper: %s blocked twice the same way, and the watchdog would not call %s "+
+			"a drop (%s); resumed as before", ticket, shortRun(f.run), why)
+		return false
+	}
+	// No code fix brings a network back: resumed, as before, until access answers.
+	if networkRefused(d) {
+		return false
+	}
+	wdSetMeta("escalated:"+f.run, wdNow())
+	text := fmt.Sprintf("keeper: %s ended BLOCKED twice in a row the same way (%s, then %s: %q); "+
+		"handed to the watchdog as a fix instead of another resume", ticket, shortRun(prev),
+		shortRun(f.run), key)
+	limit, on := watchdogCap(conf)
+	if !on || conf.str("watchdog", "fix_mode", "watchdogfix") == "off" {
+		text += " - but the fixer is off (loops.laps_watchdog unset or watchdog.fix_mode off); left for a person"
+		judge("run", f.run, ticket, "keeper.escalate", 2, 2, "notify", text)
+		store(event{"kind": "keeper", "run": f.run, "text": text})
+		log.Printf("ammit: %s", text)
+		return true
+	}
+	d.evidence = append(d.evidence, fmt.Sprintf(
+		"the keeper saw the same BLOCKED on consecutive runs %s and %s: %s", prev, f.run, key))
+	root, _ := rootOf(f.run)
+	recordDrop(d, root) // false when the watchdog recorded it already: the same drop
+	judge("run", f.run, ticket, "keeper.escalate", 2, 2, "watchdog", key)
+	store(event{"kind": "keeper", "run": f.run, "text": text})
+	log.Printf("ammit: %s", text)
+	startCycle(d, root, conf, limit)
+	return true
 }
