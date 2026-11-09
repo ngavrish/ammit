@@ -761,9 +761,49 @@ func recordDrop(d *dropFact, root string) bool {
 // the chain is read from what happened, not from a name. A resume the cycle
 // adopted rather than queued (replayOf) has no queue row of its own: it is
 // the cycle's resumed_run, and its drop belongs to the same chain.
+//
+// A resume no cycle queued - the keeper's, a fresh-budget one - is still the
+// run it continues (run_start tags.resolved.source_run), so it is followed
+// back to the nearest run already in a chain, and the root found is followed
+// back the same way. 2026-11-09: chain a725a3a8 of APF-3313 was exhausted at
+// d6e23ae9 (loops.laps_watchdog = 3); the keeper resumed d6e23ae9 twelve
+// milliseconds later as 68c13f03, whose drop had no cycle behind it, and it
+// opened chain 68c13f03 with three cycles of its own for the same verdict.
+// Bounded, so a loop in the record cannot hang the judge.
 func rootOf(run string) (string, int64) {
 	mu.Lock()
 	defer mu.Unlock()
+	root, id := cycleRootLocked(run)
+	seen := map[string]bool{run: true, root: true}
+	at := root
+	for hop := 0; hop < 64; hop++ {
+		var src string
+		_ = db.QueryRow(`SELECT coalesce((payload->'tags'->'resolved'->>'source_run'),'')
+		             FROM events WHERE run=? AND kind='run_start' ORDER BY id ASC LIMIT 1`,
+			at).Scan(&src)
+		if src == "" || seen[src] {
+			break
+		}
+		seen[src] = true
+		at = src
+		var chain string
+		if db.QueryRow(`SELECT root FROM watchdog_drops WHERE run=?`, src).Scan(&chain) != nil ||
+			chain == "" {
+			if r, cid := cycleRootLocked(src); cid != 0 {
+				chain = r
+			}
+		}
+		if chain != "" && chain != root {
+			root, at = chain, chain
+			seen[chain] = true
+		}
+	}
+	return root, id
+}
+
+// cycleRootLocked is the root of the cycle whose resume became run, and that
+// cycle's id; the run itself and 0 when no cycle resumed into it. mu is held.
+func cycleRootLocked(run string) (string, int64) {
 	var root string
 	var id int64
 	err := db.QueryRow(`SELECT c.root, c.id FROM watchdog_cycles c
