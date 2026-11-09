@@ -136,10 +136,11 @@ func watchdogCap(conf Config) (float64, bool) {
 
 // flowPhase is one phase of the flow a run executed, as its `flow` event said.
 type flowPhase struct {
-	ID      string   `json:"id"`
-	Agents  []string `json:"agents"`
-	OnlyIf  string   `json:"only_if"`
-	LoopsTo string   `json:"loops_to"`
+	ID         string   `json:"id"`
+	Agents     []string `json:"agents"`
+	OnlyIf     string   `json:"only_if"`
+	LoopsTo    string   `json:"loops_to"`
+	FanoutOver string   `json:"fanout_over"`
 }
 
 type phaseRecord struct {
@@ -412,6 +413,16 @@ func resumeFrom(f *runFacts) string {
 		if !forwardPhase(phases, i) {
 			continue
 		}
+		// A branch red the run carried on past - a phase of the whole run
+		// after the fan-out started - was answered there (the red attribution,
+		// the report): it is the run's account, not dropped work. APF-3313
+		// (2026-11-09): claims 1, 3 and 6 were red at branchrun on rows UAT
+		// cannot verify, run 6020504d went on through redgate and reporting
+		// and dropped at the fold, and this sent the ticket back to branchrun
+		// to be red on the same rows again - every drop after branchrun would.
+		if carriedPast(f, phases, i, at) {
+			continue
+		}
 		if r := f.rec[p.ID]; r != nil {
 			for branch, v := range r.verdicts {
 				if branch != "" && (v == "red" || v == "blocked") {
@@ -421,6 +432,23 @@ func resumeFrom(f *runFacts) string {
 		}
 	}
 	return at
+}
+
+// carriedPast says the run started a phase of the whole run (no fan-out)
+// after fan-out phase i and before at: the fan-out was behind it.
+func carriedPast(f *runFacts, phases []flowPhase, i int, at string) bool {
+	if phases[i].FanoutOver == "" {
+		return false
+	}
+	for j := i + 1; j < len(phases) && phases[j].ID != at; j++ {
+		if phases[j].FanoutOver != "" || !forwardPhase(phases, j) {
+			continue
+		}
+		if r := f.rec[phases[j].ID]; r != nil && r.starts > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // frontierFrom is the orchestrator's own reading of where a run stopped
