@@ -577,8 +577,10 @@ func weigh(conf Config) {
 
 		// The ticket's budget, over its whole chain of runs (chainStart). Past
 		// it the run is closed and the watchdog records it without a cycle:
-		// more time is a person's decision, not a fix.
-		if limit, ok := conf.num("timeouts", "ticket"); ok && limit > 0 && !strings.HasPrefix(r.name, "WD-") {
+		// more time is a person's decision, not a fix. Scoped by mode like
+		// timeouts.run: a regression is the whole suite, hours past a
+		// ticket's four (timeouts.ticket.regression).
+		if limit, ok := conf.numFor("timeouts", "ticket", mode); ok && limit > 0 && !strings.HasPrefix(r.name, "WD-") {
 			root, began := chainStart(r.run, r.started)
 			// timeouts.ticket_since: chains that began before the limit was
 			// switched on finish under the terms they started with.
