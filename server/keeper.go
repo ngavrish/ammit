@@ -91,8 +91,6 @@ func keepOne(ticket string, conf Config) {
 	switch {
 	case verdict == "PASS" || verdict == "FAIL":
 		return
-	case strings.Contains(summary, "over its ticket budget"):
-		return
 	case strings.Contains(summary, "waits for a person's approval"):
 		return
 	}
@@ -110,17 +108,9 @@ func keepOne(ticket string, conf Config) {
 	if _, by := stoppedByHand(f); by {
 		return
 	}
-	for _, j := range f.judgements {
-		// Over budget is a person's decision, read from the judgement and not
-		// from the summary: the runner's run_end lands after ammit's own close
-		// and rewrites it. 2026-10-28 01:28: 5a3d7c35 of APF-3122 was closed
-		// "over its ticket budget", its run_end six seconds later made the
-		// summary "ammit stopped this run before implrulefix", and the keeper
-		// queued a resume fourteen seconds after that.
-		if j.rule == TicketBudgetRule {
-			return
-		}
-	}
+	// Over budget is not a reason to leave a ticket lying: the keeper resumes
+	// it like any other stop (2026-11-12, the person's rule: watchdogs are
+	// unlimited). APF-3313 lay from 18:29 with its budget spent and nobody told.
 	// A held ticket is its holder's, whatever the keeper would do with it.
 	mu.Lock()
 	holder := openActionOf(db, ticket, false)
