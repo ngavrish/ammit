@@ -1272,6 +1272,7 @@ func fixTask(d *dropFact, root string, n int, branch string, conf Config) string
 		fmt.Fprintf(&b, "Earlier cycle %d (%s): %s %s\n", c.cycle, c.state, c.why,
 			strings.Join(c.prs, " "))
 	}
+	b.WriteString(earlierFixes(d, root))
 	if url := conf.str("context", "ammit", ""); url != "" {
 		fmt.Fprintf(&b, "Full history: GET %s/watchdog?run=%s\n", url, root)
 	}
@@ -1279,6 +1280,37 @@ func fixTask(d *dropFact, root string, n int, branch string, conf Config) string
 		"per repository on head branch %s. Never edit the dropped run's artefacts and never "+
 		"weaken a gate.\n", branch)
 	return strings.NewReplacer("'", "’", "{", "(", "}", ")").Replace(b.String())
+}
+
+// earlierFixes is every earlier cycle on the same ticket and phase, in any
+// chain: what was red, which PRs went in, and that the drop came back. A fix
+// run told only its own chain starts each time as if it were the first:
+// 2026-11-12, APF-3313 dropped at foldgate in three chains and every cycle
+// began from nothing.
+func earlierFixes(d *dropFact, root string) string {
+	cycles := wdCycles(`root<>? AND run IN (SELECT run FROM watchdog_drops WHERE name=? AND phase=?)
+	                    AND started > ?`, root, d.name, d.phase, wdNow()-7*86400)
+	if len(cycles) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Earlier fixes of %s at %s in other chains - each was merged or tried and the "+
+		"drop came back; find what they missed, do not repeat them:\n", d.name, orDash(d.phase))
+	for _, c := range cycles {
+		cause, first := "", ""
+		if dr, ok := dropOfRun(c.run); ok {
+			cause = dr.cause
+			if len(dr.evidence) > 0 {
+				first = dr.evidence[len(dr.evidence)-1]
+				if len(first) > 300 {
+					first = first[:300]
+				}
+			}
+		}
+		fmt.Fprintf(&b, "- run %s (%s): %s %s %s | last evidence: %s\n", shortRun(c.run), c.state,
+			cause, c.why, strings.Join(c.prs, " "), first)
+	}
+	return b.String()
 }
 
 // ---- moving a cycle on ---------------------------------------------------
