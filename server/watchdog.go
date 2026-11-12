@@ -111,6 +111,10 @@ const wdMergeEvery = 300.0
 // already being run by another: the ticket is not dropped, it is busy.
 var wdNotDropped = map[string]bool{
 	"GREEN": true, "OK": true, "PASS": true, "PASSED": true, "SKIPPED": true,
+	// PARTIAL: every red explained, some cases have no data on the stand -
+	// the run published. 2026-11-12: APF-3313's 5c57687c published PARTIAL
+	// and was answered as a drop, the keeper resuming it a second later.
+	"PARTIAL": true,
 }
 
 // wdGreen is what a resumed run must end as for its cycle to be done.
