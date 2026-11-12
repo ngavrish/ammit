@@ -1079,31 +1079,19 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 	// (fresh_budget), the person's rule of 2026-10-31 - the hours a chain lost
 	// to the flow's bugs are not the ticket's. 2026-11-05: APF-1972 was closed
 	// over budget three times in a row, each resume within twenty seconds of
-	// its start, and this only recorded it. watchdog.budget_renewals a day per
-	// ticket bound it; past them more time is a person's decision.
+	// its start, and this only recorded it. 2026-11-12: renewals have no cap -
+	// the person's rule: watchdogs are unlimited.
 	if d.cause == "limit:"+TicketBudgetRule {
-		most, _ := conf.num("watchdog", "budget_renewals")
-		if most == 0 {
-			most = 2
+		q, holder := queueFreshResume(d)
+		if holder != nil {
+			wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
+				"the ticket is over timeouts.ticket and is held by "+holder.String()+
+					"; no fresh-budget resume is queued beside it")
+			return
 		}
-		if done := budgetRenewals(d.name); float64(done) < most {
-			q, holder := queueFreshResume(d)
-			if holder != nil {
-				wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
-					"the ticket is over timeouts.ticket and is held by "+holder.String()+
-						"; no fresh-budget resume is queued beside it")
-				return
-			}
-			if q != 0 {
-				wdSay(d.run, d.phase, "resumed", d.cause, spentCycles(root), limit, nil,
-					fmt.Sprintf("the ticket is over timeouts.ticket; resumed from %s on a fresh budget "+
-						"(renewal %d of %.0f today, queue %d)", orDash(d.phase), done+1, most, q))
-				return
-			}
-		}
-		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
-			"the ticket is over timeouts.ticket and its renewals for today are spent; "+
-				"no resume is queued - more time is a person's decision")
+		wdSay(d.run, d.phase, "resumed", d.cause, spentCycles(root), limit, nil,
+			fmt.Sprintf("the ticket is over timeouts.ticket; resumed from %s on a fresh budget "+
+				"(renewal %d today, queue %d)", orDash(d.phase), budgetRenewals(d.name), q))
 		return
 	}
 	if parent != 0 {
@@ -1168,8 +1156,8 @@ func stoppedByHand(f *runFacts) (string, bool) {
 	return "", false
 }
 
-// startCycle opens the next cycle of a chain on a drop, or announces that the
-// chain has had every cycle it may take.
+// startCycle opens the next cycle of a chain on a drop. A chain has no cap on
+// cycles (2026-11-12, the person's rule: watchdogs are unlimited).
 // TicketBudgetRule is the limit that closes a ticket's whole chain of runs.
 const TicketBudgetRule = "timeouts.ticket"
 
@@ -1182,15 +1170,6 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 	}
 	n := spentCycles(root) + 1
 	now := wdNow()
-	if float64(n) > limit {
-		mu.Lock()
-		db.Exec(`INSERT INTO watchdog_cycles (root, run, cycle, state, branch, why, started, updated)
-		         VALUES (?,?,?,?,?,?,?,?)`, root, d.run, n, wdExhausted, "",
-			fmt.Sprintf("loops.laps_watchdog = %.0f cycles spent", limit), now, now)
-		mu.Unlock()
-		announceExhausted(d, root, conf, limit)
-		return
-	}
 	if handsOff(conf) {
 		// Recorded, not answered, and no cycle spent on it: the switch says
 		// hands off, and a cycle is a hand.
@@ -2080,38 +2059,6 @@ func queueOutcome(row sql.NullInt64) (string, bool, string, float64) {
 	             LEFT JOIN runs r ON r.run = q.run WHERE q.id=?`, row.Int64).
 		Scan(&run, &started, &finished, &verdict)
 	return run.String, finished.Valid, verdict.String, started.Float64
-}
-
-// announceExhausted is the loud end of a chain: a judgement, an event with
-// every cycle in it, and the notify command.
-func announceExhausted(d *dropFact, root string, conf Config, limit float64) {
-	cycles := wdCycles(`root=?`, root)
-	lines := make([]string, 0, len(cycles))
-	for _, c := range cycles {
-		if c.state == wdExhausted {
-			continue
-		}
-		dr, _ := dropOfRun(c.run)
-		cause, phase := "", ""
-		if dr != nil {
-			cause, phase = dr.cause, dr.phase
-		}
-		lines = append(lines, fmt.Sprintf("cycle %d: drop %s (%s at %s) -> %s %s %s",
-			c.cycle, shortRun(c.run), cause, orDash(phase), c.state, c.why, strings.Join(c.prs, " ")))
-	}
-	history := strings.Join(lines, "\n")
-	why := fmt.Sprintf("WATCHDOG EXHAUSTED: %s dropped again (%s at %s) after %.0f cycle(s), "+
-		"loops.laps_watchdog = %.0f", d.name, d.cause, orDash(d.phase), limit, limit)
-	wdSay(d.run, d.phase, wdExhausted, d.cause, int(limit), limit, nil, why+"\n"+history)
-	judge("run", d.run, d.name, "loops.laps_watchdog", limit, limit+1, "notify", why)
-	ctx := map[string]string{"run": d.run, "name": d.name, "verdict": "WATCHDOG-EXHAUSTED",
-		"phase": d.phase}
-	for k, v := range conf["context"] {
-		ctx[k] = v
-	}
-	summary := why + " | " + strings.ReplaceAll(history, "\n", " | ")
-	ctx["summary"] = strings.NewReplacer("'", "’", "{", "(", "}", ")").Replace(summary)
-	log.Printf("ammit: notify: %s", act("notify", conf, ctx))
 }
 
 // watchdogState is GET /watchdog: every drop and every cycle, or one chain's
