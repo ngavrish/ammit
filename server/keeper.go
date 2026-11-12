@@ -89,7 +89,7 @@ func keepOne(ticket string, conf Config) {
 		return
 	}
 	switch {
-	case verdict == "PASS" || verdict == "FAIL":
+	case verdict == "PASS" || verdict == "FAIL" || verdict == "PARTIAL":
 		return
 	case strings.Contains(summary, "waits for a person's approval"):
 		return
