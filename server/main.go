@@ -58,6 +58,10 @@ CREATE INDEX IF NOT EXISTS events_kind ON events (kind, at);
 -- about (run, kind, session) and nothing else.
 CREATE INDEX IF NOT EXISTS events_span ON events (run, kind, session);
 CREATE INDEX IF NOT EXISTS events_phase ON events (run, kind, phase);
+-- "The latest event of a run" is ORDER BY id DESC: without (run, id) the planner
+-- walks a month's whole primary key backwards (10 s on 2.5M rows), and
+-- /evidence timed out behind it.
+CREATE INDEX IF NOT EXISTS events_run_id ON events (run, id);
 
 -- What a token costs, per model, USD per million - the SDK's own catalog,
 -- with both cache-write rates and the US surcharge, so a turn is priced as
