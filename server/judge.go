@@ -265,9 +265,7 @@ func act(name string, conf Config, ctx map[string]string) string {
 			}
 		}
 	}
-	for key, value := range withContext(conf, ctx) {
-		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", shellSafe(value))
-	}
+	tmpl = fillHoles(tmpl, withContext(conf, ctx))
 	// A hole nobody filled is not a command.
 	//
 	// The session-timeout branch set ctx["session"] and never ctx["agent"], so
@@ -1083,6 +1081,42 @@ func sweepCrashed(conf Config) bool {
 func shellSafe(value string) string {
 	return strings.ReplaceAll(value, "'", "’")
 }
+
+// fillHoles puts each value into its {key} of tmpl, in one pass over the
+// template as written. A hole that sits between double quotes - notify is
+// sh -c 'echo "... {summary}"' - is read by a shell that runs backticks and $(
+// there and ends the quote on a ", so those go in as look-alikes too. Run
+// 196b3eb5's summary quoted `bash /engine/tools/run_suite.sh` and
+// `coverage_gate.py`, and ammit ran both in its own container ("sh: bash: not
+// found"). A hole outside double quotes, like start_run's '{payload}' JSON,
+// keeps its " as they are. A hole with no value stays for the hole check.
+func fillHoles(tmpl string, values map[string]string) string {
+	var b strings.Builder
+	quoted := false
+	for i := 0; i < len(tmpl); {
+		if tmpl[i] == '{' {
+			if end := strings.IndexByte(tmpl[i:], '}'); end > 0 {
+				if value, ok := values[tmpl[i+1:i+end]]; ok {
+					if quoted {
+						b.WriteString(dquoteSafe.Replace(shellSafe(value)))
+					} else {
+						b.WriteString(shellSafe(value))
+					}
+					i += end + 1
+					continue
+				}
+			}
+		}
+		if tmpl[i] == '"' {
+			quoted = !quoted
+		}
+		b.WriteByte(tmpl[i])
+		i++
+	}
+	return b.String()
+}
+
+var dquoteSafe = strings.NewReplacer("`", "’", "\"", "”", "$", "＄", "\\", "∖")
 
 // withContext is what a command template is filled from: the caller's values,
 // and limits.yml's context block for every hole the caller did not name.
