@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -616,7 +617,29 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 		d.evidence = append(d.evidence, "dropped at phase "+d.phase)
 	}
 	d.cause = causeOf(f, conf, d)
+	// BLOCKED with nothing red behind it - no limit, no gate, no crash - and
+	// every scenario that did not pass unverified for want of data on the
+	// stand: the flow did its job and the stand did not have the rows. No
+	// code fix puts data on a stand. 2026-11-13: APF-3313's 765c0c40 ended
+	// "62/73 scenarios passed, 11 unverified; no bug drafts" at foldgate and
+	// the watchdog spent 43 fix cycles on it, every one ending with no PR.
+	// The verdict's own ALERT (on_run_verdict) is what a person reads.
+	if d.cause == "verdict:blocked" && dataGapsOnly(f.summary) {
+		return nil, "verdict BLOCKED on data gaps only (" + f.summary + "): no flow defect to fix"
+	}
 	return d, ""
+}
+
+// dataGapsSummary is the runner's ending for a run whose only shortfall is
+// scenarios it could not verify: "62/73 scenarios passed, 11 unverified; no
+// bug drafts", "48/54 scenarios passed, 1 unverified, 5 no data on the
+// stand; no bug drafts". A failed scenario, a bug draft or a repair loop that
+// ran out is a different sentence and does not match.
+var dataGapsSummary = regexp.MustCompile(
+	`^\s*\d+/\d+ scenarios passed((, \d+ (unverified|no data on the stand))+); no bug drafts\.?\s*$`)
+
+func dataGapsOnly(summary string) bool {
+	return dataGapsSummary.MatchString(summary)
 }
 
 // causeOf names the cause as an id and adds the lines that show it.
@@ -1289,6 +1312,56 @@ func awaitDeploy(d *dropFact, root string, prev wdCycle, n int, now, limit float
 		strings.Join(prev.prs, " "), prev.cycle, said, n))
 }
 
+// noProgress is whether a failed cycle repeats the one before it: the same
+// drop answered, no PR from either, and the same outcome once the run ids,
+// branches and links that differ every cycle are taken out. Not a count of
+// cycles - a chain has none (#170) - but a fix that made nothing twice over
+// the same unchanged drop will make nothing a third time. 2026-11-13: chain
+// 765c0c40 of APF-3313 ran 43 cycles, each "the fix run ... ended without a
+// PR on watchdog/66d7f44a-N", over the same BLOCKED verdict.
+func noProgress(c wdCycle, why string) (wdCycle, bool) {
+	if len(c.prs) > 0 {
+		return wdCycle{}, false
+	}
+	prev := wdCycles(`root=? AND cycle<? AND state<>?`, c.root, c.cycle, wdExhausted)
+	if len(prev) == 0 {
+		return wdCycle{}, false
+	}
+	p := prev[len(prev)-1]
+	if p.state != wdFailed || p.run != c.run || len(p.prs) > 0 {
+		return p, false
+	}
+	return p, outcomeOf(p.why) == outcomeOf(why)
+}
+
+var outcomeNoise = regexp.MustCompile(
+	`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|watchdog/\S+|https?://\S+|WD-\S+`)
+
+// outcomeOf is a cycle's why with what is different on every cycle removed.
+func outcomeOf(why string) string {
+	return outcomeNoise.ReplaceAllString(strings.TrimSpace(why), "_")
+}
+
+// haltChain ends a chain that stopped making progress and hands it to a
+// person: no next cycle, an ALERT through notify, and the state said where
+// the dashboard reads it. The ticket is free (its fix action closed with the
+// cycle); a person's rerun or a new drop opens a chain of its own.
+func haltChain(c wdCycle, d *dropFact, conf Config, limit float64, prev wdCycle, why string) {
+	text := fmt.Sprintf("no progress: cycles %d and %d of %s both ended the same way with no PR "+
+		"(%s) on the same drop (%s at %s); the watchdog stops here and hands %s to a person",
+		prev.cycle, c.cycle, shortRun(c.root), firstLine(why), d.cause, orDash(d.phase), d.name)
+	wdSay(c.run, d.phase, "halted", d.cause, c.cycle, limit, nil, text)
+	ctx := map[string]string{"run": c.run, "name": d.name, "verdict": "WATCHDOG-HALTED",
+		"summary": text}
+	for k, v := range conf["context"] {
+		if ctx[k] == "" {
+			ctx[k] = v
+		}
+	}
+	judge("run", c.run, d.name, "watchdog.no_progress", limit, float64(c.cycle), "notify",
+		act("notify", conf, ctx))
+}
+
 func shortRun(run string) string {
 	if len(run) > 8 {
 		return run[:8]
@@ -1566,7 +1639,12 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		wdSay(c.run, d.phase, wdFailed, d.cause, c.cycle, limit, c.prs, why)
 		judge("run", c.run, d.name, "watchdog.cycle", limit, float64(c.cycle), "failed", why)
 		// A cycle that did not reach a resume is spent; the drop is still
-		// there, so the next cycle answers the same drop.
+		// there, so the next cycle answers the same drop - unless the last
+		// one already failed on it the same way with nothing to show.
+		if prev, same := noProgress(c, why); same {
+			haltChain(c, d, conf, limit, prev, why)
+			return
+		}
 		startCycle(d, c.root, conf, limit)
 	}
 	since := c.entered
