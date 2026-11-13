@@ -1813,9 +1813,7 @@ func commandFrom(name, tmpl string, conf Config, ctx map[string]string) (string,
 	if tmpl == "" {
 		return "", errors.New("no command named " + name)
 	}
-	for key, value := range withContext(conf, ctx) {
-		tmpl = strings.ReplaceAll(tmpl, "{"+key+"}", shellSafe(value))
-	}
+	tmpl = fillHoles(tmpl, withContext(conf, ctx))
 	if hole := placeholder.FindString(tmpl); hole != "" {
 		return "", errors.New(hole + " was never filled in " + name)
 	}
