@@ -172,10 +172,13 @@ commands:
   # repository of the PRs on {branch}; watchdog_merge merges {pr}. Optional:
   # watchdog_deploy, run once after the merge when the deploy is not already
   # automatic, and watchdog_deployed, whose exit 0 is required on top of a
-  # deploy that reported success after the merge.
+  # deploy that reported success after the merge. `files` in the --json list
+  # lets a merged fix that changes only what the stack reads live
+  # (watchdog.live_paths) go on without a deploy; without it every fix waits
+  # for one.
   watchdog_pr: >-
     sh -c 'for r in my-org/pipeline my-org/ammit; do gh pr list -R $r --head {branch}
-    --state all --json url,state,mergedAt,mergeCommit,statusCheckRollup; done'
+    --state all --json url,state,mergedAt,mergeCommit,statusCheckRollup,files; done'
   watchdog_merge: gh pr merge {pr} --squash --delete-branch
 
 context:
@@ -200,3 +203,8 @@ loops:
 # A run in this mode is never itself answered as a drop.
 watchdog:
   fix_mode: watchdogfix
+  # "repo:prefix" pairs the stack reads live from its checkout, with no image
+  # to build: a merged fix that changes only these resumes its run once
+  # timeouts.watchdog_deploy has passed with no deploy, instead of waiting for
+  # one. Needs `files` in commands.watchdog_pr. Default agentic-v-model:engine/.
+  live_paths: pipeline:engine/
