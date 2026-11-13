@@ -194,6 +194,25 @@ func handToFixer(ticket string, f *runFacts, phase string, conf Config) bool {
 	if _, done := wdMeta("escalated:" + f.run); done {
 		return true
 	}
+	// Twice BLOCKED on nothing but unverified data: neither a resume nor a
+	// fix puts rows on a stand, so the ticket is a person's (classifyDrop,
+	// dataGapsOnly). Said once, as an ALERT, and left lying.
+	if dataGapsOnly(f.summary) {
+		wdSetMeta("escalated:"+f.run, wdNow())
+		text := fmt.Sprintf("keeper: %s ended BLOCKED twice on data gaps only (%s, then %s: %q); "+
+			"no resume and no fix changes a stand's data - left for a person", ticket,
+			shortRun(prev), shortRun(f.run), f.summary)
+		ctx := map[string]string{"run": f.run, "name": ticket, "verdict": "DATA-GAPS",
+			"summary": text}
+		for k, v := range conf["context"] {
+			if ctx[k] == "" {
+				ctx[k] = v
+			}
+		}
+		judge("run", f.run, ticket, "keeper.escalate", 2, 2, "notify", act("notify", conf, ctx))
+		store(event{"kind": "keeper", "run": f.run, "text": text})
+		return true
+	}
 	d, why := classifyDrop(f, conf)
 	if d == nil {
 		log.Printf("ammit: keeper: %s blocked twice the same way, and the watchdog would not call %s "+
