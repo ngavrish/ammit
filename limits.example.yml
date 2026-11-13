@@ -175,7 +175,12 @@ commands:
   # deploy that reported success after the merge. `files` in the --json list
   # lets a merged fix that changes only what the stack reads live
   # (watchdog.live_paths) go on without a deploy; without it every fix waits
-  # for one.
+  # for one. Even then the run is resumed only once watchdog_live exits 0 for
+  # each such PR - the live tree carries {files} as of {merge} in {repo}
+  # (owner/name); unset, ammit compares git blobs in {worker} (server/watchdog.go
+  # defaultLiveCheck). With no deploy only a pull by hand moves the checkout,
+  # and a run resumed onto a tree without its fix drops again the same way.
+  # watchdog_live: docker exec {worker} sh -c '...'
   watchdog_pr: >-
     sh -c 'for r in my-org/pipeline my-org/ammit; do gh pr list -R $r --head {branch}
     --state all --json url,state,mergedAt,mergeCommit,statusCheckRollup,files; done'
