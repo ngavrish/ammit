@@ -39,6 +39,9 @@ import (
 //
 // A resumed run that drops again starts the next cycle of the same chain, and
 // a cycle that fails on the way (no PR, red CI, no deploy) is a cycle spent.
+// The cycle after one that merged its fix and ran out timeouts.watchdog_deploy
+// starts in deploying, not fixing (awaitDeploy): the fix is on main already,
+// and what is missing is the deploy, so no fix run is spent on it.
 // loops.laps_watchdog is how many cycles one chain may take; the one past it
 // is not taken, it is announced (actions notify) with the whole history.
 //
@@ -1181,29 +1184,12 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 			"[hands off] the drop is recorded and no fix was queued: actions.enforce is off")
 		return
 	}
-	branch := fmt.Sprintf("watchdog/%s-%d", shortRun(root), n)
-	// The cycle and its fix action on the ticket are one insert: a ticket
-	// another action holds (a resume queued, a stop closing) is that
-	// holder's, and no cycle is opened or spent on it. If the holder's run
-	// drops, that drop is answered on its own.
-	mu.Lock()
-	var id int64
-	var holder *ticketAction
-	tx, err := db.BeginTx(context.Background(), nil)
-	if err == nil {
-		err = tx.QueryRowContext(context.Background(), `INSERT INTO watchdog_cycles (root, run, cycle, state, branch, started,
-	                       entered, updated) VALUES (?,?,?,?,?,?,?,?) RETURNING id`,
-			root, d.run, n, wdFixing, branch, now, now, now).Scan(&id)
-		if err == nil {
-			holder, err = openCycleAction(tx, d.name, d.run, id)
-		}
-		if err == nil {
-			err = tx.Commit()
-		} else {
-			_ = tx.Rollback()
-		}
+	if prev, ok := mergedAwaitingDeploy(root, d.run); ok {
+		awaitDeploy(d, root, prev, n, now, limit)
+		return
 	}
-	mu.Unlock()
+	branch := fmt.Sprintf("watchdog/%s-%d", shortRun(root), n)
+	id, holder, err := openCycle(d, root, n, wdFixing, branch, sql.NullString{}, sql.NullFloat64{}, now)
 	if holder != nil {
 		wdSay(d.run, d.phase, "recorded", d.cause, n-1, limit, nil,
 			"the ticket is held by "+holder.String()+"; no fix cycle is opened - the holder answers it")
@@ -1214,6 +1200,93 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 		return
 	}
 	queueFix(id, d, root, n, branch, conf, limit)
+}
+
+// openCycle writes the cycle, in the state it starts in, and its fix action on
+// the ticket as one insert: a ticket another action holds (a resume queued, a
+// stop closing) is that holder's, and no cycle is opened or spent on it. If
+// the holder's run drops, that drop is answered on its own. prs and mergedAt
+// are set on a cycle that starts past the fix (awaitDeploy) and null on one
+// that starts fixing.
+func openCycle(d *dropFact, root string, n int, state, branch string, prs sql.NullString,
+	mergedAt sql.NullFloat64, now float64) (int64, *ticketAction, error) {
+	mu.Lock()
+	defer mu.Unlock()
+	var id int64
+	var holder *ticketAction
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	err = tx.QueryRowContext(context.Background(), `INSERT INTO watchdog_cycles (root, run, cycle, state, branch, prs,
+	                       merged_at, started, entered, updated) VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+		root, d.run, n, state, branch, prs, mergedAt, now, now, now).Scan(&id)
+	if err == nil {
+		holder, err = openCycleAction(tx, d.name, d.run, id)
+	}
+	if err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	return id, holder, err
+}
+
+// mergedAwaitingDeploy is the last cycle of the chain that merged a fix for
+// this same dropped run and then failed, when there is one: merged_at is set
+// the moment a cycle's PRs are merged, and the one way a cycle fails after
+// that is timeouts.watchdog_deploy. A cycle left for another reason - the
+// ticket started over, a fix stopped by hand - is not failed and is not this.
+func mergedAwaitingDeploy(root, run string) (wdCycle, bool) {
+	cycles := wdCycles(`root=? AND run=? AND state=? AND merged_at IS NOT NULL`, root, run, wdFailed)
+	for i := len(cycles) - 1; i >= 0; i-- {
+		if len(cycles[i].prs) > 0 && cycles[i].mergedAt.Valid {
+			return cycles[i], true
+		}
+	}
+	return wdCycle{}, false
+}
+
+// awaitDeploy opens the next cycle of a chain in deploying rather than
+// fixing: prev merged the fix for this very drop and ran out
+// timeouts.watchdog_deploy waiting for a deploy to carry it. There is nothing
+// for a fix run to write - the fix is on main - and what is missing is the
+// deploy, so this cycle waits for it as prev did, and resumes the run when it
+// reports success. The timeout counts from this cycle: counted from the
+// merge it would be over at once, and the chain would turn cycles in a tight
+// loop. A deploy that reported success between prev's end and now is read on
+// the next tick, and the run is resumed on it.
+//
+// 2026-11-13, chain 66d7f44a of APF-3313: cycle 4 merged agentic-v-model#1273
+// at 00:47 UTC, no deploy reported success within the hour (the stand's
+// deploy workflow was switched off by hand), and the cycle failed. Cycles 5
+// to 12 each queued a fix run for the same drop; each found the fix merged
+// and nothing to open a PR for, and failed within minutes into the next -
+// eight fix runs and their gate laps spent waiting for a deploy. Cycles 2
+// and 3 of the same chain had gone the same way after cycle 1's merge.
+func awaitDeploy(d *dropFact, root string, prev wdCycle, n int, now, limit float64) {
+	merged := prev.mergedAt.Float64
+	said := "no deploy has reported success since"
+	if _, ok := deployedAfter(merged); ok {
+		said = "a deploy has reported success since, and the next tick resumes the run on it"
+	} else {
+		merged = now
+	}
+	prs := sql.NullString{String: jsonList(prev.prs), Valid: true}
+	_, holder, err := openCycle(d, root, n, wdDeploying, prev.branch, prs,
+		sql.NullFloat64{Float64: merged, Valid: true}, now)
+	if holder != nil {
+		wdSay(d.run, d.phase, "recorded", d.cause, n-1, limit, nil,
+			"the ticket is held by "+holder.String()+"; no cycle is opened - the holder answers it")
+		return
+	}
+	if err != nil {
+		log.Printf("ammit: watchdog could not open a cycle for %s: %v", d.run, err)
+		return
+	}
+	wdSay(d.run, d.phase, wdDeploying, d.cause, n, limit, prev.prs, fmt.Sprintf(
+		"the fix for this drop is merged already (%s, cycle %d) and %s; no fix run is queued - cycle %d waits timeouts.watchdog_deploy for the deploy that carries it",
+		strings.Join(prev.prs, " "), prev.cycle, said, n))
 }
 
 func shortRun(run string) string {
