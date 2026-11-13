@@ -220,7 +220,7 @@ func handToFixer(ticket string, f *runFacts, phase string, conf Config) bool {
 		return false
 	}
 	// No code fix brings a network back: resumed, as before, until access answers.
-	if networkRefused(d) {
+	if networkRefused(d) || productDNSDown(d) {
 		return false
 	}
 	wdSetMeta("escalated:"+f.run, wdNow())
