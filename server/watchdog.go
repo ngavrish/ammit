@@ -39,12 +39,18 @@ import (
 //	done      the resumed run ended green
 //
 // A resumed run that drops again starts the next cycle of the same chain, and
-// a cycle that fails on the way (no PR, red CI, no deploy) is a cycle spent.
-// The cycle after one that merged its fix and ran out timeouts.watchdog_deploy
-// starts in deploying, not fixing (awaitDeploy): the fix is on main already,
-// and what is missing is the deploy, so no fix run is spent on it.
-// loops.laps_watchdog is how many cycles one chain may take; the one past it
-// is not taken, it is announced (actions notify) with the whole history.
+// a cycle that fails on the way (red CI, a PR closed) is a cycle spent. A
+// chain has no cap on cycles; what bounds it is that a cycle is opened only on
+// new evidence:
+//
+//   - a drop no code change answers (stillborn, the process gone, the runner's
+//     stream broken) is resumed with no cycle at all (transientDrop);
+//   - a cycle whose fix made nothing (no PR) has its dropped run resumed, not
+//     a second fix run on the same record; if that resume drops the same way,
+//     no cycle is opened and a person is told (sameAsFixless, haltChain);
+//   - a merged fix with no deploy past timeouts.watchdog_deploy resumes the
+//     run when it changes only what the stack reads live (liveOnly), and
+//     otherwise waits in its one cycle for the deploy, with no next cycle.
 //
 // Every decision reads evidence - the run's row, its events, its judgements,
 // the queue, the deploy record, and what GitHub says about a PR - and never
@@ -1127,6 +1133,22 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 	if parent != 0 {
 		wdMove(parent, wdAgain, "why=?", "the resumed run "+d.run+" dropped: "+d.cause)
 	}
+	// A drop no code change answers is resumed, not fixed (transientDrop),
+	// unless it is the resume of one such drop come back at the same phase.
+	if transientDrop(d) && !handsOff(conf) {
+		if src := sourceOf(d.run); resumedTransient(src, d) {
+			d.evidence = append(d.evidence, fmt.Sprintf(
+				"the run is the resume of %s, which dropped the same way at %s and was resumed "+
+					"without a fix; twice at the same place is not a passing moment", src, orDash(d.phase)))
+		} else {
+			wdSetMeta("transient:"+d.run, wdNow())
+			why := d.cause + " at " + orDash(d.phase) + ": the run stopped for the stand's moment " +
+				"(no heartbeat, the process gone, or the runner's stream broken), which no code change answers"
+			if resumeWithoutFix(d, root, limit, why) {
+				return
+			}
+		}
+	}
 	text := strings.Join(d.evidence, "\n")
 	judge("run", d.run, d.name, "watchdog.drop", limit, float64(spentCycles(root)),
 		"watchdog", d.cause+" at "+orDash(d.phase))
@@ -1209,6 +1231,21 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 	}
 	if prev, ok := mergedAwaitingDeploy(root, d.run); ok {
 		awaitDeploy(d, root, prev, n, now, limit)
+		return
+	}
+	// Only new evidence opens a cycle (sameAsFixless). The last cycle made no
+	// fix and this is the drop it answered, not yet resumed: resume it. Its
+	// resume dropped the same way: nothing new to fix, said once.
+	if last, same := sameAsFixless(root, d); same {
+		if last.state == wdFailed && last.run == d.run {
+			why := fmt.Sprintf("cycle %d made no fix (%s); a fix run on the same evidence makes none "+
+				"either, so the dropped run is resumed instead", last.cycle, firstLine(orDash(last.why)))
+			if !resumeWithoutFix(d, root, limit, why) {
+				log.Printf("ammit: watchdog could not queue the resume of %s", d.run)
+			}
+			return
+		}
+		haltChain(last, d, conf, limit)
 		return
 	}
 	branch := fmt.Sprintf("watchdog/%s-%d", shortRun(root), n)
@@ -1312,54 +1349,171 @@ func awaitDeploy(d *dropFact, root string, prev wdCycle, n int, now, limit float
 		strings.Join(prev.prs, " "), prev.cycle, said, n))
 }
 
-// noProgress is whether a failed cycle repeats the one before it: the same
-// drop answered, no PR from either, and the same outcome once the run ids,
-// branches and links that differ every cycle are taken out. Not a count of
-// cycles - a chain has none (#170) - but a fix that made nothing twice over
-// the same unchanged drop will make nothing a third time. 2026-11-13: chain
-// 765c0c40 of APF-3313 ran 43 cycles, each "the fix run ... ended without a
-// PR on watchdog/66d7f44a-N", over the same BLOCKED verdict.
-func noProgress(c wdCycle, why string) (wdCycle, bool) {
-	if len(c.prs) > 0 {
-		return wdCycle{}, false
+// A fix cycle is opened on evidence, and only on new evidence.
+//
+// A cycle whose fix made nothing - no PR, so nothing merged - changed nothing
+// the dropped run runs on. Another fix run on the same drop reads the same
+// record and finds the same nothing: 2026-11-13, chain 66d7f44a of APF-3313
+// took 74 cycles, from cycle 48 on every one a fix run that ended BLOCKED with
+// "CAUSE: stand - the deploy workflow is disabled_manually" (a person's
+// decision, not a defect), the cycle failed "ended without a PR", and the next
+// one started at once on the same evidence - $0.86 a cycle, $41 in all. Not a
+// cap on cycles (#170: watchdogs are unlimited) but a rule on what a cycle is
+// opened on:
+//
+//   - the cycle that made no fix is answered by resuming its dropped run, not
+//     by another fix run: the run then passes, or drops with evidence of its
+//     own (newEvidence, startCycle);
+//   - a drop whose evidence is the same as that of the last cycle of its chain
+//     that made no fix opens no cycle: nothing has changed that a fix run
+//     could read differently. It is said once, as an ALERT, and left for a
+//     person (haltChain). A drop with any other phase, cause or evidence line
+//     opens a cycle as before.
+
+// dropKey is a drop with what differs on every run taken out: run ids,
+// hashes, counts and durations, the order of its gate lines, and the keeper's
+// own line on how it came to hand the drop over. Two drops with the same key
+// are the same drop as far as anything that reads the record can tell.
+var evidenceNoise = regexp.MustCompile(
+	`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{8,}\b|[0-9]+(\.[0-9]+)?`)
+
+func dropKey(d *dropFact) string {
+	lines := make([]string, 0, len(d.evidence))
+	for _, l := range d.evidence {
+		if strings.HasPrefix(l, "the keeper saw the same BLOCKED") {
+			continue
+		}
+		l = evidenceNoise.ReplaceAllString(strings.ToLower(l), "#")
+		lines = append(lines, strings.Join(strings.Fields(l), " "))
 	}
-	prev := wdCycles(`root=? AND cycle<? AND state<>?`, c.root, c.cycle, wdExhausted)
-	if len(prev) == 0 {
-		return wdCycle{}, false
-	}
-	p := prev[len(prev)-1]
-	if p.state != wdFailed || p.run != c.run || len(p.prs) > 0 {
-		return p, false
-	}
-	return p, outcomeOf(p.why) == outcomeOf(why)
+	sort.Strings(lines)
+	return d.cause + " @ " + orDash(d.phase) + "\n" + strings.Join(lines, "\n")
 }
 
-var outcomeNoise = regexp.MustCompile(
-	`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|watchdog/\S+|https?://\S+|WD-\S+`)
-
-// outcomeOf is a cycle's why with what is different on every cycle removed.
-func outcomeOf(why string) string {
-	return outcomeNoise.ReplaceAllString(strings.TrimSpace(why), "_")
+// sameAsFixless is the last cycle of the chain, and whether it made no fix
+// (no PR, nothing merged), ended (failed, or its resume dropped again), and
+// answered a drop with the same evidence as d. A cycle a person ended (left)
+// or one whose resume came back green is not this.
+func sameAsFixless(root string, d *dropFact) (wdCycle, bool) {
+	cycles := wdCycles(`root=? AND state<>?`, root, wdExhausted)
+	if len(cycles) == 0 {
+		return wdCycle{}, false
+	}
+	last := cycles[len(cycles)-1]
+	if len(last.prs) > 0 || last.mergedAt.Valid || (last.state != wdFailed && last.state != wdAgain) {
+		return last, false
+	}
+	prev, ok := dropOfRun(last.run)
+	if !ok {
+		return last, false
+	}
+	return last, dropKey(prev) == dropKey(d)
 }
 
-// haltChain ends a chain that stopped making progress and hands it to a
-// person: no next cycle, an ALERT through notify, and the state said where
-// the dashboard reads it. The ticket is free (its fix action closed with the
-// cycle); a person's rerun or a new drop opens a chain of its own.
-func haltChain(c wdCycle, d *dropFact, conf Config, limit float64, prev wdCycle, why string) {
-	text := fmt.Sprintf("no progress: cycles %d and %d of %s both ended the same way with no PR "+
-		"(%s) on the same drop (%s at %s); the watchdog stops here and hands %s to a person",
-		prev.cycle, c.cycle, shortRun(c.root), firstLine(why), d.cause, orDash(d.phase), d.name)
-	wdSay(c.run, d.phase, "halted", d.cause, c.cycle, limit, nil, text)
-	ctx := map[string]string{"run": c.run, "name": d.name, "verdict": "WATCHDOG-HALTED",
+// resumeWithoutFix queues the dropped run to continue from where it stopped,
+// under a resume action of its own, with no fix cycle: what stopped it needs
+// no change to code, or the fix run found none to make. Said and judged; true
+// when the resume is queued or the ticket's holder has it.
+func resumeWithoutFix(d *dropFact, root string, limit float64, why string) bool {
+	if d.phase == "" {
+		if f, err := readRunFacts(d.run); err == nil {
+			d.phase = resumeFrom(f)
+		}
+	}
+	n := spentCycles(root)
+	q, holder := queueUnderAction(d.name, "watchdog", d.run, resumePayload(d.run, d, false))
+	if holder != nil {
+		wdSay(d.run, d.phase, "recorded", d.cause, n, limit, nil,
+			why+"; the ticket is held by "+holder.String()+" - the holder answers it, no resume is queued beside it")
+		return true
+	}
+	if q == 0 {
+		return false
+	}
+	text := fmt.Sprintf("%s; %s queued to resume from %s with no fix cycle (source run %s, queue %d)",
+		why, d.name, orDash(d.phase), d.run, q)
+	wdSay(d.run, d.phase, wdResumed, d.cause, n, limit, nil, text)
+	judge("run", d.run, d.name, "watchdog.drop", limit, float64(n), "resume", firstLine(text))
+	return true
+}
+
+// haltChain says, once per drop, that the chain opens no cycle on it: the
+// last cycle made no fix and this drop is the same drop. An ALERT through
+// notify and a "halted" watchdog event where the dashboard reads it. The
+// ticket is free; a drop with new evidence, or a person's rerun, goes on.
+func haltChain(last wdCycle, d *dropFact, conf Config, limit float64) {
+	if _, said := wdMeta("halted:" + d.run); said {
+		return
+	}
+	wdSetMeta("halted:"+d.run, wdNow())
+	text := fmt.Sprintf("no new evidence: cycle %d of %s made no fix (%s), its drop was resumed, and "+
+		"%s dropped the same way again (%s at %s); no fix cycle is opened on the same evidence - "+
+		"a drop with a different phase, cause or evidence opens one. %s is left for a person",
+		last.cycle, shortRun(last.root), firstLine(orDash(last.why)), shortRun(d.run), d.cause,
+		orDash(d.phase), d.name)
+	wdSay(d.run, d.phase, "halted", d.cause, last.cycle, limit, nil, text)
+	ctx := map[string]string{"run": d.run, "name": d.name, "verdict": "WATCHDOG-HALTED",
 		"summary": text}
 	for k, v := range conf["context"] {
 		if ctx[k] == "" {
 			ctx[k] = v
 		}
 	}
-	judge("run", c.run, d.name, "watchdog.no_progress", limit, float64(c.cycle), "notify",
+	judge("run", d.run, d.name, "watchdog.no_progress", limit, float64(last.cycle), "notify",
 		act("notify", conf, ctx))
+}
+
+// A drop that no change to code answers: the run never got going (stillborn),
+// or the process behind it went away without an ending (crash, abandoned), or
+// the orchestrator lost the runner's event stream - an agent-runner restarted,
+// a deploy recreated it, ammit was down. Each is the stand's moment, not a
+// defect, and the run is resumed from where it stopped with no fix run.
+// 2026-11-13: APF-3313's 646aaa34 was stillborn ("no heartbeat in the 139s")
+// while the agent-runner restarted; cycle 73 sent a fix run after it, which
+// blamed the disabled deploy workflow, and cycle 74 another.
+//
+// Read off the record: the cause causeOf named, and the orchestrator's own
+// ending for a broken stream (services/orchestrator/process.go), which no
+// agent writes.
+const streamBroke = "the event stream to the agent-runner broke before the run"
+
+var transientCauses = map[string]bool{"stillborn": true, "crash": true, "abandoned": true}
+
+func transientDrop(d *dropFact) bool {
+	if transientCauses[d.cause] {
+		return true
+	}
+	var summary string
+	mu.Lock()
+	db.QueryRow(`SELECT coalesce(summary,'') FROM runs WHERE run=?`, d.run).Scan(&summary)
+	mu.Unlock()
+	return strings.HasPrefix(strings.TrimSpace(summary), streamBroke)
+}
+
+// sourceOf is the run a run continues (run_start tags.resolved.source_run),
+// or "".
+func sourceOf(run string) string {
+	mu.Lock()
+	defer mu.Unlock()
+	var src string
+	_ = db.QueryRow(`SELECT coalesce((payload->'tags'->'resolved'->>'source_run'),'')
+	             FROM events WHERE run=? AND kind='run_start' ORDER BY id ASC LIMIT 1`, run).Scan(&src)
+	return src
+}
+
+// resumedTransient is whether run's drop was itself answered as transient by
+// a resume (resumeTransient), at the same phase: the run that drops now is
+// that resume, and a stand's moment that comes back at the same place is not
+// a moment. Such a drop goes to a fix cycle like any other.
+func resumedTransient(src string, d *dropFact) bool {
+	if src == "" {
+		return false
+	}
+	if _, ok := wdMeta("transient:" + src); !ok {
+		return false
+	}
+	prev, ok := dropOfRun(src)
+	return ok && prev.phase == d.phase
 }
 
 func shortRun(run string) string {
@@ -1479,6 +1633,62 @@ type prView struct {
 		Conclusion string `json:"conclusion"`
 		State      string `json:"state"`
 	} `json:"statusCheckRollup"`
+	// Present when commands.watchdog_pr asks for `files`; nil otherwise, and
+	// a PR whose files are not known is taken to need the deploy (liveOnly).
+	Files []struct {
+		Path string `json:"path"`
+	} `json:"files"`
+}
+
+// liveOnly is whether every merged PR of a cycle changes only paths the stack
+// reads live from its checkout, with no image to build: watchdog.live_paths,
+// "repo:prefix" pairs, default agentic-v-model:engine/ (the engine directory
+// is bind-mounted read-only into the runner, the orchestrator and the
+// gateway). Such a fix does not wait for a deploy; anything else - a service,
+// a Dockerfile, ammit itself, or a PR whose files the command did not list -
+// does. Read off the file list GitHub gives, never off what the fix said.
+func liveOnly(prs []prView, conf Config) bool {
+	if len(prs) == 0 {
+		return false
+	}
+	live := map[string][]string{}
+	for _, pair := range strings.Split(conf.str("watchdog", "live_paths", "agentic-v-model:engine/"), ",") {
+		repo, prefix, ok := strings.Cut(strings.TrimSpace(pair), ":")
+		if ok && repo != "" && prefix != "" {
+			live[repo] = append(live[repo], prefix)
+		}
+	}
+	for _, p := range prs {
+		repo := repoOfPR(p.URL)
+		if len(p.Files) == 0 || len(live[repo]) == 0 {
+			return false
+		}
+		for _, f := range p.Files {
+			ok := false
+			for _, prefix := range live[repo] {
+				if strings.HasPrefix(f.Path, prefix) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// repoOfPR is the repository's name in a PR url:
+// https://github.com/ngavrish/agentic-v-model/pull/1273 -> agentic-v-model.
+func repoOfPR(url string) string {
+	parts := strings.Split(strings.TrimSuffix(url, "/"), "/")
+	for i := len(parts) - 1; i > 0; i-- {
+		if parts[i] == "pull" {
+			return parts[i-1]
+		}
+	}
+	return ""
 }
 
 // ci is a PR's checks as one word: green, red or pending. No checks at all is
@@ -1639,12 +1849,10 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		wdSay(c.run, d.phase, wdFailed, d.cause, c.cycle, limit, c.prs, why)
 		judge("run", c.run, d.name, "watchdog.cycle", limit, float64(c.cycle), "failed", why)
 		// A cycle that did not reach a resume is spent; the drop is still
-		// there, so the next cycle answers the same drop - unless the last
-		// one already failed on it the same way with nothing to show.
-		if prev, same := noProgress(c, why); same {
-			haltChain(c, d, conf, limit, prev, why)
-			return
-		}
+		// there. A cycle that made a fix (a PR) and failed on its way to the
+		// stand opens the next cycle on the same drop. One that made no fix
+		// has its drop resumed instead (startCycle, sameAsFixless): another
+		// fix run on the same evidence makes nothing either.
 		startCycle(d, c.root, conf, limit)
 	}
 	since := c.entered
@@ -1846,10 +2054,64 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			}
 		}
 		if !ok {
-			if over(c, conf, "watchdog_deploy", c.mergedAt.Float64) {
-				fail("no deploy reported success after the merge within timeouts.watchdog_deploy" +
-					deploysSaid(c.mergedAt.Float64))
+			// A resume started while the cycle waits (a person's, after a
+			// pull by hand) is the cycle's resume.
+			if run := replayOf(d.name, c.run, c.started); run != "" {
+				wdMove(c.id, wdResumed, "resumed_run=?", run)
+				wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs,
+					"no deploy yet; the dropped run was resumed outside this cycle as "+run+"; the cycle follows it")
+				return
 			}
+			if !over(c, conf, "watchdog_deploy", c.mergedAt.Float64) {
+				return
+			}
+			// No deploy within timeouts.watchdog_deploy. Until 2026-11-13 the
+			// cycle failed here, the next one waited the same hour for the
+			// same deploy (awaitDeploy), and so on for as long as deploys were
+			// switched off - chain 66d7f44a from 11-11 16:04, when a person
+			// disabled the deploy workflow on purpose. A fix the stack reads
+			// live needs no deploy and the run is resumed on it; one that
+			// needs an image waits in this one cycle for the deploy that
+			// carries it, however long that is, with no next cycle and no fix
+			// run - a person's resume or a fresh run of the ticket is followed
+			// or supersedes it as on every other step.
+			waited := fmt.Sprintf("deploy_wait:%d", c.id)
+			if _, said := wdMeta(waited); said {
+				return
+			}
+			prs, err := prsOn(c.branch, conf)
+			if err == nil && liveOnly(prs, conf) {
+				if own == nil {
+					return
+				}
+				if d.phase == "" {
+					if f, err := readRunFacts(c.run); err == nil {
+						d.phase = resumeFrom(f)
+					}
+				}
+				q := queueResume(own, c, d)
+				if q == 0 {
+					return
+				}
+				wdMove(c.id, wdResumed, "resume_queue=?", q)
+				wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs, fmt.Sprintf(
+					"no deploy reported success within timeouts.watchdog_deploy%s; the fix changes only "+
+						"paths the stack reads live (watchdog.live_paths), so %s is queued to resume from %s "+
+						"without one (source run %s, queue %d)", deploysSaid(c.mergedAt.Float64), d.name,
+					orDash(d.phase), c.run, q))
+				return
+			}
+			if err != nil {
+				log.Printf("ammit: watchdog %s: %v", c.branch, err)
+				return
+			}
+			wdSetMeta(waited, wdNow())
+			text := "no deploy reported success within timeouts.watchdog_deploy" +
+				deploysSaid(c.mergedAt.Float64) + "; the fix changes what an image is built from " +
+				"(or its files are not listed), so this cycle goes on waiting for the deploy that " +
+				"carries it - no next cycle and no fix run meanwhile"
+			wdSay(c.run, d.phase, wdDeploying, d.cause, c.cycle, limit, c.prs, text)
+			judge("run", c.run, d.name, "watchdog.deploy_wait", limit, float64(c.cycle), "wait", text)
 			return
 		}
 		// The resume may already be going: a person, or the fix run itself,
