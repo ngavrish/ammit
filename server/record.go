@@ -67,6 +67,11 @@ var perKind = map[string][]string{
 	"call":     {"tool", "input", "ok", "seconds", "why", "request", "rule"},
 	"suite":    {"verdict", "total", "passed", "failed", "reason"},
 	"heal_lap": {"lap", "cap", "decision"},
+	// One junit file of a suite run, row by row: lifted into results, the
+	// one place the report and the gates read a scenario's result from.
+	// rows is [{name, classname, status, seconds, message, text}]; commit the product commit the
+	// stand was seen running; observed_at when the suite run ended.
+	"result": {"ticket", "feature", "suite", "file", "commit", "observed_at", "rows"},
 	// A number from limits.yml the runner applied on its own: the key, the
 	// number, what met it and what the runner did. Lifted into judgements so
 	// a limit the runner enforces is in the same record as one ammit does.

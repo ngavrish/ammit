@@ -33,6 +33,8 @@ func lift(id int64, at float64, e event) {
 		      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
 			id, at, e.s("run"), e.s("branch"), e.s("verdict"), e.opt("total"), e.opt("passed"),
 			e.opt("failed"), e.s("reason"))
+	case "result":
+		liftResults(id, at, e)
 	case "heal_lap":
 		execSQL(`INSERT INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
 		      VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
@@ -47,6 +49,32 @@ func lift(id int64, at float64, e event) {
 	case "limit":
 		judgeRunnerLimit(e)
 	}
+}
+
+// liftResults makes one results row per scenario of a result event.
+func liftResults(id int64, at float64, e event) {
+	rows, _ := e["rows"].([]any)
+	for i, raw := range rows {
+		r, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		row := event(r)
+		execSQL(`INSERT INTO results (event_id, idx, at, run, ticket, phase, branch, feature, suite,
+		        file, name, classname, status, message, text, seconds, product_commit, observed_at)
+		      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+			id, int64(i), at, e.s("run"), e.s("ticket"), e.s("phase"), e.s("branch"), e.s("feature"),
+			e.s("suite"), e.s("file"), row.s("name"), row.s("classname"), row.s("status"), row.s("message"), row.s("text"),
+			row.optf("seconds"), e.s("commit"), e.optf("observed_at"))
+	}
+}
+
+// optf is a real number the event may not carry: NULL when absent.
+func (e event) optf(key string) any {
+	if _, ok := e[key]; !ok {
+		return nil
+	}
+	return e.f(key)
 }
 
 // judgeRunnerLimit writes down a limit the runner applied itself.
@@ -121,6 +149,20 @@ func liftHistory() {
 		        'from the phase text: ' || substr(substr(` + text + `, strpos(` + text + `,'SUITE ')), 1, 120)
 		 FROM events WHERE kind='phase_end' AND payload->>'phase'='branchrun'
 		   AND run NOT IN (SELECT run FROM events WHERE kind='suite')
+		 ON CONFLICT DO NOTHING`,
+		// A result event whose rows were not lifted when it landed (the lift
+		// is best-effort): every row, once.
+		`INSERT INTO results (event_id, idx, at, run, ticket, phase, branch, feature, suite,
+		        file, name, classname, status, message, text, seconds, product_commit, observed_at)
+		 SELECT e.id, r.ord - 1, e.at, e.run, coalesce(e.payload->>'ticket',''), coalesce(e.phase,''),
+		        coalesce(e.branch,''), coalesce(e.payload->>'feature',''), coalesce(e.payload->>'suite',''),
+		        coalesce(e.payload->>'file',''), coalesce(r.v->>'name',''), coalesce(r.v->>'classname',''),
+		        coalesce(r.v->>'status',''),
+		        coalesce(r.v->>'message',''), coalesce(r.v->>'text',''), jnum(r.v->'seconds'),
+		        coalesce(e.payload->>'commit',''),
+		        jnum(e.payload->'observed_at')
+		 FROM events e, jsonb_array_elements(e.payload->'rows') WITH ORDINALITY AS r(v, ord)
+		 WHERE e.kind='result' AND jsonb_typeof(e.payload->'rows') = 'array'
 		 ON CONFLICT DO NOTHING`,
 		`INSERT INTO heal_laps (event_id, at, run, branch, phase, lap, cap, decision)
 		 SELECT id, at, run, coalesce(payload->>'branch',''), phase,

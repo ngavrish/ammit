@@ -127,6 +127,10 @@ func migrate() error {
 		// folded and cut short, and on run 4314fb3c it counted a call the
 		// guard had read differently. One judge, recorded once.
 		`ALTER TABLE calls ADD COLUMN IF NOT EXISTS adhoc bigint`,
+		// The junit classname of a result row: the evidence gate joins a
+		// row to its stored evidence by (name, classname).
+		`ALTER TABLE results ADD COLUMN IF NOT EXISTS classname TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE results ADD COLUMN IF NOT EXISTS seconds double precision`,
 	} {
 		if _, err := conn.ExecContext(ctx, add); err != nil {
 			return fmt.Errorf("%s: %w", add, err)

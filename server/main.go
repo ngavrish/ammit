@@ -174,6 +174,37 @@ CREATE TABLE IF NOT EXISTS suites (
 );
 CREATE INDEX IF NOT EXISTS suites_run ON suites (run, branch, at);
 
+-- One row per scenario a suite run observed: the result itself, with whose
+-- it is - the run, the phase and the branch that ran it - and the product
+-- commit it was observed on. The report and the gates read results from here
+-- and nowhere else. Until 2026-11-13 they read junit files out of the
+-- ticket's run directory, which every run of the ticket and every repair
+-- shared: run 2335a471's foldfix ran the folded suite to check its repair,
+-- its junit stayed behind, and the resume 9b8509c9 counted it as the
+-- ticket's result - ten rows no verdict session had seen, and the run BLOCKED.
+CREATE TABLE IF NOT EXISTS results (
+    event_id       bigint NOT NULL,
+    idx            bigint NOT NULL,   -- the row's place in its event
+    at             double precision NOT NULL,
+    run            TEXT,
+    ticket         TEXT NOT NULL DEFAULT '',
+    phase          TEXT NOT NULL DEFAULT '',
+    branch         TEXT NOT NULL DEFAULT '',
+    feature        TEXT NOT NULL DEFAULT '',  -- the feature file's stem
+    suite          TEXT NOT NULL DEFAULT '',  -- the junit testsuite name
+    file           TEXT NOT NULL DEFAULT '',  -- the junit file it came from, for a person
+    name           TEXT NOT NULL,             -- the junit testcase name
+    classname      TEXT NOT NULL DEFAULT '',  -- the junit testcase classname
+    status         TEXT NOT NULL,             -- passed | failed | skipped
+    message        TEXT NOT NULL DEFAULT '',  -- the failure's message
+    text           TEXT NOT NULL DEFAULT '',  -- the testcase's whole text, as behave wrote it
+    seconds        double precision,          -- the testcase's own time
+    product_commit TEXT NOT NULL DEFAULT '',
+    observed_at    double precision,
+    PRIMARY KEY (event_id, idx)
+);
+CREATE INDEX IF NOT EXISTS results_run ON results (run, observed_at);
+
 CREATE TABLE IF NOT EXISTS heal_laps (
     event_id bigint PRIMARY KEY,
     at       double precision NOT NULL,
