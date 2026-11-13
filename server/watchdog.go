@@ -1691,6 +1691,81 @@ func repoOfPR(url string) string {
 	return ""
 }
 
+// ownerRepoOfPR is "owner/name" in a PR url:
+// https://github.com/ngavrish/agentic-v-model/pull/1273 -> ngavrish/agentic-v-model.
+func ownerRepoOfPR(url string) string {
+	parts := strings.Split(strings.TrimSuffix(url, "/"), "/")
+	for i := len(parts) - 1; i > 1; i-- {
+		if parts[i] == "pull" {
+			return parts[i-2] + "/" + parts[i-1]
+		}
+	}
+	return ""
+}
+
+// defaultLiveCheck is commands.watchdog_live when limits.yml names none: in
+// the worker, every file the merge changed under a live path is compared, as
+// a git blob, with the same path where the stack mounts it (engine/x is
+// /engine/x): it is carried when it is the merge's blob, or the default
+// branch's now (a later merge changed the file again and the checkout was
+// pulled past both). A file the merge deleted is carried when it is absent.
+// Exit 0 is "the live tree carries the merge"; anything else, with the first
+// file that differs on stdout, is "not yet".
+const defaultLiveCheck = `docker exec {worker} python3 /engine/tools/stand_env.py --exec sh -c ` +
+	`'for f in {files}; do ` +
+	`want=$(gh api --hostname github.com "repos/{repo}/contents/$f?ref={merge}" --jq .sha 2>/dev/null) || want=; ` +
+	`now=$(gh api --hostname github.com "repos/{repo}/contents/$f" --jq .sha 2>/dev/null) || now=; ` +
+	`have=$(git hash-object "/$f" 2>/dev/null) || have=; ` +
+	`[ "$want" = "$have" ] || [ -n "$have" -a "$now" = "$have" ] || ` +
+	`{ echo "/$f is blob [$have], the merge has [$want]"; exit 1; }; done'`
+
+// liveCarries is "" when the stack's live tree holds every merged PR's
+// changes under watchdog.live_paths, else why not. liveOnly says a fix needs
+// no image; it does not say the checkout the stack mounts was moved to the
+// merge, and with no deploy nothing moves it but a pull by hand (chiron-actions
+// host/deploy-check.sh). Run 394ca4d9 was resumed onto a tree without
+// agentic-v-model#1284 and dropped on the very gate #1284 fixed (chain
+// 66d7f44a, cycle 75). commands.watchdog_live overrides defaultLiveCheck with
+// the same holes: {repo} owner/name, {merge} the merge commit, {files} the
+// changed paths, space-separated.
+func liveCarries(prs []prView, conf Config) string {
+	live := map[string][]string{}
+	for _, pair := range strings.Split(conf.str("watchdog", "live_paths", "agentic-v-model:engine/"), ",") {
+		repo, prefix, ok := strings.Cut(strings.TrimSpace(pair), ":")
+		if ok && repo != "" && prefix != "" {
+			live[repo] = append(live[repo], prefix)
+		}
+	}
+	tmpl := conf.str("commands", "watchdog_live", defaultLiveCheck)
+	for _, p := range prs {
+		if p.MergeCommit == nil || p.MergeCommit.Oid == "" {
+			return p.URL + " names no merge commit"
+		}
+		var files []string
+		for _, f := range p.Files {
+			for _, prefix := range live[repoOfPR(p.URL)] {
+				if strings.HasPrefix(f.Path, prefix) {
+					files = append(files, f.Path)
+					break
+				}
+			}
+		}
+		if len(files) == 0 {
+			continue
+		}
+		out, err := commandFrom("watchdog_live", tmpl, conf, map[string]string{
+			"repo": ownerRepoOfPR(p.URL), "merge": p.MergeCommit.Oid, "files": strings.Join(files, " ")})
+		if err != nil {
+			said := strings.TrimSpace(out)
+			if said == "" {
+				said = err.Error()
+			}
+			return p.URL + " at " + p.MergeCommit.Oid + ": " + said
+		}
+	}
+	return ""
+}
+
 // ci is a PR's checks as one word: green, red or pending. No checks at all is
 // pending: a PR that nothing has checked is not a PR anything has proved.
 func (p prView) ci() string {
@@ -1729,7 +1804,12 @@ func (p prView) ci() string {
 // act() keeps 200 bytes of an answer for the judgement line; a PR listing is
 // data, and data cut at 200 bytes is not JSON.
 func command(name string, conf Config, ctx map[string]string) (string, error) {
-	tmpl := conf.str("commands", name, "")
+	return commandFrom(name, conf.str("commands", name, ""), conf, ctx)
+}
+
+// commandFrom is command with the template given: the one limits.yml names,
+// or the caller's default when it names none.
+func commandFrom(name, tmpl string, conf Config, ctx map[string]string) (string, error) {
 	if tmpl == "" {
 		return "", errors.New("no command named " + name)
 	}
@@ -2082,6 +2162,25 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			prs, err := prsOn(c.branch, conf)
 			if err == nil && liveOnly(prs, conf) {
 				if own == nil {
+					return
+				}
+				// Live once the checkout is at the merge - and with no deploy,
+				// nothing has moved it there but a pull by hand. Asked, not
+				// assumed: cycle 75 of chain 66d7f44a resumed run 394ca4d9
+				// onto an /engine still without agentic-v-model#1284, which it
+				// dropped on again exactly as before.
+				if why := liveCarries(prs, conf); why != "" {
+					key := fmt.Sprintf("live_wait:%d", c.id)
+					if _, said := wdMeta(key); !said {
+						wdSetMeta(key, wdNow())
+						text := "no deploy reported success within timeouts.watchdog_deploy" +
+							deploysSaid(c.mergedAt.Float64) + "; the fix changes only paths the stack " +
+							"reads live (watchdog.live_paths), but the live tree does not carry it yet (" +
+							why + "), so this cycle waits for it - no resume onto a tree without the fix, " +
+							"no next cycle and no fix run meanwhile"
+						wdSay(c.run, d.phase, wdDeploying, d.cause, c.cycle, limit, c.prs, text)
+						judge("run", c.run, d.name, "watchdog.live_wait", limit, float64(c.cycle), "wait", text)
+					}
 					return
 				}
 				if d.phase == "" {
