@@ -764,6 +764,83 @@ func waitingOn(run string, conf Config) (quiet, limit float64, rule, phase strin
 	return quiet, limit, rule, phase, quiet > limit
 }
 
+// treeQueueNote is what the runner says, every runner.tree_wait_note_seconds,
+// while a run is queued behind another ticket for the one working tree:
+// "waiting for the working tree (65m) — APF-3499 has it".
+const treeQueueNote = "waiting for the working tree"
+
+// treeHolderOf is the ticket a tree-queue note names as holding the tree, or ""
+// when the note is not one or names nobody in particular ("another ticket").
+func treeHolderOf(text string) string {
+	if !strings.HasPrefix(text, treeQueueNote) {
+		return ""
+	}
+	_, rest, ok := strings.Cut(text, " — ")
+	if !ok {
+		return ""
+	}
+	name, ok := strings.CutSuffix(strings.TrimSpace(rest), " has it")
+	name = strings.TrimSpace(name)
+	if !ok || name == "" || name == "another ticket" || strings.ContainsAny(name, " \n") {
+		return ""
+	}
+	return name
+}
+
+// queuedBehind says whether a quiet run is quiet because it is queued for the
+// working tree behind another open run that is itself making progress, and
+// names that run.
+//
+// One tree, one run in it at a time: the runner queues the second ticket behind
+// the first by design and bounds that queue itself at the holder's lease
+// (runner.tree_wait_slack_seconds -> TreeNeverFreed). Judging the queue against
+// limits.wait as if it were a hang stopped a run that was waiting its turn: run
+// 362a2ae2 (APF-3313) sat 65 minutes behind e9b2695c (APF-3499), which had a
+// phase_end, gate or call every few minutes the whole time and ended on its own
+// at 20:35, and was stopped at 3604s against limits.wait = 3600
+// (WD-66d7f44a-83).
+//
+// Nothing judged is lowered; the judgement moves to where the wait is. The
+// holder is judged by the same limit, and the moment it is quiet past its own,
+// finished, or not open at all, this answers false and the queued run is judged
+// on its own silence, which by then is already past the limit.
+func queuedBehind(run string, conf Config) (string, bool) {
+	mu.Lock()
+	var text string
+	var at float64
+	err := db.QueryRowContext(bg, `SELECT coalesce((payload->>'text'),''), at FROM events
+	                    WHERE run=? AND kind='note'
+	                      AND (payload->>'text') LIKE ?
+	                    ORDER BY at DESC LIMIT 1`,
+		run, treeQueueNote+"%").Scan(&text, &at)
+	mu.Unlock()
+	// A record that cannot be read is no reason to spare a quiet run.
+	if err != nil {
+		return "", false
+	}
+	// Queueing now, not a queue it left long ago: the runner says so every
+	// runner.tree_wait_note_seconds, so the newest note is within the limit.
+	// The run is quiet past that same limit, so a note this fresh is also
+	// newer than its last progress event.
+	limit, ok := conf.num("limits", "wait")
+	if !ok || limit <= 0 || wdNow()-at > limit {
+		return "", false
+	}
+	name := treeHolderOf(text)
+	if name == "" {
+		return "", false
+	}
+	for _, o := range openRuns() {
+		if o.run == run || o.name != name {
+			continue
+		}
+		if _, _, _, _, stuck := waitingOn(o.run, conf); !stuck {
+			return o.name + " (run " + o.run + ")", true
+		}
+	}
+	return "", false
+}
+
 // ---- the record ----------------------------------------------------------
 
 func wdMeta(name string) (float64, bool) {
@@ -1049,6 +1126,11 @@ func watchWaiting(conf Config, limit float64) {
 		}
 		quiet, against, rule, phase, waiting := waitingOn(r.run, conf)
 		if !waiting {
+			continue
+		}
+		if holder, ok := queuedBehind(r.run, conf); ok {
+			log.Printf("ammit: watchdog %s quiet %.0fs, queued for the working tree behind %s, "+
+				"which is getting on with it: the holder is judged, not the queue", r.run, quiet, holder)
 			continue
 		}
 		f, err := readRunFacts(r.run)
