@@ -1110,6 +1110,15 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 				"no fix is queued - code does not change a network")
 		return
 	}
+	// The product's corporate names stopped resolving and still do not: the
+	// VPN, which the runner waited on and no code brings back (productDNSDown).
+	// Recorded like a refused network; the keeper resumes the run as before.
+	if productDNSDown(d) {
+		wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
+			"the product's hosts do not resolve ("+strings.Join(productDNSHosts(d.run), ", ")+
+				", VPN down?); no fix is queued - code does not change a network")
+		return
+	}
 	// A chain stopped by its ticket budget is not broken code, so no fix is
 	// queued: it continues from the phase it stopped in on a budget of its own
 	// (fresh_budget), the person's rule of 2026-10-31 - the hours a chain lost
