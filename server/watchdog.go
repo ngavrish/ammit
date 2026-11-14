@@ -2138,6 +2138,10 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			wdMergeAsked[p.URL] = wdNow()
 			out := act("watchdog_merge", conf, map[string]string{"pr": p.URL, "run": c.run,
 				"name": d.name})
+			if mergeConflict(out) {
+				answerConflict(c, d, conf, limit, p.URL, out, urls, fail)
+				return
+			}
 			said = append(said, p.URL+": "+out)
 		}
 		wdMove(c.id, wdMerging, "prs=?", jsonList(urls))
@@ -2175,6 +2179,10 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 					wdMergeAsked[p.URL] = wdNow()
 					out := act("watchdog_merge", conf, map[string]string{"pr": p.URL,
 						"run": c.run, "name": d.name})
+					if mergeConflict(out) {
+						answerConflict(c, d, conf, limit, p.URL, out, urlsOf(prs), fail)
+						return
+					}
 					wdSay(c.run, d.phase, wdMerging, d.cause, c.cycle, limit, c.prs,
 						"still open and green; merge asked again: "+p.URL+": "+out)
 				}
@@ -2804,4 +2812,53 @@ func networkRefused(d *dropFact) bool {
 		d.run, "%"+refusal+"%").Scan(&n)
 	mu.Unlock()
 	return n > 0
+}
+
+// mergeConflict says whether a merge was refused because the PR's branch no
+// longer merges into main - asking again cannot change that.
+func mergeConflict(out string) bool {
+	low := strings.ToLower(out)
+	for _, w := range []string{"not mergeable", "cannot be cleanly created", "merge conflict", "conflicting"} {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// answerConflict answers a merge refused for a conflict: the PR's branch is
+// updated from main (commands.watchdog_update_branch) and the cycle goes back
+// to waiting for its checks; when that does not go, the PR is closed
+// (commands.watchdog_close_pr) and the cycle fails into the next one, which
+// fixes the drop again on today's main.
+//
+// It used to ask the same merge again every wdMergeEvery: 2026-11-14,
+// APF-3499's cycle 649 had PR #1299 refused at 09:11:58 ("not mergeable: the
+// merge commit cannot be cleanly created"), asked again at 09:17 and 09:22,
+// and failed as "still not merged"; the fix went in only as cycle 2's #1301
+// at 10:20, after two more runs dropped on the bug.
+func answerConflict(c wdCycle, d *dropFact, conf Config, limit float64, pr, out string,
+	urls []string, fail func(string)) {
+	ctx := map[string]string{"pr": pr, "run": c.run, "name": d.name}
+	upd := act("watchdog_update_branch", conf, ctx)
+	if !commandWent(upd) || mergeConflict(upd) {
+		closed := act("watchdog_close_pr", conf, ctx)
+		fail("merge conflict on " + pr + " (" + out + "); updating it from main did not go (" +
+			upd + "); closed it (" + closed + "): the next cycle fixes the drop on today's main")
+		return
+	}
+	delete(wdMergeAsked, pr)
+	wdMove(c.id, wdCI, "prs=?", jsonList(urls))
+	wdSay(c.run, d.phase, wdCI, d.cause, c.cycle, limit, urls,
+		"merge conflict on "+pr+"; its branch was updated from main ("+upd+"), its checks are read again")
+}
+
+// commandWent says whether act ran its command and the command succeeded.
+func commandWent(out string) bool {
+	for _, p := range []string{"failed", "no command named", "refused", "[hands off]", "[dry run]", "closed: "} {
+		if strings.HasPrefix(out, p) {
+			return false
+		}
+	}
+	return true
 }

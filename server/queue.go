@@ -181,6 +181,22 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 		_ = rows.Err() // a cut-off read is the shorter answer it always was
 		rows.Close()
 	}
+	// A resume of a ticket whose fix is not on the stand yet waits for it. A
+	// person's resume taken as a fix cycle's resume (personResume) is the
+	// cycle's to start once it is deployed (stepCycle, wdDeploying: "a
+	// person's resume ... is already queued and is the cycle's resume"), and
+	// nothing held it: 2026-11-14, APF-3499's queue row 5667 was taken as the
+	// resume of fix action 2970 at 09:11:29 while cycle 649's PR #1299 was
+	// still unmerged, started at 09:11:34, and runs 729a8369 and 17ddf386
+	// dropped on the bug #1299 fixed.
+	unfixed := map[int64]string{}
+	for _, it := range waiting {
+		if strings.Contains(it.payload, `"rerun":"resume"`) {
+			if why := fixNotOnStand(it.name); why != "" {
+				unfixed[it.id] = why
+			}
+		}
+	}
 	// Not into a deploy that is going or waiting (deploys.go, deployClear):
 	// the item stays waiting, rather than being started, refused by the
 	// orchestrator, and left running with no run behind it. The deploy
@@ -208,6 +224,10 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	var id int64
 	var name, payload, stand string
 	for _, it := range waiting {
+		if why := unfixed[it.id]; why != "" {
+			sayHeldForFix(it.id, it.name, why)
+			continue
+		}
 		switch standOf(it.payload) {
 		case "local":
 			if hostFree {
@@ -393,4 +413,32 @@ func leaseHeld(name string) bool {
 	db.QueryRow(`SELECT count(*) FROM leases WHERE name=? AND expires > ?`,
 		name, float64(time.Now().UnixNano())/1e9).Scan(&n)
 	return n > 0
+}
+
+// fixNotOnStand names the open fix of this ticket whose cycle has not reached
+// its resume - fixing, in CI, merging or waiting on its deploy - or "". The
+// caller holds mu.
+func fixNotOnStand(ticket string) string {
+	var action, cycle int64
+	var state string
+	if db.QueryRow(`SELECT a.id, c.id, c.state FROM ticket_actions a
+	                  JOIN watchdog_cycles c ON c.id = a.cycle_id
+	                 WHERE a.ticket=? AND a.state='open' AND a.kind=?
+	                   AND c.state IN (?,?,?,?)`,
+		ticket, actFix, wdFixing, wdCI, wdMerging, wdDeploying).Scan(&action, &cycle, &state) != nil {
+		return ""
+	}
+	return fmt.Sprintf("fix action %d (watchdog cycle %d) is %s: its fix is not on the stand yet", action, cycle, state)
+}
+
+// heldForFixSaid keeps the hold line to one per queue row. Only pumpQueue
+// touches it, from the one main loop.
+var heldForFixSaid = map[int64]bool{}
+
+func sayHeldForFix(id int64, name, why string) {
+	if heldForFixSaid[id] {
+		return
+	}
+	heldForFixSaid[id] = true
+	log.Printf("ammit: queue row %d (%s) waits: %s", id, name, why)
 }

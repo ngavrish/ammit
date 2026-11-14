@@ -185,6 +185,12 @@ commands:
     sh -c 'for r in my-org/pipeline my-org/ammit; do gh pr list -R $r --head {branch}
     --state all --json url,state,mergedAt,mergeCommit,statusCheckRollup,files; done'
   watchdog_merge: gh pr merge {pr} --squash --delete-branch
+  # A merge refused for a conflict is not asked again: watchdog_update_branch
+  # brings {pr}'s branch up to main and the cycle reads its checks again; when
+  # that does not go, watchdog_close_pr closes {pr} and the next cycle fixes
+  # the drop on today's main. Unset, a conflict fails the cycle into the next.
+  watchdog_update_branch: gh pr update-branch {pr}
+  watchdog_close_pr: gh pr close {pr} --comment "Closed by the drop watchdog - it no longer merges into main; the next cycle fixes the drop again."
 
 context:
   worker: my-pipeline-worker-1
