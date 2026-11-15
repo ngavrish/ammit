@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -754,6 +755,60 @@ func chainStart(run string, started float64) (string, float64) {
 		root, started = src, at
 	}
 	return root, started
+}
+
+// outageSummaries are how a run says it stopped for want of the outside
+// world - the VPN, the product's hosts - before it read or tested anything.
+// Such a run spent none of the ticket's budget; one an outage cut off after
+// it worked (a transient API error mid-phase) counts what it worked.
+var outageSummaries = []string{"Nothing was read or tested"}
+
+func outageRun(summary string) bool {
+	for _, s := range outageSummaries {
+		if strings.Contains(summary, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// chainSpent is the time the ticket's chain of runs worked: each run's own
+// span, the live one up to now, summed - never the wall clock since the chain
+// began. The clock counted the gaps between runs and the hours runs sat waiting
+// for the VPN: APF-3499's chain (2026-11-14/15) was stopped at 24.3h "over its
+// four-hour budget" after fourteen runs had each waited an hour for
+// github.twdcgrid.net and tested nothing. A run that ended on an outage counts
+// nothing. Walks the same links chainStart does.
+func chainSpent(run string, started float64) (string, float64) {
+	root, spent := run, nowWall()-started
+	for hop := 0; hop < 64; hop++ {
+		if freshBudget(root) {
+			return root, spent
+		}
+		var src string
+		mu.Lock()
+		db.QueryRow(`SELECT coalesce((payload->'tags'->'resolved'->>'source_run'),'')
+		             FROM events WHERE run=? AND kind='run_start' ORDER BY id ASC LIMIT 1`,
+			root).Scan(&src)
+		if src == "" || src == root {
+			mu.Unlock()
+			return root, spent
+		}
+		var began float64
+		var ended sql.NullFloat64
+		var summary sql.NullString
+		err := db.QueryRow(`SELECT started, finished, summary FROM runs WHERE run=?`, src).
+			Scan(&began, &ended, &summary)
+		mu.Unlock()
+		if err != nil {
+			return root, spent
+		}
+		if ended.Valid && ended.Float64 > began && !outageRun(summary.String) {
+			spent += ended.Float64 - began
+		}
+		root = src
+	}
+	return root, spent
 }
 
 // freshBudget is a run whose queue row asked for a budget of its own.

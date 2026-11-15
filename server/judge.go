@@ -579,11 +579,12 @@ func weigh(conf Config) {
 		// timeouts.run: a regression is the whole suite, hours past a
 		// ticket's four (timeouts.ticket.regression).
 		if limit, ok := conf.numFor("timeouts", "ticket", mode); ok && limit > 0 && !strings.HasPrefix(r.name, "WD-") {
-			root, began := chainStart(r.run, r.started)
+			_, began := chainStart(r.run, r.started)
+			root, spent := chainSpent(r.run, r.started)
 			// timeouts.ticket_since: chains that began before the limit was
 			// switched on finish under the terms they started with.
 			since, _ := conf.num("timeouts", "ticket_since")
-			if spent := nowWall() - began; began >= since && spent > limit {
+			if began >= since && spent > limit {
 				// The row is not the run. Closing it alone left the process
 				// working on: run f69603e4 of APF-3122 (2026-10-27) was closed
 				// over budget and its host step went on, and the stand answered
@@ -591,7 +592,7 @@ func weigh(conf Config) {
 				judge("run", r.run, r.name, TicketBudgetRule, limit, spent, "stop_run",
 					"the ticket's chain is over its budget: "+act("stop_run", conf, ctx))
 				finish(r.run, "BLOCKED", fmt.Sprintf(
-					"ammit: %s is over its ticket budget - %.1fh since its chain began with run %s, "+
+					"ammit: %s is over its ticket budget - %.1fh worked by its chain of runs from run %s, "+
 						"against timeouts.ticket = %.1fh. More time is a person's decision",
 					r.name, spent/3600, shortRun(root), limit/3600))
 				continue
