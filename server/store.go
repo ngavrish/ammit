@@ -105,10 +105,32 @@ func store(e event) {
 		// directory the ticket's NEXT run was nine minutes into using — a dead
 		// run's verdict killed the live one. A run that was still open when
 		// its ticket started over was not going to finish; say so and close it.
+		// Closing the row did not stop the process: run bb5b761b of APF-3499
+		// (2026-11-16), superseded 45 s after it began, worked on in the
+		// stack's runner for four hours until timeouts.run cancelled it, and
+		// fcd2628f went on on the host after a resume took its place - two
+		// runs of one ticket on one machine. A stop names its run in .cancel
+		// now, and every run has its own directory, so the stop the comment
+		// above feared reaches only the run it names.
+		var superseded []string
+		if rows, err := db.Query(`SELECT run FROM runs WHERE name=? AND run<>? AND finished IS NULL`,
+			e.s("name"), e.s("run")); err == nil {
+			for rows.Next() {
+				var old string
+				if rows.Scan(&old) == nil {
+					superseded = append(superseded, old)
+				}
+			}
+			_ = rows.Err() // a cut-off read stops fewer runs, never the wrong one
+			rows.Close()
+		}
 		db.Exec(`UPDATE runs SET finished=?, verdict='BLOCKED',
 		         summary='superseded: a newer run of this ticket started'
 		         WHERE name=? AND run<>? AND finished IS NULL`,
 			at, e.s("name"), e.s("run"))
+		if len(superseded) > 0 {
+			go stopSuperseded(e.s("name"), superseded)
+		}
 		// An upsert of the two fields this event knows, not a REPLACE of the
 		// row: any event may create a run's row and the money and the turns
 		// start piling into it at once, so a run_start that put the row back
@@ -203,5 +225,21 @@ func store(e event) {
 			e.f("usd"), e.s("run"))
 	case "turn":
 		db.Exec(`UPDATE runs SET turns = coalesce(turns,0) + 1 WHERE run=?`, e.s("run"))
+	}
+}
+
+// stopSuperseded stops the processes of runs a newer run of their ticket
+// replaced, each by its own run id (stop_run, or the host's stopper for a run
+// of the host stand - act decides).
+func stopSuperseded(name string, runs []string) {
+	conf := loadConfig(env("AMMIT_CONFIG", "/config/limits.yml"))
+	for _, old := range runs {
+		ctx := map[string]string{"run": old, "name": name}
+		for k, v := range conf["context"] {
+			if ctx[k] == "" {
+				ctx[k] = v
+			}
+		}
+		log.Printf("ammit: superseded run %s of %s stopped: %s", shortRun(old), name, act("stop_run", conf, ctx))
 	}
 }
