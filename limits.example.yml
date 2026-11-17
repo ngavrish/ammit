@@ -141,6 +141,14 @@ actions:
 # {run}, {name}, {phase}, {agent}, {session} and anything under `context` are
 # substituted before the command runs.
 commands:
+  # The reporter's message (reporter.go): {text} is single-quoted, so the
+  # shell takes it as it is; the bot, chat and topic come from ammit's own
+  # environment (deploy/ammit-reporter.env), never from this file, which
+  # GET /limits.yml serves.
+  report_status: >-
+    curl -sS --fail https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage
+    -d chat_id=$TELEGRAM_CHAT_ID -d message_thread_id=$TELEGRAM_THREAD_ID
+    --data-urlencode 'text={text}' -o /dev/null
   warn: /bin/true
   # Kill switches the runner checks between messages: it stops where nothing is
   # half-done, rather than being shot mid-tool-call. Removing the lock file was
@@ -219,3 +227,10 @@ watchdog:
   # timeouts.watchdog_deploy has passed with no deploy, instead of waiting for
   # one. Needs `files` in commands.watchdog_pr. Default agentic-v-model:engine/.
   live_paths: pipeline:engine/
+
+# The watchdog that only speaks: every every_s seconds one message with every
+# active ticket (an open run, a stop within recent_s, a moving watchdog cycle).
+reporter:
+  enabled: true
+  every_s: 600
+  recent_s: 43200
