@@ -131,6 +131,12 @@ func migrate() error {
 		// row to its stored evidence by (name, classname).
 		`ALTER TABLE results ADD COLUMN IF NOT EXISTS classname TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE results ADD COLUMN IF NOT EXISTS seconds double precision`,
+		// The member whose hand a judgement is, from the control plane
+		// (hands.go); NULL for every judgement of ammit's own and every hand
+		// that named nobody.
+		`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS member TEXT`,
+		`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS member_name TEXT`,
+		`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS via TEXT`,
 	} {
 		if _, err := conn.ExecContext(ctx, add); err != nil {
 			return fmt.Errorf("%s: %w", add, err)

@@ -831,6 +831,12 @@ func main() {
 		// A resume goes through ticket_actions; a person's is always queued,
 		// and replaces or joins what holds the ticket (actions.go).
 		id, said := queueByRequest(in.Name, string(payload))
+		// A member's start (hands.go) is a hand on the record; any other
+		// queueing writes what it always wrote.
+		if who := memberOf(r); who != nil {
+			judgeBy(who, "hand", "", in.Name, "hand.start_run", 0, 0, "start_run",
+				fmt.Sprintf("queued %d", id))
+		}
 		reply := map[string]any{"queued": in.Name, "id": id}
 		if said != "" {
 			reply["action"] = said
@@ -1040,6 +1046,8 @@ func main() {
 	// or a CLI can never do anything the config did not spell out, and every
 	// pull is a judgement row with scope "hand": a stop ordered in
 	// conversation reads in the record exactly like one a limit ordered.
+	// A member's approval the orchestrator decided, on the record (hands.go).
+	mux.HandleFunc("POST /hand", postHand)
 	mux.HandleFunc("POST /act", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Command string `json:"command"`
@@ -1079,6 +1087,7 @@ func main() {
 				ctx[key] = value
 			}
 		}
+		hand := memberOf(r)
 		if personCommands[in.Command] {
 			if who := runnerCaller(r); who != "" {
 				judge("hand", in.Run, in.Name, "hand."+in.Command, 0, 0, in.Command,
@@ -1097,7 +1106,7 @@ func main() {
 		// A stop ordered here is a person's ticket action (actions.go).
 		ctx[actionOwner] = "person"
 		outcome := act(in.Command, conf, ctx)
-		judge("hand", in.Run, in.Name, "hand."+in.Command, 0, 0, in.Command, outcome)
+		judgeBy(hand, "hand", in.Run, in.Name, "hand."+in.Command, 0, 0, in.Command, outcome)
 		writeJSON(w, http.StatusOK, map[string]string{"outcome": outcome})
 	})
 
@@ -1559,6 +1568,11 @@ func archive(conf Config) {
 		`CREATE TABLE IF NOT EXISTS archive.runs (LIKE public.runs)`,
 		`CREATE TABLE IF NOT EXISTS archive.events (LIKE public.events)`,
 		`CREATE TABLE IF NOT EXISTS archive.judgements (LIKE public.judgements)`,
+		// An archive made before judgements had them gets them in the same
+		// order, so SELECT * still lines up.
+		`ALTER TABLE archive.judgements ADD COLUMN IF NOT EXISTS member TEXT`,
+		`ALTER TABLE archive.judgements ADD COLUMN IF NOT EXISTS member_name TEXT`,
+		`ALTER TABLE archive.judgements ADD COLUMN IF NOT EXISTS via TEXT`,
 		`CREATE TABLE IF NOT EXISTS archive.limits (LIKE public.limits)`,
 		`CREATE INDEX IF NOT EXISTS archive_events_run ON archive.events (run, at)`,
 	} {

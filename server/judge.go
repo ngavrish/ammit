@@ -71,11 +71,24 @@ func escalated(conf Config, rule string, threshold, observed float64,
 
 func judge(scope, run, subject, rule string, threshold, observed float64,
 	action, outcome string) {
+	judgeBy(nil, scope, run, subject, rule, threshold, observed, action, outcome)
+}
+
+// judgeBy is judge with the member whose hand it was (hands.go); nil is none.
+func judgeBy(who *handWho, scope, run, subject, rule string, threshold, observed float64,
+	action, outcome string) {
+	var member, name, via any
+	if who != nil {
+		member, name, via = who.email, who.name, who.via
+		if name == "" {
+			name = nil
+		}
+	}
 	mu.Lock()
 	db.Exec(`INSERT INTO judgements (at, run, scope, subject, rule, threshold,
-	         observed, action, outcome) VALUES (?,?,?,?,?,?,?,?,?)`,
+	         observed, action, outcome, member, member_name, via) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		float64(time.Now().UnixNano())/1e9, run, scope, subject, rule, threshold,
-		observed, action, outcome)
+		observed, action, outcome, member, name, via)
 	mu.Unlock()
 	// WARN is called out, because a warning is the only judgement that changes
 	// nothing: the run carries on, and if the line reads like every other line
@@ -86,8 +99,12 @@ func judge(scope, run, subject, rule string, threshold, observed float64,
 	if action == "warn" {
 		mark = "ammit WARN"
 	}
-	log.Printf("%s: %s — %.0f against %.0f on %s %s -> %s %s",
-		mark, rule, observed, threshold, orDash(run), subject, action, outcome)
+	by := ""
+	if who != nil {
+		by = " (by " + who.String() + ")"
+	}
+	log.Printf("%s: %s — %.0f against %.0f on %s %s -> %s %s%s",
+		mark, rule, observed, threshold, orDash(run), subject, action, outcome, by)
 }
 
 func orDash(s string) string {
