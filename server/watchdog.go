@@ -1319,6 +1319,17 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 	// fix and this is the drop it answered, not yet resumed: resume it. Its
 	// resume dropped the same way: nothing new to fix, said once.
 	if last, same := sameAsFixless(root, d); same {
+		// A red gate whose repair named its cause is the same red on every
+		// resume: the code that refused is unchanged. Resuming it anyway is a
+		// run spent to learn nothing - APF-3253 (2026-11-18): datatrace red on
+		// "0 of 10 declared pipelines", two cycles made no fix, and the
+		// resume 9c3f0723 dropped on the same line four minutes later. Only a
+		// drop that may not recur (a crash, a stillborn start, a limit, a
+		// network outage) is resumed to see.
+		if last.state == wdFailed && last.run == d.run && deterministicDrop(d.cause) {
+			haltChain(last, d, conf, limit)
+			return
+		}
 		if last.state == wdFailed && last.run == d.run {
 			why := fmt.Sprintf("cycle %d made no fix (%s); a fix run on the same evidence makes none "+
 				"either, so the dropped run is resumed instead", last.cycle, firstLine(orDash(last.why)))
@@ -1342,6 +1353,13 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 		return
 	}
 	queueFix(id, d, root, n, branch, conf, limit)
+}
+
+// deterministicDrop is a drop that recurs on the same code: a red gate, or a
+// verdict the run reached on its own. A crash, a stillborn start, a limit or
+// an outage may not.
+func deterministicDrop(cause string) bool {
+	return cause == "gate_red" || strings.HasPrefix(cause, "verdict:")
 }
 
 // openCycle writes the cycle, in the state it starts in, and its fix action on
