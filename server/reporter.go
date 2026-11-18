@@ -14,8 +14,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 const (
@@ -51,9 +54,11 @@ func reportOnce(conf Config) int {
 		return 0
 	}
 	var blocks []string
+	ended := false
 	for _, t := range tickets {
-		if b := ticketStatus(t, nowWall()-recent); b != "" {
+		if b, end := ticketStatus(t, nowWall()-recent); b != "" {
 			blocks = append(blocks, b)
+			ended = ended || end
 		}
 	}
 	if len(blocks) == 0 {
@@ -65,7 +70,8 @@ func reportOnce(conf Config) int {
 	if len(text) > reporterMax {
 		text = text[:reporterMax] + "…"
 	}
-	out, err := command("report_status", conf, map[string]string{"text": text})
+	text, entities := mentionOwner(conf, text, ended)
+	out, err := command("report_status", conf, map[string]string{"text": text, "entities": entities})
 	if err != nil {
 		log.Printf("ammit: reporter could not send: %v %s", err, strings.TrimSpace(out))
 		return 0
@@ -114,12 +120,43 @@ type lastRun struct {
 	finished              *float64
 }
 
+// mentionOwner puts the owner's name in front of a message that carries a run
+// ending (done or stopped), as a Telegram text_mention, so the phone rings: a
+// status line in a group chat is silent, and on 2026-11-18 the owner asked to
+// be pinged when a ticket reaches an end. TELEGRAM_OWNER_ID (beside the bot's
+// token, never in limits.yml, which anyone can GET) names whom, and
+// reporter.mention_name what to call them; without an id, or for a message
+// that ends nothing, the text goes as it was and entities is "[]".
+func mentionOwner(conf Config, text string, ended bool) (string, string) {
+	id := strings.TrimSpace(os.Getenv("TELEGRAM_OWNER_ID"))
+	if !ended || id == "" {
+		return text, "[]"
+	}
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		log.Printf("ammit: reporter: TELEGRAM_OWNER_ID is not a number")
+		return text, "[]"
+	}
+	name := conf.str("reporter", "mention_name", "owner")
+	// Telegram counts offsets and lengths in UTF-16 code units.
+	n := len(utf16.Encode([]rune(name)))
+	return name + ", " + text, fmt.Sprintf(`[{"type":"text_mention","offset":0,"length":%d,"user":{"id":%s}}]`, n, id)
+}
+
 // ticketStatus is one ticket's block, or "" when there is nothing to say
-// (a finished run already reported done).
-func ticketStatus(ticket string, since float64) string {
+// (a finished run already reported done), and whether the block is the first
+// to tell of its run's end.
+func ticketStatus(ticket string, since float64) (string, bool) {
 	r, ok := latestRun(ticket)
 	if !ok {
-		return ""
+		return "", false
+	}
+	ended := false
+	if r.finished != nil {
+		key := "reporter_ended:" + r.run
+		if _, said := wdMeta(key); !said {
+			wdSetMeta(key, nowWall())
+			ended = true
+		}
 	}
 	var lines []string
 	head := ticket + " " + shortRun(r.run) + ": "
@@ -134,7 +171,7 @@ func ticketStatus(ticket string, since float64) string {
 	default:
 		key := "reporter_done:" + r.run
 		if _, said := wdMeta(key); said || *r.finished < since {
-			return ""
+			return "", false
 		}
 		wdSetMeta(key, nowWall())
 		line := fmt.Sprintf("%sготово: %s в %s", head, r.verdict, clock(*r.finished))
@@ -145,7 +182,7 @@ func ticketStatus(ticket string, since float64) string {
 	}
 	lines = append(lines, watchdogLines(ticket)...)
 	lines = append(lines, queuedLines(ticket)...)
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), ended
 }
 
 func latestRun(ticket string) (lastRun, bool) {
