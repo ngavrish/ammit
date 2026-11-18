@@ -1459,13 +1459,23 @@ func awaitDeploy(d *dropFact, root string, prev wdCycle, n int, now, limit float
 var evidenceNoise = regexp.MustCompile(
 	`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{8,}\b|[0-9]+(\.[0-9]+)?`)
 
+// causeProse is a repair's `CAUSE: <class> - <its own words>`, carried in the
+// run's summary. The class is the repair's finding; the words after it are
+// written anew by every run, so they are noise to the key as a run id is.
+// Chain 617cad47 (APF-3253), 2026-11-18: cycle 2's drop and the drop of its
+// resume printed the same datatrace gate output and the same CAUSE: flow, but
+// the two repairs worded the rest differently, the keys differed, and cycle 3
+// was opened on the same evidence - a fix run that could make no fix either.
+var causeProse = regexp.MustCompile(`(?s)\b(cause: [a-z_-]+).*`)
+
 func dropKey(d *dropFact) string {
 	lines := make([]string, 0, len(d.evidence))
 	for _, l := range d.evidence {
 		if strings.HasPrefix(l, "the keeper saw the same BLOCKED") {
 			continue
 		}
-		l = evidenceNoise.ReplaceAllString(strings.ToLower(l), "#")
+		l = causeProse.ReplaceAllString(strings.ToLower(l), "${1}")
+		l = evidenceNoise.ReplaceAllString(l, "#")
 		lines = append(lines, strings.Join(strings.Fields(l), " "))
 	}
 	sort.Strings(lines)
