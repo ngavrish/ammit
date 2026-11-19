@@ -17,6 +17,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/ngavrish/ammit/adapters/statestore"
 )
 
 // The record lives in Postgres.
@@ -100,6 +102,11 @@ func (t *Tx) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Ro
 // $n, and ?N is $N. Quoted strings, quoted identifiers and comments are copied
 // as they are, so a '?' inside a literal stays a question mark.
 func rebind(q string) string {
+	// The sealed build keeps the record in its embedded store, which reads
+	// SQLite (adapters/statestore); a SaaS build goes on to Postgres below.
+	if statestore.Embedded {
+		return statestore.Translate(q)
+	}
 	if !strings.Contains(q, "?") {
 		return q
 	}
@@ -368,6 +375,9 @@ func pgConfig(dsn string) (*pgx.ConnConfig, error) {
 // dbLabel is where the record is, for /health and the log: host, port and
 // database, and never a credential.
 func dbLabel(dsn string) string {
+	if statestore.Embedded {
+		return statestore.Label()
+	}
 	cfg, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return "postgres"
@@ -424,6 +434,13 @@ func vaultValue(path, key string) (string, error) {
 // caller wrote, and the database refusing a write is the only refusal that
 // holds however the statement is spelled.
 func openPools(dsn string) (*DB, *DB, error) {
+	if statestore.Embedded {
+		w, r, err := statestore.Open(strings.TrimSuffix(env("AMMIT_DATA", "/data"), "/"))
+		if err != nil {
+			return nil, nil, err
+		}
+		return &DB{w}, &DB{r}, nil
+	}
 	cfg, err := pgConfig(dsn)
 	if err != nil {
 		return nil, nil, err

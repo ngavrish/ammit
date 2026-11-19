@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/ngavrish/ammit/adapters/statestore"
 )
 
 // compatSchema is the handful of functions the queries lean on where SQLite
@@ -87,7 +90,37 @@ var schemaSteps = map[int]string{}
 // migrate makes the tables, the functions and this month's partitions, under
 // an advisory lock so two processes starting at once (the service and the
 // copy tool) do not race each other's CREATE OR REPLACE.
+// columnAdds are the columns added to a table that already exists (migrate).
+var columnAdds = []string{
+	`ALTER TABLE calls ADD COLUMN IF NOT EXISTS why TEXT DEFAULT ''`,
+	// The wait the call happened in (sid#seq), so a call and the turn that
+	// asked for it are one trace.
+	`ALTER TABLE calls ADD COLUMN IF NOT EXISTS request TEXT DEFAULT ''`,
+	// Whether the guard read this call as arbitrary python: 1, 0, or
+	// NULL from a client that does not say. The gate that audits python
+	// reasons asked a regex over the signature, which is whitespace
+	// folded and cut short, and on run 4314fb3c it counted a call the
+	// guard had read differently. One judge, recorded once.
+	`ALTER TABLE calls ADD COLUMN IF NOT EXISTS adhoc bigint`,
+	// The junit classname of a result row: the evidence gate joins a
+	// row to its stored evidence by (name, classname).
+	`ALTER TABLE results ADD COLUMN IF NOT EXISTS classname TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE results ADD COLUMN IF NOT EXISTS seconds double precision`,
+	// The member whose hand a judgement is, from the control plane
+	// (hands.go); NULL for every judgement of ammit's own and every hand
+	// that named nobody.
+	`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS member TEXT`,
+	`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS member_name TEXT`,
+	`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS via TEXT`,
+}
+
 func migrate() error {
+	// The sealed build's embedded store makes the same tables in SQLite
+	// (adapters/statestore): no advisory lock, no functions, no partitions.
+	if statestore.Embedded {
+		return statestore.Migrate(db.DB, compatSchema, schema, watchdogSchema, actionsSchema,
+			kbSchema, kbDocsSchema, searchSchema, strings.Join(columnAdds, ";\n"))
+	}
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -116,28 +149,7 @@ func migrate() error {
 	// does nothing to a database that has the table, so a new column arrives
 	// only this way, and IF NOT EXISTS makes every start but the first a
 	// no-op rather than an error to ignore.
-	for _, add := range []string{
-		`ALTER TABLE calls ADD COLUMN IF NOT EXISTS why TEXT DEFAULT ''`,
-		// The wait the call happened in (sid#seq), so a call and the turn that
-		// asked for it are one trace.
-		`ALTER TABLE calls ADD COLUMN IF NOT EXISTS request TEXT DEFAULT ''`,
-		// Whether the guard read this call as arbitrary python: 1, 0, or
-		// NULL from a client that does not say. The gate that audits python
-		// reasons asked a regex over the signature, which is whitespace
-		// folded and cut short, and on run 4314fb3c it counted a call the
-		// guard had read differently. One judge, recorded once.
-		`ALTER TABLE calls ADD COLUMN IF NOT EXISTS adhoc bigint`,
-		// The junit classname of a result row: the evidence gate joins a
-		// row to its stored evidence by (name, classname).
-		`ALTER TABLE results ADD COLUMN IF NOT EXISTS classname TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE results ADD COLUMN IF NOT EXISTS seconds double precision`,
-		// The member whose hand a judgement is, from the control plane
-		// (hands.go); NULL for every judgement of ammit's own and every hand
-		// that named nobody.
-		`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS member TEXT`,
-		`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS member_name TEXT`,
-		`ALTER TABLE judgements ADD COLUMN IF NOT EXISTS via TEXT`,
-	} {
+	for _, add := range columnAdds {
 		if _, err := conn.ExecContext(ctx, add); err != nil {
 			return fmt.Errorf("%s: %w", add, err)
 		}
@@ -177,6 +189,9 @@ func monthOf(t time.Time) (string, float64, float64) {
 // ensurePartitions makes the table for the month of t and for the month after,
 // so an event never waits on DDL and the default partition stays empty.
 func ensurePartitions(ctx context.Context, t time.Time) error {
+	if statestore.Embedded {
+		return nil
+	}
 	for _, m := range []time.Time{t, t.UTC().AddDate(0, 1, 0)} {
 		if err := ensurePartition(ctx, m); err != nil {
 			return err

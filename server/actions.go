@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/ngavrish/ammit/adapters/statestore"
 )
 
 // One open action per ticket.
@@ -117,6 +119,9 @@ type querier interface {
 }
 
 func uniqueViolation(err error) bool {
+	if statestore.Embedded {
+		return statestore.UniqueViolation(err)
+	}
 	var pg *pgconn.PgError
 	return errors.As(err, &pg) && pg.Code == "23505"
 }
