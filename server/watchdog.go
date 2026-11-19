@@ -1729,9 +1729,11 @@ type prView struct {
 		Oid string `json:"oid"`
 	} `json:"mergeCommit"`
 	Checks []struct {
-		Status     string `json:"status"`
-		Conclusion string `json:"conclusion"`
-		State      string `json:"state"`
+		Status      string `json:"status"`
+		Conclusion  string `json:"conclusion"`
+		State       string `json:"state"`
+		StartedAt   string `json:"startedAt"`
+		CompletedAt string `json:"completedAt"`
 	} `json:"statusCheckRollup"`
 	// Present when commands.watchdog_pr asks for `files`; nil otherwise, and
 	// a PR whose files are not known is taken to need the deploy (liveOnly).
@@ -1868,6 +1870,19 @@ func liveCarries(prs []prView, conf Config) string {
 
 // ci is a PR's checks as one word: green, red or pending. No checks at all is
 // pending: a PR that nothing has checked is not a PR anything has proved.
+// neverRan is a check run GitHub failed without running it: started and
+// completed within two seconds. On 2026-11-18/19 every Actions job of the
+// account failed that way ("recent account payments have failed"), every
+// watchdog PR read red, and right fixes (#1326, #1327) sat unmerged while
+// APF-3587 and APF-3578 stayed blocked. A job that never ran proved nothing
+// either way; the branch already passed the repository's pre-push checks
+// (the same lint CI runs) before it could be pushed.
+func neverRan(started, completed string) bool {
+	a, errA := time.Parse(time.RFC3339, started)
+	b, errB := time.Parse(time.RFC3339, completed)
+	return errA == nil && errB == nil && b.Sub(a) < 2*time.Second
+}
+
 func (p prView) ci() string {
 	if len(p.Checks) == 0 {
 		return "pending"
@@ -1891,7 +1906,9 @@ func (p prView) ci() string {
 		switch strings.ToUpper(c.Conclusion) {
 		case "SUCCESS", "NEUTRAL", "SKIPPED":
 		default:
-			return "red"
+			if !neverRan(c.StartedAt, c.CompletedAt) {
+				return "red"
+			}
 		}
 	}
 	if pending {
