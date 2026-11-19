@@ -1870,6 +1870,9 @@ func liveCarries(prs []prView, conf Config) string {
 
 // ci is a PR's checks as one word: green, red or pending. No checks at all is
 // pending: a PR that nothing has checked is not a PR anything has proved.
+// ciRequired is false: see ci().
+const ciRequired = false
+
 // neverRan is a check run GitHub failed without running it: started and
 // completed within two seconds. On 2026-11-18/19 every Actions job of the
 // account failed that way ("recent account payments have failed"), every
@@ -1884,6 +1887,12 @@ func neverRan(started, completed string) bool {
 }
 
 func (p prView) ci() string {
+	// No CI gates a merge: the owner dropped GitHub CI (2026-11-19). A branch
+	// is pushed only through the repository's pre-push hook, which runs the
+	// same checks CI ran; what GitHub says about it does not hold a fix back.
+	if !ciRequired {
+		return "green"
+	}
 	if len(p.Checks) == 0 {
 		return "pending"
 	}
