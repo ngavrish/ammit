@@ -667,9 +667,18 @@ func causeOf(f *runFacts, conf Config, d *dropFact) string {
 			return "limit:" + j.rule
 		}
 	}
-	if f.heartbeats == 0 && len(f.rec) == 0 {
+	// Stillborn is a run nobody ended: no pulse, no phase, and no run_end from
+	// the pipeline, only this service's reaper closing the row. A run that
+	// ended itself before its first phase - the runner refusing it, with the
+	// reason in its summary - is that verdict, and resuming it with no fix
+	// meets the same refusal: APF-3502 e2d29dce and 4c87b28a (2026-11-20) were
+	// resumed twice into an engine tool that did not parse.
+	if f.heartbeats == 0 && len(f.rec) == 0 && !f.runEnd {
 		d.evidence = append(d.evidence, "no heartbeat and no phase ever started")
 		return "stillborn"
+	}
+	if f.heartbeats == 0 && len(f.rec) == 0 {
+		d.evidence = append(d.evidence, "no phase ever started; the pipeline ended the run itself")
 	}
 	if !f.runEnd {
 		// Nobody in the pipeline wrote the ending: this service closed the
