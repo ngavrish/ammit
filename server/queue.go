@@ -197,6 +197,27 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 			}
 		}
 	}
+	// An item waits while its ticket has a run going, on either stand: a run
+	// that starts supersedes every open run of its name (store.go), so a
+	// start sent beside a live run is a stop of that run. 2026-11-23: APF-3541's
+	// host resume (row 5913, queued 18:02) waited for the host, which freed
+	// at 18:47 - two minutes after the fresh docker run 09f2c4fc had started
+	// from row 5915 - and it started and stopped 09f2c4fc ("ammit stopped
+	// this run before env").
+	live := map[string]bool{}
+	if rows, err := db.Query(`SELECT name FROM runs WHERE finished IS NULL AND started > ?
+	                          UNION SELECT name FROM queue WHERE state='running'
+	                            AND coalesce(run,'') = '' AND started > ?`,
+		since, float64(time.Now().Add(-3*time.Minute).UnixNano())/1e9); err == nil {
+		for rows.Next() {
+			var n string
+			if rows.Scan(&n) == nil {
+				live[n] = true
+			}
+		}
+		_ = rows.Err() // a cut-off read is the shorter answer it always was
+		rows.Close()
+	}
 	// Not into a deploy that is going or waiting (deploys.go, deployClear):
 	// the item stays waiting, rather than being started, refused by the
 	// orchestrator, and left running with no run behind it. The deploy
@@ -226,6 +247,9 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	for _, it := range waiting {
 		if why := unfixed[it.id]; why != "" {
 			sayHeldForFix(it.id, it.name, why)
+			continue
+		}
+		if live[it.name] {
 			continue
 		}
 		switch standOf(it.payload) {
