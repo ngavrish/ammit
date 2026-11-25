@@ -862,6 +862,18 @@ func wdMeta(name string) (float64, bool) {
 	return v, true
 }
 
+// wdPutMeta writes name's value over the one before it. wdSetMeta keeps the
+// first value ever written - right for "said once" marks, wrong for a clock:
+// keep_at stayed at its first write (2026-10-27) and the keeper's every-600 s
+// throttle never held again; on 2026-11-24/25 it queued APF-3541's resume
+// every 20-30 s, 1750 times, each refused by the flow lock.
+func wdPutMeta(name string, v float64) {
+	mu.Lock()
+	defer mu.Unlock()
+	db.Exec(`INSERT INTO watchdog_meta (name, value) VALUES (?,?)
+	         ON CONFLICT (name) DO UPDATE SET value = excluded.value`, name, v)
+}
+
 func wdSetMeta(name string, v float64) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -2131,6 +2143,23 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		// no run behind it, and this cycle would have sat in fixing for the
 		// whole of timeouts.watchdog_fix waiting on a PR nothing was writing.
 		// Same rule as the resume: started, no run within watchdog_start, spent.
+		// A start the orchestrator refused is known at once, with its words:
+		// waiting out watchdog_start on it hid them. 2026-11-25: cycle 716's fix
+		// was refused by the flow lock (no loops.laps_contractsfind) and failed
+		// fifteen minutes later as "no run came of it", the reason nowhere.
+		if why := queueRefusal(c.fixQueue); why != "" {
+			text := "the fix run was refused by the orchestrator: " + why
+			ctx := map[string]string{"run": c.run, "name": d.name, "verdict": "FIX-REFUSED",
+				"summary": "watchdog: " + d.name + " cycle " + fmt.Sprint(c.cycle) + ": " + text}
+			for k, v := range conf["context"] {
+				if ctx[k] == "" {
+					ctx[k] = v
+				}
+			}
+			judge("run", c.run, d.name, "watchdog.refused", 1, 1, "notify", act("notify", conf, ctx))
+			fail(text)
+			return
+		}
 		if run, _, _, started := queueOutcome(c.fixQueue); run == "" && started > 0 &&
 			over(c, conf, "watchdog_start", started) {
 			fail("the fix run was started and no run came of it within timeouts.watchdog_start")
@@ -2736,6 +2765,24 @@ func withdraw(row sql.NullInt64) {
 
 // queueOutcome is the same four facts for any queue row the watchdog put
 // there: the fix run as much as the resume.
+// queueRefusal is the orchestrator's answer to a queue row closed without a
+// run (queue.go records it as the queue.parallel judgement), or "".
+func queueRefusal(row sql.NullInt64) string {
+	if !row.Valid {
+		return ""
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var why string
+	db.QueryRow(`SELECT left(j.outcome, 400) FROM queue q JOIN judgements j
+	               ON j.rule='queue.parallel' AND j.subject=q.name
+	              AND j.at >= q.started - 1 AND j.at <= coalesce(q.finished, q.started) + 1
+	             WHERE q.id=? AND q.state='done' AND coalesce(q.run,'') = ''
+	               AND j.outcome NOT LIKE '%"run_id"%'
+	             ORDER BY j.at DESC LIMIT 1`, row.Int64).Scan(&why)
+	return why
+}
+
 func queueOutcome(row sql.NullInt64) (string, bool, string, float64) {
 	if !row.Valid {
 		return "", false, "", 0

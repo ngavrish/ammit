@@ -329,6 +329,11 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 		mu.Lock()
 		db.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND coalesce(run,'') = ''`,
 			nowWall(), id)
+		// The refusal's own words go on the action the row was queued under:
+		// the sweep's "refused, withdrawn or answered" said nothing of why.
+		db.Exec(`UPDATE ticket_actions SET state='failed', closed=?,
+		           why='queue row ' || ?::text || ' refused on ' || ?::text || ': ' || left(?::text, 400)
+		         WHERE queue_id=? AND state='open'`, nowWall(), id, stand, outcome, id)
 		mu.Unlock()
 		log.Printf("ammit: queue row %d (%s) refused on %s, closed: %s", id, name, stand, outcome)
 	}

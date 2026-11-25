@@ -30,7 +30,7 @@ func keepTick(conf Config) {
 	if last, known := wdMeta("keep_at"); known && wdNow()-last < every {
 		return
 	}
-	wdSetMeta("keep_at", wdNow())
+	wdPutMeta("keep_at", wdNow())
 	list := strings.Split(tickets, ",")
 	if strings.TrimSpace(tickets) == "all" {
 		list = recentTickets()
@@ -134,6 +134,16 @@ func keepOne(ticket string, conf Config) {
 		body[k] = v
 	}
 	payload, _ := json.Marshal(body)
+	// A resume the orchestrator refuses is no resume: three refused in a row
+	// for the same ended run, and the keeper says so once, as an ALERT, and
+	// stops asking - the refusal is the flow's or the stand's, and a person or
+	// a commit must change it. 2026-11-24 18:30 to 2026-11-25 09:29 UTC: the
+	// flow lock refused all 1750 resumes of APF-3541 (no
+	// loops.laps_contractsfind), each closed in silence, and nobody heard.
+	if refusedResumes(ticket, run) >= 3 {
+		alertRefusedOnce(ticket, run, conf)
+		return
+	}
 	// Through ticket_actions (actions.go): a ticket a watchdog cycle is
 	// fixing, a stop is closing or another resume is queued for is held, and
 	// the keeper leaves it to its holder. 2026-11-07: the keeper resumed
@@ -244,4 +254,45 @@ func handToFixer(ticket string, f *runFacts, phase string, conf Config) bool {
 	log.Printf("ammit: %s", text)
 	startCycle(d, root, conf, limit)
 	return true
+}
+
+// refusedResumes is how many keeper resumes of run were closed without
+// becoming a run since the last one that did.
+func refusedResumes(ticket, run string) int {
+	mu.Lock()
+	defer mu.Unlock()
+	var n int
+	db.QueryRow(`SELECT count(*) FROM ticket_actions WHERE ticket=? AND run=? AND owner='keeper'
+	               AND kind='resume' AND state='failed'
+	               AND opened > coalesce((SELECT max(opened) FROM ticket_actions WHERE ticket=?
+	                 AND run=? AND owner='keeper' AND kind='resume' AND state='done'), 0)`,
+		ticket, run, ticket, run).Scan(&n)
+	return n
+}
+
+// alertRefusedOnce raises the ALERT for a run whose resumes are all refused,
+// once per run, with the last refusal's own words.
+func alertRefusedOnce(ticket, run string, conf Config) {
+	key := "refused:" + run
+	if _, said := wdMeta(key); said {
+		return
+	}
+	wdSetMeta(key, wdNow())
+	var why string
+	mu.Lock()
+	db.QueryRow(`SELECT coalesce(why,'') FROM ticket_actions WHERE ticket=? AND run=? AND owner='keeper'
+	               AND kind='resume' AND state='failed' ORDER BY opened DESC LIMIT 1`, ticket, run).Scan(&why)
+	mu.Unlock()
+	text := fmt.Sprintf("keeper: %s cannot be resumed - the last three resumes of run %s were refused "+
+		"without becoming a run; the keeper stops asking until a run of it starts. Last refusal: %s",
+		ticket, shortRun(run), why)
+	ctx := map[string]string{"run": run, "name": ticket, "verdict": "RESUME-REFUSED", "summary": text}
+	for k, v := range conf["context"] {
+		if ctx[k] == "" {
+			ctx[k] = v
+		}
+	}
+	judge("run", run, ticket, "keeper.refused", 3, 3, "notify", act("notify", conf, ctx))
+	store(event{"kind": "keeper", "run": run, "text": text})
+	log.Printf("ammit: %s", text)
 }
