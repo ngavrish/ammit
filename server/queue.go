@@ -132,6 +132,11 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 		slots = v
 	}
 	host := conf.str("context", "host_starter", "")
+	// The docker stand is switched off the way the host stand is: an empty
+	// context.starter. queue.parallel cannot say it - zero there is "no
+	// limit" - and the docker stand on the owner's Mac was retired with the
+	// host stand taking every item (2026-11-25).
+	dockerOn := conf.str("context", "starter", "") != ""
 	mu.Lock()
 	since := float64(time.Now().Add(-24*time.Hour).UnixNano()) / 1e9
 	// A run on the host (its run_start says tags.where = local) holds the
@@ -219,7 +224,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	deployLease := leaseHeld("deploy")
 	releaseEndedStandLeases()
 	mu.Unlock()
-	dockerFree := float64(docker) < slots && deployOK && !deployLease && !held["docker"] && !branchDocker
+	dockerFree := dockerOn && float64(docker) < slots && deployOK && !deployLease && !held["docker"] && !branchDocker
 	hostFree := host != "" && onHost == 0 && !deployLease && !held["local"] && !branchLocal
 	var id int64
 	var name, payload, stand string
