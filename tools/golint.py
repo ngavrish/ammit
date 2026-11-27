@@ -47,7 +47,8 @@ def _counts() -> tuple:
                       "cmd/golangci-lint@latest)")
     report_path = os.path.join(tempfile.mkdtemp(), "gl.json")
     try:
-        subprocess.run([exe, "run", f"--output.json.path={report_path}", "./..."],
+        subprocess.run([exe, "run", f"--output.json.path={report_path}", "--max-same-issues=0",
+                        "--max-issues-per-linter=0", "./..."],
                        capture_output=True, text=True, cwd=MODULE,
                        timeout=_RUN_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError) as exc:
