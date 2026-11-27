@@ -97,8 +97,8 @@ var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // because refusing a proof over its file name is the store losing evidence.
 func evidenceExt(filename string) (ext, mime string) {
 	ext = strings.ToLower(path.Ext(filename))
-	if m, ok := evidenceMimes[ext]; ok {
-		return ext, m
+	if mimeType, ok := evidenceMimes[ext]; ok {
+		return ext, mimeType
 	}
 	return "", "application/octet-stream"
 }
@@ -138,39 +138,39 @@ type minioStore struct {
 }
 
 func (m minioStore) stat(ctx context.Context, key string) (string, bool, error) {
-	info, err := m.client.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{})
+	stat, err := m.client.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
 		if code := minio.ToErrorResponse(err).Code; code == minio.NoSuchKey || code == "NotFound" {
 			return "", false, nil
 		}
 		return "", false, err
 	}
-	return info.VersionID, true, nil
+	return stat.VersionID, true, nil
 }
 
 func (m minioStore) put(ctx context.Context, key string, body io.Reader, size int64, mime string) (string, error) {
-	info, err := m.client.PutObject(ctx, m.bucket, key, body, size,
+	upload, err := m.client.PutObject(ctx, m.bucket, key, body, size,
 		minio.PutObjectOptions{ContentType: mime})
 	if err != nil {
 		return "", err
 	}
-	return info.VersionID, nil
+	return upload.VersionID, nil
 }
 
 func (m minioStore) open(ctx context.Context, key, version string) (io.ReadSeekCloser, int64, error) {
-	obj, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{VersionID: version})
+	object, err := m.client.GetObject(ctx, m.bucket, key, minio.GetObjectOptions{VersionID: version})
 	if err != nil {
 		return nil, 0, err
 	}
 	// GetObject is lazy: a missing object is an error on the first read, which
 	// inside http.ServeContent would be a 500 with half a header written. Stat
 	// asks now, while there is still a status code to choose.
-	info, err := obj.Stat()
+	stat, err := object.Stat()
 	if err != nil {
-		_ = obj.Close()
+		_ = object.Close()
 		return nil, 0, err
 	}
-	return obj, info.Size, nil
+	return object, stat.Size, nil
 }
 
 // openEvidenceStore reads AMMIT_EVIDENCE_S3_* and answers the store, or nil
@@ -185,12 +185,12 @@ func openEvidenceStore() (evidenceStore, string) {
 		return nil, "AMMIT_EVIDENCE_S3_* are not set"
 	}
 	var missing []string
-	for name, v := range map[string]string{
+	for envName, envValue := range map[string]string{
 		"AMMIT_EVIDENCE_S3_ENDPOINT": endpoint, "AMMIT_EVIDENCE_S3_BUCKET": bucket,
 		"AMMIT_EVIDENCE_S3_USER": user, "AMMIT_EVIDENCE_S3_PASSWORD": password,
 	} {
-		if v == "" {
-			missing = append(missing, name)
+		if envValue == "" {
+			missing = append(missing, envName)
 		}
 	}
 	if len(missing) > 0 {
@@ -199,13 +199,13 @@ func openEvidenceStore() (evidenceStore, string) {
 	}
 	// The endpoint is written as a URL, the way every other service in the
 	// compose file is addressed; minio-go wants host:port and a flag.
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Host == "" {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" {
 		return nil, fmt.Sprintf("AMMIT_EVIDENCE_S3_ENDPOINT is not a URL: %q", endpoint)
 	}
-	client, err := minio.New(u.Host, &minio.Options{
+	client, err := minio.New(parsed.Host, &minio.Options{
 		Creds:  credentials.NewStaticV4(user, password, ""),
-		Secure: u.Scheme == "https",
+		Secure: parsed.Scheme == "https",
 		// The region is said rather than asked: the evidence user may put and
 		// get and list, and GetBucketLocation is none of those.
 		Region:       env("AMMIT_EVIDENCE_S3_REGION", "us-east-1"),
@@ -226,25 +226,25 @@ var errTooLarge = errors.New("too large")
 // spoolEvidence copies one file part to a temp file while hashing it, so a
 // video is never held in memory and its name is known when the copy ends.
 func spoolEvidence(part io.Reader) (*os.File, string, int64, error) {
-	tmp, err := os.CreateTemp("", "ammit-evidence-*")
+	spool, err := os.CreateTemp("", "ammit-evidence-*")
 	if err != nil {
 		return nil, "", 0, err
 	}
 	hash := sha256.New()
-	n, err := io.CopyN(io.MultiWriter(tmp, hash), part, evidenceMaxBytes+1)
+	written, err := io.CopyN(io.MultiWriter(spool, hash), part, evidenceMaxBytes+1)
 	if err != nil && !errors.Is(err, io.EOF) {
-		dropTemp(tmp)
+		dropTemp(spool)
 		return nil, "", 0, err
 	}
-	if n > evidenceMaxBytes {
-		dropTemp(tmp)
+	if written > evidenceMaxBytes {
+		dropTemp(spool)
 		return nil, "", 0, errTooLarge
 	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		dropTemp(tmp)
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		dropTemp(spool)
 		return nil, "", 0, err
 	}
-	return tmp, hex.EncodeToString(hash.Sum(nil)), n, nil
+	return spool, hex.EncodeToString(hash.Sum(nil)), written, nil
 }
 
 func dropTemp(f *os.File) {
@@ -282,7 +282,7 @@ func postEvidence(db *DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWr
 			"error": fmt.Sprintf("over %d MiB", evidenceMaxBytes>>20)})
 	}
 	for {
-		part, err := reader.NextPart()
+		formPart, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -295,15 +295,15 @@ func postEvidence(db *DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWr
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad multipart body: " + err.Error()})
 			return
 		}
-		name := part.FormName()
+		field := formPart.FormName()
 		switch {
-		case name == "file":
+		case field == "file":
 			if spool != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "one file per upload"})
 				return
 			}
-			filename = part.FileName()
-			spool, sum, size, err = spoolEvidence(part)
+			filename = formPart.FileName()
+			spool, sum, size, err = spoolEvidence(formPart)
 			if err != nil {
 				var big *http.MaxBytesError
 				if errors.Is(err, errTooLarge) || errors.As(err, &big) {
@@ -313,29 +313,29 @@ func postEvidence(db *DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWr
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file: " + err.Error()})
 				return
 			}
-		case isEvidenceField(name):
-			value, err := readField(part)
+		case isEvidenceField(field):
+			fieldText, err := readField(formPart)
 			if err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": name + ": " + err.Error()})
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": field + ": " + err.Error()})
 				return
 			}
-			fields[name] = strings.TrimSpace(value)
+			fields[field] = strings.TrimSpace(fieldText)
 		default:
-			dropped = append(dropped, name)
+			dropped = append(dropped, field)
 		}
-		_ = part.Close()
+		_ = formPart.Close()
 	}
 	sort.Strings(dropped)
 
-	row, problem := evidenceRowOf(fields, spool != nil)
+	evidence, problem := evidenceRowOf(fields, spool != nil)
 	if problem != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": problem})
 		return
 	}
 	ext, mime := evidenceExt(filename)
-	key := evidenceKey(row.ticket, sum, ext)
+	objectKey := evidenceKey(evidence.ticket, sum, ext)
 
-	version, err := storeEvidence(r.Context(), store, key, spool, size, mime)
+	version, err := storeEvidence(r.Context(), store, objectKey, spool, size, mime)
 	if err != nil {
 		// The store said no. 502: the request was fine and the bucket was not,
 		// and a client that retries on 5xx should retry this.
@@ -343,7 +343,7 @@ func postEvidence(db *DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWr
 		return
 	}
 
-	at := float64(time.Now().UnixNano()) / 1e9
+	receivedAt := float64(time.Now().UnixNano()) / 1e9
 	mu.Lock()
 	// Written again rather than added again: a retried upload of the same
 	// bytes for the same test is the same proof, and two rows for it would be
@@ -357,14 +357,14 @@ func postEvidence(db *DB, mu *sync.Mutex, store evidenceStore, w http.ResponseWr
 		  feature=excluded.feature, status=excluded.status, bytes=excluded.bytes,
 		  mime=excluded.mime, key=excluded.key, version_id=excluded.version_id,
 		  meta=excluded.meta`,
-		at, row.ticket, row.run, row.test, row.classname, row.feature, row.status,
-		row.kind, sum, size, mime, key, version, row.meta)
+		receivedAt, evidence.ticket, evidence.run, evidence.test, evidence.classname, evidence.feature, evidence.status,
+		evidence.kind, sum, size, mime, objectKey, version, evidence.meta)
 	mu.Unlock()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	reply := map[string]any{"sha256": sum, "key": key, "version_id": version, "bytes": size}
+	reply := map[string]any{"sha256": sum, "key": objectKey, "version_id": version, "bytes": size}
 	if len(dropped) > 0 {
 		reply["dropped"] = dropped
 	}
@@ -380,19 +380,19 @@ func storeEvidence(ctx context.Context, store evidenceStore, key string, body io
 	defer keyMu.Unlock()
 	// The key is the hash, so a key that is there is these bytes. Writing
 	// them again would only add a version to a bucket that keeps every one.
-	version, found, err := store.stat(ctx, key)
+	version, exists, err := store.stat(ctx, key)
 	if err != nil {
 		return "", err
 	}
-	if found {
+	if exists {
 		return version, nil
 	}
 	return store.put(ctx, key, body, size, mime)
 }
 
 func isEvidenceField(name string) bool {
-	for _, f := range evidenceFields {
-		if f == name && f != "file" {
+	for _, field := range evidenceFields {
+		if field == name && field != "file" {
 			return true
 		}
 	}
@@ -400,14 +400,14 @@ func isEvidenceField(name string) bool {
 }
 
 func readField(part *multipart.Part) (string, error) {
-	raw, err := io.ReadAll(io.LimitReader(part, evidenceFieldMax+1))
+	fieldBytes, err := io.ReadAll(io.LimitReader(part, evidenceFieldMax+1))
 	if err != nil {
 		return "", err
 	}
-	if len(raw) > evidenceFieldMax {
+	if len(fieldBytes) > evidenceFieldMax {
 		return "", fmt.Errorf("over %d bytes", evidenceFieldMax)
 	}
-	return string(raw), nil
+	return string(fieldBytes), nil
 }
 
 type evidenceRow struct {
@@ -418,7 +418,7 @@ type evidenceRow struct {
 // in one sentence that names every missing field at once - a client fixing
 // them one 400 at a time is a client that gives up at the second.
 func evidenceRowOf(f map[string]string, hasFile bool) (evidenceRow, string) {
-	row := evidenceRow{
+	evidence := evidenceRow{
 		ticket: f["ticket"], run: f["run"], test: f["test"],
 		classname: f["classname"], feature: f["feature"],
 		status: strings.ToLower(f["status"]), kind: strings.ToLower(f["kind"]),
@@ -426,7 +426,7 @@ func evidenceRowOf(f map[string]string, hasFile bool) (evidenceRow, string) {
 	}
 	var missing []string
 	for _, need := range []struct{ name, value string }{
-		{"ticket", row.ticket}, {"run", row.run}, {"test", row.test}, {"kind", row.kind},
+		{"ticket", evidence.ticket}, {"run", evidence.run}, {"test", evidence.test}, {"kind", evidence.kind},
 	} {
 		if need.value == "" {
 			missing = append(missing, need.name)
@@ -436,21 +436,21 @@ func evidenceRowOf(f map[string]string, hasFile bool) (evidenceRow, string) {
 		missing = append(missing, "file")
 	}
 	if len(missing) > 0 {
-		return row, "missing: " + strings.Join(missing, ", ")
+		return evidence, "missing: " + strings.Join(missing, ", ")
 	}
-	if !evidenceKinds[row.kind] {
-		return row, fmt.Sprintf("kind %q is not one of video, screenshot, log", row.kind)
+	if !evidenceKinds[evidence.kind] {
+		return evidence, fmt.Sprintf("kind %q is not one of video, screenshot, log", evidence.kind)
 	}
-	if row.status != "" && !evidenceStatuses[row.status] {
-		return row, fmt.Sprintf("status %q is not one of passed, failed, skipped", row.status)
+	if evidence.status != "" && !evidenceStatuses[evidence.status] {
+		return evidence, fmt.Sprintf("status %q is not one of passed, failed, skipped", evidence.status)
 	}
-	if !evidenceTicket.MatchString(row.ticket) {
-		return row, fmt.Sprintf("ticket %q is not a tracker key", row.ticket)
+	if !evidenceTicket.MatchString(evidence.ticket) {
+		return evidence, fmt.Sprintf("ticket %q is not a tracker key", evidence.ticket)
 	}
-	if row.meta != "" && !json.Valid([]byte(row.meta)) {
-		return row, "meta is not JSON"
+	if evidence.meta != "" && !json.Valid([]byte(evidence.meta)) {
+		return evidence, "meta is not JSON"
 	}
-	return row, ""
+	return evidence, ""
 }
 
 // getEvidence lists the proofs of one ticket or one run, optionally of one
@@ -458,9 +458,9 @@ func evidenceRowOf(f map[string]string, hasFile bool) (evidenceRow, string) {
 // a query built by concatenation reads the same whether it holds a caller's
 // text or not.
 func getEvidence(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	ticket, run, test := strings.TrimSpace(q.Get("ticket")),
-		strings.TrimSpace(q.Get("run")), q.Get("test")
+	query := r.URL.Query()
+	ticket, run, test := strings.TrimSpace(query.Get("ticket")),
+		strings.TrimSpace(query.Get("run")), query.Get("test")
 	const cols = `SELECT at, ticket, run, test, classname, feature, status, kind,
 	                     sha256, bytes, mime FROM evidence `
 	const order = ` ORDER BY test, kind, at`
@@ -492,7 +492,7 @@ func getEvidence(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer func() { _ = rows.Close() }()
-	out := []map[string]any{}
+	records := []map[string]any{}
 	for rows.Next() {
 		var at float64
 		var bytes int64
@@ -501,7 +501,7 @@ func getEvidence(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 			&sum, &bytes, &mime); err != nil {
 			continue
 		}
-		out = append(out, map[string]any{
+		records = append(records, map[string]any{
 			"at": at, "ticket": tk.String, "run": rn.String, "test": ts.String,
 			"classname": cls.String, "feature": feat.String, "status": status.String,
 			"kind": kind.String, "sha256": sum.String, "bytes": bytes, "mime": mime.String,
@@ -512,7 +512,7 @@ func getEvidence(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rows": out})
+	writeJSON(w, http.StatusOK, map[string]any{"rows": records})
 }
 
 // serveEvidenceFile streams one file back by its hash, with Range: a browser
@@ -546,16 +546,16 @@ func serveEvidenceFile(db *DB, mu *sync.Mutex, store evidenceStore, w http.Respo
 	}
 	// The version the row recorded, not the newest: the row is the proof of
 	// a test, and it is a proof of exactly the bytes it was written with.
-	obj, _, err := store.open(r.Context(), key, version)
+	object, _, err := store.open(r.Context(), key, version)
 	if err != nil {
 		log.Printf("ammit: evidence %s: %v", key, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "evidence store: " + err.Error()})
 		return
 	}
-	defer func() { _ = obj.Close() }()
+	defer func() { _ = object.Close() }()
 	w.Header().Set("Content-Type", mime)
 	// Content-addressed: what is at this URL today is what is at it forever.
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.Header().Set("ETag", `"`+sum+`"`)
-	http.ServeContent(w, r, "", time.Time{}, obj)
+	http.ServeContent(w, r, "", time.Time{}, object)
 }

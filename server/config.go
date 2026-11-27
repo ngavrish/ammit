@@ -9,8 +9,8 @@ import (
 // The config as it stood: limits.yml read on every tick, and the hands-off switch.
 
 func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	if envValue := os.Getenv(key); envValue != "" {
+		return envValue
 	}
 	return fallback
 }
@@ -28,12 +28,12 @@ type Config map[string]map[string]string
 // allowed to contain one, and a command that loses half of itself to a comment
 // marker is a limit that cannot be enforced.
 func cutComment(line string) (string, string) {
-	for i := 0; i < len(line); i++ {
-		if line[i] != '#' {
+	for pos := 0; pos < len(line); pos++ {
+		if line[pos] != '#' {
 			continue
 		}
-		if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
-			return line[:i], line[i:]
+		if pos == 0 || line[pos-1] == ' ' || line[pos-1] == '\t' {
+			return line[:pos], line[pos:]
 		}
 	}
 	return line, ""
@@ -77,28 +77,28 @@ func unquote(value string) string {
 // this is the cheaper half.
 func anchored(value string, anchors map[string]string) string {
 	if strings.HasPrefix(value, "&") {
-		name, rest, found := strings.Cut(value[1:], " ")
-		if !found {
+		anchor, anchoredValue, hasValue := strings.Cut(value[1:], " ")
+		if !hasValue {
 			return value
 		}
-		rest = strings.TrimSpace(rest)
-		anchors[name] = rest
-		return rest
+		anchoredValue = strings.TrimSpace(anchoredValue)
+		anchors[anchor] = anchoredValue
+		return anchoredValue
 	}
 	if strings.HasPrefix(value, "*") {
-		if v, ok := anchors[strings.TrimSpace(value[1:])]; ok {
-			return v
+		if anchoredValue, ok := anchors[strings.TrimSpace(value[1:])]; ok {
+			return anchoredValue
 		}
 	}
 	return value
 }
 
 func loadConfig(path string) Config {
-	raw, err := os.ReadFile(path)
+	limitsYAML, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}
 	}
-	return parseLimits(string(raw))
+	return parseLimits(string(limitsYAML))
 }
 
 // indentOf is how far a line is indented, a tab counting as one.
@@ -119,65 +119,65 @@ func parseLimits(raw string) Config {
 	section := ""
 	anchors := map[string]string{}
 	lines := strings.Split(raw, "\n")
-	for i := 0; i < len(lines); i++ {
-		line, _ := cutComment(lines[i])
-		if strings.TrimSpace(line) == "" {
+	for lineIndex := 0; lineIndex < len(lines); lineIndex++ {
+		code, _ := cutComment(lines[lineIndex])
+		if strings.TrimSpace(code) == "" {
 			continue
 		}
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ":"))
+		if !strings.HasPrefix(code, " ") && !strings.HasPrefix(code, "\t") {
+			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(code), ":"))
 			conf[section] = map[string]string{}
 			continue
 		}
 		if section == "" {
 			continue
 		}
-		key, value, found := strings.Cut(strings.TrimSpace(line), ":")
-		if !found {
+		field, setting, hasColon := strings.Cut(strings.TrimSpace(code), ":")
+		if !hasColon {
 			continue
 		}
-		value = strings.TrimSpace(value)
-		switch value {
+		setting = strings.TrimSpace(setting)
+		switch setting {
 		case ">", ">-", "|", "|-":
 			// Every following line indented deeper than the key is the
 			// value: folded into one line by `>`, kept as lines by `|`. The
 			// block's lines are taken whole, comment marks and all - inside a
 			// block a # is text.
-			own := indentOf(line)
+			own := indentOf(code)
 			var body []string
-			for i+1 < len(lines) {
-				next := lines[i+1]
+			for lineIndex+1 < len(lines) {
+				next := lines[lineIndex+1]
 				if strings.TrimSpace(next) != "" && indentOf(next) <= own {
 					break
 				}
 				body = append(body, strings.TrimSpace(next))
-				i++
+				lineIndex++
 			}
 			for len(body) > 0 && body[len(body)-1] == "" {
 				body = body[:len(body)-1]
 			}
 			sep := " "
-			if value[0] == '|' {
+			if setting[0] == '|' {
 				sep = "\n"
 			}
-			conf[section][strings.TrimSpace(key)] = strings.Join(body, sep)
+			conf[section][strings.TrimSpace(field)] = strings.Join(body, sep)
 			continue
 		}
-		conf[section][strings.TrimSpace(key)] = anchored(unquote(value), anchors)
+		conf[section][strings.TrimSpace(field)] = anchored(unquote(setting), anchors)
 	}
 	return conf
 }
 
 func (c Config) num(section, key string) (float64, bool) {
-	v, ok := c[section][key]
+	setting, ok := c[section][key]
 	if !ok {
 		return 0, false
 	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil || f == 0 {
+	number, err := strconv.ParseFloat(setting, 64)
+	if err != nil || number == 0 {
 		return 0, false // zero means no limit, and saying zero is a decision
 	}
-	return f, true
+	return number, true
 }
 
 // numFor is num with a scope tried first: `run.adhoc` before `run`.
@@ -194,8 +194,8 @@ func (c Config) num(section, key string) (float64, bool) {
 // not been given a per-mode value behaves exactly as it did.
 func (c Config) numFor(section, key, scope string) (float64, bool) {
 	if scope != "" {
-		if v, ok := c.num(section, key+"."+scope); ok {
-			return v, true
+		if scoped, ok := c.num(section, key+"."+scope); ok {
+			return scoped, true
 		}
 	}
 	return c.num(section, key)
@@ -212,8 +212,8 @@ func handsOff(c Config) bool {
 }
 
 func (c Config) str(section, key, fallback string) string {
-	if v, ok := c[section][key]; ok && v != "" {
-		return v
+	if setting, ok := c[section][key]; ok && setting != "" {
+		return setting
 	}
 	return fallback
 }

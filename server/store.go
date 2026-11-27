@@ -11,15 +11,15 @@ import (
 type event map[string]any
 
 func (e event) s(key string) string {
-	if v, ok := e[key].(string); ok {
-		return v
+	if str, ok := e[key].(string); ok {
+		return str
 	}
 	return ""
 }
 
 func (e event) f(key string) float64 {
-	if v, ok := e[key].(float64); ok {
-		return v
+	if number, ok := e[key].(float64); ok {
+		return number
 	}
 	return 0
 }
@@ -46,23 +46,23 @@ func store(e event) {
 	e, _ = recordOf(e)
 	// jsonb refuses a NUL inside a string, and so does every text column.
 	noNUL(e)
-	at := e.f("at")
-	if at == 0 {
-		at = float64(time.Now().UnixNano()) / 1e9
+	eventAt := e.f("at")
+	if eventAt == 0 {
+		eventAt = float64(time.Now().UnixNano()) / 1e9
 	}
 	payload, _ := json.Marshal(e)
 	var id int64
 	err := db.QueryRow(
 		`INSERT INTO events (at, kind, run, phase, session, agent, branch, payload)
 		 VALUES (?,?,?,?,?,?,?,?) RETURNING id`,
-		at, e.s("kind"), e.s("run"), e.s("phase"), e.s("session"), e.s("agent"),
+		eventAt, e.s("kind"), e.s("run"), e.s("phase"), e.s("session"), e.s("agent"),
 		e.s("branch"), string(payload)).Scan(&id)
 	if err != nil {
 		log.Printf("ammit: could not keep an event: %v", err)
 		return
 	}
-	lift(id, at, e)
-	indexEvent(id, at, e)
+	lift(id, eventAt, e)
+	indexEvent(id, eventAt, e)
 	// A run this store has never heard of gets a row on its first event.
 	//
 	// The start event travels the same wire as everything else, and that wire
@@ -73,7 +73,7 @@ func store(e event) {
 	if run := e.s("run"); run != "" && e.s("kind") != "run_start" {
 		db.Exec(`INSERT INTO runs (run, name, started) VALUES (?,?,?)
 		         ON CONFLICT DO NOTHING`,
-			run, run, at)
+			run, run, eventAt)
 	}
 
 	switch e.s("kind") {
@@ -96,7 +96,7 @@ func store(e event) {
 			e.s("run"), e.s("name"))
 		// The resume that row was queued under has done its job: the ticket
 		// is a live run now, which every reader sees (ticket_actions).
-		closeResumesStarted(e.s("run"), at)
+		closeResumesStarted(e.s("run"), eventAt)
 		// A new run of a ticket supersedes any older run still open under the
 		// same name. The two share one directory (/runs/<name>), and stop_run
 		// is addressed by name: on 28 August a worker restart orphaned a run
@@ -113,21 +113,21 @@ func store(e event) {
 		// now, and every run has its own directory, so the stop the comment
 		// above feared reaches only the run it names.
 		var superseded []string
-		if rows, err := db.Query(`SELECT run FROM runs WHERE name=? AND run<>? AND finished IS NULL`,
+		if openRows, err := db.Query(`SELECT run FROM runs WHERE name=? AND run<>? AND finished IS NULL`,
 			e.s("name"), e.s("run")); err == nil {
-			for rows.Next() {
+			for openRows.Next() {
 				var old string
-				if rows.Scan(&old) == nil {
+				if openRows.Scan(&old) == nil {
 					superseded = append(superseded, old)
 				}
 			}
-			_ = rows.Err() // a cut-off read stops fewer runs, never the wrong one
-			rows.Close()
+			_ = openRows.Err() // a cut-off read stops fewer runs, never the wrong one
+			openRows.Close()
 		}
 		db.Exec(`UPDATE runs SET finished=?, verdict='BLOCKED',
 		         summary='superseded: a newer run of this ticket started'
 		         WHERE name=? AND run<>? AND finished IS NULL`,
-			at, e.s("name"), e.s("run"))
+			eventAt, e.s("name"), e.s("run"))
 		if len(superseded) > 0 {
 			go stopSuperseded(e.s("name"), superseded)
 		}
@@ -141,19 +141,19 @@ func store(e event) {
 		db.Exec(`INSERT INTO runs (run, name, started) VALUES (?,?,?)
 		         ON CONFLICT(run) DO UPDATE SET name=excluded.name,
 		                                        started=excluded.started`,
-			e.s("run"), e.s("name"), at)
+			e.s("run"), e.s("name"), eventAt)
 	case "flow":
 		phases, _ := json.Marshal(e["phases"])
 		db.Exec(`INSERT INTO flows (run, at, mode, phases)
 		         VALUES (?,?,?,?)
 		         ON CONFLICT (run) DO UPDATE SET at=excluded.at, mode=excluded.mode,
 		                                        phases=excluded.phases`,
-			e.s("run"), at, e.s("mode"), string(phases))
+			e.s("run"), eventAt, e.s("mode"), string(phases))
 	case "run_end":
 		db.Exec(`UPDATE runs SET finished=?, verdict=?, summary=? WHERE run=?`,
-			at, e.s("verdict"), e.s("summary"), e.s("run"))
-		db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, at, e.s("run"))
-		closeStopsOf(e.s("run"), at)
+			eventAt, e.s("verdict"), e.s("summary"), e.s("run"))
+		db.Exec(`UPDATE queue SET state='done', finished=? WHERE run=?`, eventAt, e.s("run"))
+		closeStopsOf(e.s("run"), eventAt)
 		// A run that ended having done nothing.
 		//
 		// Every rule here is about overshoot — too many turns, too long, too
@@ -186,7 +186,7 @@ func store(e event) {
 			e.s("branch")).Scan(&round)
 		db.Exec(`INSERT INTO gates (at, run, phase, branch, verdict, findings,
 		         round, seconds) VALUES (?,?,?,?,?,?,?,?)`,
-			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("verdict"),
+			eventAt, e.s("run"), e.s("phase"), e.s("branch"), e.s("verdict"),
 			int(e.f("findings")), round+1, e.f("seconds"))
 	case "call":
 		// The counts are worked out here rather than trusted from the caller:
@@ -202,13 +202,13 @@ func store(e event) {
 				e.s("run"), target).Scan(&onTarget)
 		}
 		ok := 1
-		if v, is := e["ok"].(bool); is && !v {
+		if passed, isBool := e["ok"].(bool); isBool && !passed {
 			ok = 0
 		}
 		var adhoc any
-		if v, is := e["adhoc"].(bool); is {
+		if adhocFlag, isBool := e["adhoc"].(bool); isBool {
 			adhoc = 0
-			if v {
+			if adhocFlag {
 				adhoc = 1
 			}
 		}
@@ -216,7 +216,7 @@ func store(e event) {
 		         kind, target, signature, repeat, on_target, seconds, ok, why, request,
 		         adhoc)
 		         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			at, e.s("run"), e.s("phase"), e.s("branch"), e.s("agent"),
+			eventAt, e.s("run"), e.s("phase"), e.s("branch"), e.s("agent"),
 			e.s("session"), e.s("tool"), kind, target, signature,
 			repeat+1, onTarget+1, e.f("seconds"), ok, e.s("why"), e.s("request"),
 			adhoc)
@@ -235,9 +235,9 @@ func stopSuperseded(name string, runs []string) {
 	conf := loadConfig(env("AMMIT_CONFIG", "/config/limits.yml"))
 	for _, old := range runs {
 		ctx := map[string]string{"run": old, "name": name}
-		for k, v := range conf["context"] {
-			if ctx[k] == "" {
-				ctx[k] = v
+		for field, fieldValue := range conf["context"] {
+			if ctx[field] == "" {
+				ctx[field] = fieldValue
 			}
 		}
 		log.Printf("ammit: superseded run %s of %s stopped: %s", shortRun(old), name, act("stop_run", conf, ctx))

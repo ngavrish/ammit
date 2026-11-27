@@ -58,12 +58,12 @@ def send(kind: str, **fields) -> None:
     """
     if not _ENABLED:
         return
-    body = json.dumps({"kind": kind, "at": time.time(), **fields}).encode()
-    threading.Thread(target=_post, args=(body,), daemon=True).start()
+    event_json = json.dumps({"kind": kind, "at": time.time(), **fields}).encode()
+    threading.Thread(target=_post, args=(event_json,), daemon=True).start()
 
 
-def _post(body: bytes) -> None:
-    req = urllib.request.Request(f"{_ENDPOINT}/events", data=body,
+def _post(event_json: bytes) -> None:
+    req = urllib.request.Request(f"{_ENDPOINT}/events", data=event_json,
                                  headers={"Content-Type": "application/json"},
                                  method="POST")
     try:
@@ -95,7 +95,7 @@ class Session:
              branch=self.branch, model=self.model, phase=self.run.current_phase)
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, traceback) -> bool:
         send("session_end", run=self.run.id, session=self.id, agent=self.agent,
              seconds=round(time.time() - self._t0, 1), turns=self.turns,
              usd=round(self.usd, 4), failed=bool(exc_type),
@@ -115,7 +115,7 @@ class Session:
              phase=self.run.current_phase, usd=usd, tokens_in=tokens_in,
              tokens_out=tokens_out, cache_read=cache_read, cache_write=cache_write)
 
-    def log(self, text: str, level: str = "text") -> None:
+    def log(self, log_line: str, level: str = "text") -> None:
         """A line of what the session actually did.
 
         Optional, and worth it: the difference between "this took two hours" and
@@ -124,12 +124,12 @@ class Session:
         """
         send("log", run=self.run.id, session=self.id, agent=self.agent,
              branch=self.branch, phase=self.run.current_phase, level=level,
-             text=text[:8000])
+             text=log_line[:8000])
 
 
 class Phase:
-    def __init__(self, run: "Run", name: str):
-        self.run, self.name = run, name
+    def __init__(self, run: "Run", phase_name: str):
+        self.run, self.name = run, phase_name
         self._t0 = time.time()
 
     def __enter__(self) -> "Phase":
@@ -137,7 +137,7 @@ class Phase:
         send("phase_start", run=self.run.id, phase=self.name)
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, traceback) -> bool:
         send("phase_end", run=self.run.id, phase=self.name,
              seconds=round(time.time() - self._t0, 1), failed=bool(exc_type))
         self.run.current_phase = ""
@@ -147,23 +147,23 @@ class Phase:
 class Run:
     """One unit of work the outside world cares about — a ticket, a job, a build."""
 
-    def __init__(self, name: str, run_id: str = "", tags: dict | None = None,
+    def __init__(self, run_name: str, run_id: str = "", tags: dict | None = None,
                  url: str = ""):
         if url:
             endpoint(url)
         self.id = run_id or uuid.uuid4().hex[:12]
-        self.name = name
+        self.name = run_name
         self.current_phase = ""
         self._t0 = time.time()
-        send("run_start", run=self.id, name=name, tags=tags or {})
+        send("run_start", run=self.id, name=run_name, tags=tags or {})
 
-    def phase(self, name: str) -> Phase:
-        return Phase(self, name)
+    def phase(self, phase_name: str) -> Phase:
+        return Phase(self, phase_name)
 
     def session(self, agent: str, branch: str = "", model: str = "") -> Session:
         return Session(self, agent, branch, model)
 
-    def document(self, kind: str, body: str, phase: str = "") -> None:
+    def document(self, kind: str, document_text: str, phase: str = "") -> None:
         """An artefact a phase produced: a map of the codebase, the requirements,
         a report.
 
@@ -172,7 +172,7 @@ class Run:
         database nobody wants to keep for a year. Sent synchronously, because a
         document is worth the wait a turn is not."""
         payload = json.dumps({"run": self.id, "kind": kind, "phase": phase,
-                              "body": body}).encode()
+                              "body": document_text}).encode()
         req = urllib.request.Request(f"{_ENDPOINT}/documents", data=payload,
                                      headers={"Content-Type": "application/json"},
                                      method="POST")
@@ -181,8 +181,8 @@ class Run:
         except (urllib.error.URLError, OSError) as exc:
             print(f"ammit: document {kind} not stored ({exc})", flush=True)
 
-    def note(self, text: str, **fields) -> None:
-        send("note", run=self.id, text=text[:2000], **fields)
+    def note(self, note_text: str, **fields) -> None:
+        send("note", run=self.id, text=note_text[:2000], **fields)
 
     def finish(self, verdict: str = "", summary: str = "") -> None:
         send("run_end", run=self.id, verdict=verdict, summary=summary[:2000],
@@ -191,6 +191,6 @@ class Run:
     def __enter__(self) -> "Run":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(self, exc_type, exc, traceback) -> bool:
         self.finish("FAILED" if exc_type else "", str(exc)[:300] if exc else "")
         return False

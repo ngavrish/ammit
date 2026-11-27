@@ -59,13 +59,13 @@ var kbSimulatorFields = []string{"dependency", "simulator", "start", "admin", "p
 func kbBodyProblem(kind string, body map[string]any) string {
 	switch kind {
 	case "simulator":
-		for _, f := range kbSimulatorFields {
-			v, ok := body[f]
-			if !ok || v == nil || v == "" {
-				return "a simulator needs " + strings.Join(kbSimulatorFields, ", ") + "; missing " + f
+		for _, field := range kbSimulatorFields {
+			fieldValue, ok := body[field]
+			if !ok || fieldValue == nil || fieldValue == "" {
+				return "a simulator needs " + strings.Join(kbSimulatorFields, ", ") + "; missing " + field
 			}
-			if l, isList := v.([]any); isList && len(l) == 0 {
-				return "a simulator needs " + strings.Join(kbSimulatorFields, ", ") + "; " + f + " is empty"
+			if list, isList := fieldValue.([]any); isList && len(list) == 0 {
+				return "a simulator needs " + strings.Join(kbSimulatorFields, ", ") + "; " + field + " is empty"
 			}
 		}
 	case "dependency":
@@ -73,19 +73,19 @@ func kbBodyProblem(kind string, body map[string]any) string {
 		if len(envs) == 0 {
 			return "a dependency needs environments: {env: {kind: real|simulator|unavailable}}"
 		}
-		for env, raw := range envs {
-			e, _ := raw.(map[string]any)
-			switch e["kind"] {
+		for env, envBody := range envs {
+			envMap, _ := envBody.(map[string]any)
+			switch envMap["kind"] {
 			case "real", "unavailable":
 			case "simulator":
-				if s, _ := e["simulator"].(string); s == "" {
+				if simulator, _ := envMap["simulator"].(string); simulator == "" {
 					return "dependency on " + env + ": kind simulator names no simulator"
 				}
 			default:
 				return "dependency on " + env + ": kind must be real, simulator or unavailable"
 			}
 		}
-		if c, _ := body["citations"].([]any); len(c) == 0 {
+		if citations, _ := body["citations"].([]any); len(citations) == 0 {
 			return "a dependency needs citations"
 		}
 	}
@@ -131,12 +131,12 @@ func putKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
 		return
 	}
-	at := kbNow()
+	savedAt := kbNow()
 	// Indexed in words as well, so a question that does not know the topic
 	// finds the entry (kb_docs.go). Embedded before the lock.
-	doc := kbDoc{Project: in.Project, Topic: "entry:" + in.Topic, Kind: in.Kind,
+	kbDocument := kbDoc{Project: in.Project, Topic: "entry:" + in.Topic, Kind: in.Kind,
 		Text: kbEntryText(in), Cite: kbEntryCite(in), LearnedBy: in.LearnedBy}
-	emb := embedKBDoc(r.Context(), doc)
+	emb := embedKBDoc(r.Context(), kbDocument)
 	mu.Lock()
 	defer mu.Unlock()
 	_, err := db.ExecContext(r.Context(), `
@@ -145,16 +145,16 @@ func putKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		ON CONFLICT (project, topic) DO UPDATE SET kind = excluded.kind, body = excluded.body,
 			learned_by = excluded.learned_by, at = excluded.at,
 			stale = 0, stale_why = NULL, stale_by = NULL, stale_at = NULL`,
-		in.Project, in.Topic, in.Kind, string(in.Body), in.LearnedBy, at)
+		in.Project, in.Topic, in.Kind, string(in.Body), in.LearnedBy, savedAt)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	_, embedded, derr := storeKBDoc(r.Context(), doc, emb)
+	_, embedded, derr := storeKBDoc(r.Context(), kbDocument, emb)
 	if derr != nil {
 		log.Printf("ammit: kb entry %s/%s not indexed for /kb/ask: %v", in.Project, in.Topic, derr)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "project": in.Project, "topic": in.Topic, "at": at,
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "project": in.Project, "topic": in.Topic, "at": savedAt,
 		"indexed": derr == nil, "embedded": embedded})
 }
 
@@ -172,18 +172,18 @@ func staleKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	res, err := db.ExecContext(r.Context(), `
+	staled, err := db.ExecContext(r.Context(), `
 		UPDATE kb SET stale = 1, stale_why = ?, stale_by = ?, stale_at = ?
 		WHERE project = ? AND topic = ?`, in.Why, in.Run, kbNow(), in.Project, in.Topic)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	n, _ := res.RowsAffected()
+	staledCount, _ := staled.RowsAffected()
 	// A document of the same topic, or the entry's own words, go stale with it.
-	n += staleKBDoc(r.Context(), in.Project, in.Topic, in.Why)
-	n += staleKBDoc(r.Context(), in.Project, "entry:"+in.Topic, in.Why)
-	if n == 0 {
+	staledCount += staleKBDoc(r.Context(), in.Project, in.Topic, in.Why)
+	staledCount += staleKBDoc(r.Context(), in.Project, "entry:"+in.Topic, in.Why)
+	if staledCount == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such entry"})
 		return
 	}
@@ -193,15 +193,15 @@ func staleKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 // getKB answers ?project=<p>[&topic=<t>][&kind=<k>]: every entry of the
 // project, stale ones included and marked, so a run sees what it must re-learn.
 func getKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	project := strings.TrimSpace(q.Get("project"))
+	query := r.URL.Query()
+	project := strings.TrimSpace(query.Get("project"))
 	if project == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "need project"})
 		return
 	}
-	topic, kind := strings.TrimSpace(q.Get("topic")), strings.TrimSpace(q.Get("kind"))
+	topic, kind := strings.TrimSpace(query.Get("topic")), strings.TrimSpace(query.Get("kind"))
 	mu.Lock()
-	out := []kbEntry{}
+	matchedEntries := []kbEntry{}
 	// An empty filter matches every row: one statement, no SQL built from parts.
 	err := kbEach(r.Context(), func(rows *sql.Rows) {
 		var e kbEntry
@@ -210,7 +210,7 @@ func getKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		if rows.Scan(&e.Project, &e.Topic, &e.Kind, &body, &e.LearnedBy, &e.At, &stale,
 			&e.StaleWhy, &e.StaleBy, &e.StaleAt) == nil {
 			e.Body, e.Stale = json.RawMessage(body), stale != 0
-			out = append(out, e)
+			matchedEntries = append(matchedEntries, e)
 		}
 	}, `SELECT project, topic, kind, body, coalesce(learned_by, ''), at, stale,
 		       coalesce(stale_why, ''), coalesce(stale_by, ''), coalesce(stale_at, 0)
@@ -221,7 +221,7 @@ func getKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": project, "entries": out})
+	writeJSON(w, http.StatusOK, map[string]any{"project": project, "entries": matchedEntries})
 }
 
 // forgetKB deletes an entry and its documents outright: DELETE /kb/docs with
@@ -243,37 +243,37 @@ func forgetKB(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	tx, err := db.BeginTx(r.Context(), nil)
+	txn, err := db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = txn.Rollback() }()
 	var n int64
-	res, err := tx.ExecContext(r.Context(), `DELETE FROM kb WHERE project = ? AND topic = ?`, in.Project, in.Topic)
+	deleted, err := txn.ExecContext(r.Context(), `DELETE FROM kb WHERE project = ? AND topic = ?`, in.Project, in.Topic)
 	if err == nil {
-		k, _ := res.RowsAffected()
-		n += k
+		entriesDeleted, _ := deleted.RowsAffected()
+		n += entriesDeleted
 	}
 	for _, topic := range []string{in.Topic, "entry:" + in.Topic} {
 		docs := `SELECT id FROM kb_docs WHERE project = ? AND topic = ?`
-		for _, q := range []string{
+		for _, deleteQuery := range []string{
 			`DELETE FROM kb_chunks WHERE doc IN (` + docs + `)`,
 		} {
-			if _, err := tx.ExecContext(r.Context(), q, in.Project, topic); err != nil {
+			if _, err := txn.ExecContext(r.Context(), deleteQuery, in.Project, topic); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}
 		}
-		res, err := tx.ExecContext(r.Context(), `DELETE FROM kb_docs WHERE project = ? AND topic = ?`, in.Project, topic)
+		deleted, err := txn.ExecContext(r.Context(), `DELETE FROM kb_docs WHERE project = ? AND topic = ?`, in.Project, topic)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		k, _ := res.RowsAffected()
-		n += k
+		docsDeleted, _ := deleted.RowsAffected()
+		n += docsDeleted
 	}
-	if err := tx.Commit(); err != nil {
+	if err := txn.Commit(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

@@ -112,10 +112,10 @@ func openSearch() {
 // said nothing in words, and those are not indexed: a heartbeat is not a
 // search result.
 func searchable(e event) string {
-	parts := make([]string, 0, len(searchedFields)+2)
-	for _, f := range searchedFields {
-		if v := strings.TrimSpace(e.s(f)); v != "" {
-			parts = append(parts, v)
+	pieces := make([]string, 0, len(searchedFields)+2)
+	for _, field := range searchedFields {
+		if fieldText := strings.TrimSpace(e.s(field)); fieldText != "" {
+			pieces = append(pieces, fieldText)
 		}
 	}
 	// A call is what an agent did, and what it did is mostly the command it
@@ -124,32 +124,32 @@ func searchable(e event) string {
 	// could only be asked of an exact signature.
 	if e.s("kind") == "call" {
 		if tool := e.s("tool"); tool != "" {
-			parts = append(parts, tool)
+			pieces = append(pieces, tool)
 		}
 		// The guard rule that decided the call, so "show me every refusal by
 		// map.search-refused" is one query rather than a guess at the wording
 		// the refusal was explained with.
 		if rule := e.s("rule"); rule != "" {
-			parts = append(parts, rule)
+			pieces = append(pieces, rule)
 		}
 		if input, ok := e["input"].(map[string]any); ok {
-			for _, v := range input {
-				if s, is := v.(string); is && strings.TrimSpace(s) != "" {
-					parts = append(parts, s)
+			for _, inputValue := range input {
+				if str, isString := inputValue.(string); isString && strings.TrimSpace(str) != "" {
+					pieces = append(pieces, str)
 				}
 			}
 		}
 	}
-	return strings.TrimSpace(strings.Join(parts, " "))
+	return strings.TrimSpace(strings.Join(pieces, " "))
 }
 
 // indexEvent files one event's words. Called from store, which holds the lock.
 func indexEvent(id int64, at float64, e event) {
-	body := searchable(e)
-	if body == "" {
+	indexed := searchable(e)
+	if indexed == "" {
 		return
 	}
-	indexRow("event", id, e.s("run"), e.s("kind"), at, e.s("phase"), e.s("session"), body)
+	indexRow("event", id, e.s("run"), e.s("kind"), at, e.s("phase"), e.s("session"), indexed)
 }
 
 // insertSearchText keeps one row of searchable text and returns its id, or
@@ -242,7 +242,7 @@ func backfillEvents(fromTheStart bool) int {
 	}
 	indexed := 0
 	for {
-		rows, err := db.Query(`SELECT id, at, coalesce(run,''), kind,
+		eventRows, err := db.Query(`SELECT id, at, coalesce(run,''), kind,
 		                       coalesce(phase,''), coalesce(session,''), payload
 		                       FROM events WHERE id > ? ORDER BY id LIMIT ?`,
 			last, backfillBatch)
@@ -251,30 +251,30 @@ func backfillEvents(fromTheStart bool) int {
 			return indexed
 		}
 		var page []kept
-		for rows.Next() {
+		for eventRows.Next() {
 			var k kept
-			if rows.Scan(&k.id, &k.at, &k.run, &k.kind, &k.phase, &k.session,
+			if eventRows.Scan(&k.id, &k.at, &k.run, &k.kind, &k.phase, &k.session,
 				&k.payload) == nil {
 				page = append(page, k)
 			}
 		}
-		_ = rows.Err() // a cut-off read is the shorter answer it always was
-		rows.Close()
+		_ = eventRows.Err() // a cut-off read is the shorter answer it always was
+		eventRows.Close()
 		if len(page) == 0 {
 			return indexed
 		}
-		for _, k := range page {
-			last = k.id
+		for _, pending := range page {
+			last = pending.id
 			var e event
-			if json.Unmarshal([]byte(k.payload), &e) != nil {
+			if json.Unmarshal([]byte(pending.payload), &e) != nil {
 				continue
 			}
-			body := searchable(e)
-			if body == "" {
+			searchText := searchable(e)
+			if searchText == "" {
 				continue // it said nothing in words; a heartbeat is not a hit
 			}
-			if _, fresh := insertSearchText("event", k.id, k.run, k.kind, k.at,
-				k.phase, k.session, body); fresh {
+			if _, fresh := insertSearchText("event", pending.id, pending.run, pending.kind, pending.at,
+				pending.phase, pending.session, searchText); fresh {
 				indexed++
 			}
 		}
@@ -285,13 +285,13 @@ func backfillEvents(fromTheStart bool) int {
 // table points at search_text, so the rebuild that follows a non-zero count is
 // what takes their words out of the index too.
 func dropDocuments() int64 {
-	res, err := db.Exec(`DELETE FROM search_text WHERE source='document'`)
+	purge, err := db.Exec(`DELETE FROM search_text WHERE source='document'`)
 	if err != nil {
 		log.Printf("ammit: could not drop documents from search: %v", err)
 		return 0
 	}
-	n, _ := res.RowsAffected()
-	return n
+	purged, _ := purge.RowsAffected()
+	return purged
 }
 
 // indexMark is what the database says its FTS index was last built from.
@@ -343,13 +343,13 @@ func ftsQuery(q string) string {
 // document in any alphabet is still that alphabet.
 func snippet(body, q string) string {
 	runes := []rune(body)
-	at := 0
+	matchAt := 0
 	if first := strings.Fields(q); len(first) > 0 {
-		if i := strings.Index(strings.ToLower(body), strings.ToLower(first[0])); i >= 0 {
-			at = utf8.RuneCountInString(body[:i])
+		if index := strings.Index(strings.ToLower(body), strings.ToLower(first[0])); index >= 0 {
+			matchAt = utf8.RuneCountInString(body[:index])
 		}
 	}
-	start := at - snippetWidth/3
+	start := matchAt - snippetWidth/3
 	if start < 0 {
 		start = 0
 	}
@@ -361,14 +361,14 @@ func snippet(body, q string) string {
 			start = 0
 		}
 	}
-	out := strings.Join(strings.Fields(string(runes[start:end])), " ")
+	excerpt := strings.Join(strings.Fields(string(runes[start:end])), " ")
 	if start > 0 {
-		out = "…" + out
+		excerpt = "…" + excerpt
 	}
 	if end < len(runes) {
-		out += "…"
+		excerpt += "…"
 	}
-	return out
+	return excerpt
 }
 
 type hit struct {
@@ -385,19 +385,19 @@ type hit struct {
 
 func serveSearch(mux *http.ServeMux) {
 	mux.HandleFunc("GET /search", func(w http.ResponseWriter, r *http.Request) {
-		q := strings.TrimSpace(r.URL.Query().Get("q"))
-		if q == "" {
+		searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+		if searchQuery == "" {
 			writeJSON(w, http.StatusBadRequest,
 				map[string]string{"error": "q is required"})
 			return
 		}
 		limit := 50
-		if v := r.URL.Query().Get("limit"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
-				limit = n
+		if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+			if requested, err := strconv.Atoi(limitParam); err == nil && requested > 0 && requested <= 500 {
+				limit = requested
 			}
 		}
-		where, args := "", []any{}
+		where, whereArgs := "", []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
 			// By id or by ticket, the same as /compare: whoever is searching
 			// knows the ticket, not the twelve hex characters.
@@ -406,10 +406,10 @@ func serveSearch(mux *http.ServeMux) {
 			if ref.Found {
 				id = ref.Run
 			}
-			where, args = where+" AND s.run=?", append(args, id)
+			where, whereArgs = where+" AND s.run=?", append(whereArgs, id)
 		}
 		if kind := r.URL.Query().Get("kind"); kind != "" {
-			where, args = where+" AND s.kind=?", append(args, kind)
+			where, whereArgs = where+" AND s.kind=?", append(whereArgs, kind)
 		}
 
 		var query string
@@ -419,7 +419,7 @@ func serveSearch(mux *http.ServeMux) {
 			// A query of nothing but punctuation leaves no term at all, and
 			// the engine's answer to an empty MATCH is a syntax error about
 			// a query language the person asking never agreed to learn.
-			if ftsQuery(q) == "" {
+			if ftsQuery(searchQuery) == "" {
 				writeJSON(w, http.StatusBadRequest, map[string]string{
 					"error": "there is no word in that query to look for"})
 				return
@@ -432,7 +432,7 @@ func serveSearch(mux *http.ServeMux) {
 			         FROM search_text s, q
 			         WHERE s.words @@ q.q` + where + `
 			         ORDER BY ts_rank(s.words, q.q, 1) DESC, s.id LIMIT ?`
-			args = append([]any{ftsQuery(q)}, args...)
+			whereArgs = append([]any{ftsQuery(searchQuery)}, whereArgs...)
 		} else {
 			// No words column. Same endpoint, same answer shape, one
 			// difference worth naming: ILIKE matches substrings rather than
@@ -443,30 +443,30 @@ func serveSearch(mux *http.ServeMux) {
 			         FROM search_text s
 			         WHERE s.body ILIKE '%' || ? || '%' ESCAPE '\'` + where + `
 			         ORDER BY s.at DESC LIMIT ?`
-			args = append([]any{likeTerm(q)}, args...)
+			whereArgs = append([]any{likeTerm(searchQuery)}, whereArgs...)
 		}
-		args = append(args, limit)
+		whereArgs = append(whereArgs, limit)
 
-		out := []hit{}
+		hits := []hit{}
 		mu.Lock()
-		rows, err := db.Query(query, args...)
+		matched, err := db.Query(query, whereArgs...)
 		if err == nil {
-			for rows.Next() {
+			for matched.Next() {
 				var h hit
 				var body string
-				if rows.Scan(&h.Source, &h.ID, &h.Run, &h.Kind, &h.At, &h.Phase,
+				if matched.Scan(&h.Source, &h.ID, &h.Run, &h.Kind, &h.At, &h.Phase,
 					&h.Session, &body) != nil {
 					continue
 				}
-				h.Snippet = snippet(body, q)
+				h.Snippet = snippet(body, searchQuery)
 				h.Fetch = fmt.Sprintf("/query?sql=SELECT+*+FROM+events+WHERE+id=%d", h.ID)
 				if h.Source == "document" {
 					h.Fetch = fmt.Sprintf("/documents?id=%d", h.ID)
 				}
-				out = append(out, h)
+				hits = append(hits, h)
 			}
-			_ = rows.Err() // a cut-off read is the shorter answer it always was
-			rows.Close()
+			_ = matched.Err() // a cut-off read is the shorter answer it always was
+			matched.Close()
 		}
 		mu.Unlock()
 		if err != nil {
@@ -475,14 +475,14 @@ func serveSearch(mux *http.ServeMux) {
 		}
 		if strings.Contains(r.Header.Get("Accept"), "text/plain") {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			for _, h := range out {
+			for _, searchHit := range hits {
 				_, _ = fmt.Fprintf(w, "%-8s %-8d %-12s %-14s %-12s %s\n",
-					h.Source, h.ID, orNone(h.Run), h.Kind, orNone(h.Phase), h.Snippet)
+					searchHit.Source, searchHit.ID, orNone(searchHit.Run), searchHit.Kind, orNone(searchHit.Phase), searchHit.Snippet)
 			}
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"q": q, "engine": engine, "hits": out, "count": len(out),
+			"q": searchQuery, "engine": engine, "hits": hits, "count": len(hits),
 		})
 	})
 }
@@ -490,6 +490,6 @@ func serveSearch(mux *http.ServeMux) {
 // likeTerm keeps a query's own wildcards out of the LIKE. Somebody searching
 // for a path with an underscore in it means the underscore.
 func likeTerm(q string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return r.Replace(q)
+	escaper := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return escaper.Replace(q)
 }

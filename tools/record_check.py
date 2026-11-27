@@ -34,44 +34,44 @@ ALWAYS = {"kind", "at", "run"}
 
 def allowlist() -> tuple[set[str], dict[str, set[str]], set[str]]:
     """The three lists in server/record.go, as sets."""
-    src = (AMMIT / "server/record.go").read_text()
+    record_go = (AMMIT / "server/record.go").read_text()
     envelope = set(re.findall(
-        r'"([^"]+)"', re.search(r"var envelope = \[\]string\{(.*?)\}", src, re.S).group(1)))
-    block = re.search(r"var perKind = map\[string\]\[\]string\{(.*?)\n\}\n", src, re.S).group(1)
-    per = {m.group(1): set(re.findall(r'"([^"]+)"', m.group(2)))
-           for m in re.finditer(r'"([a-z_]+)":\s*\{(.*?)\}', block, re.S)}
+        r'"([^"]+)"', re.search(r"var envelope = \[\]string\{(.*?)\}", record_go, re.S).group(1)))
+    block = re.search(r"var perKind = map\[string\]\[\]string\{(.*?)\n\}\n", record_go, re.S).group(1)
+    per = {kind_match.group(1): set(re.findall(r'"([^"]+)"', kind_match.group(2)))
+           for kind_match in re.finditer(r'"([a-z_]+)":\s*\{(.*?)\}', block, re.S)}
     docs = set(re.findall(
-        r'"([^"]+)"', re.search(r"var documentFields = \[\]string\{(.*?)\}", src, re.S).group(1)))
+        r'"([^"]+)"', re.search(r"var documentFields = \[\]string\{(.*?)\}", record_go, re.S).group(1)))
     return envelope, per, docs
 
 
 def dataclass_fields(tree: ast.Module) -> dict[str, set[str]]:
     """Every annotated class field, by class name: what asdict() of it yields."""
-    out = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            named = {s.target.id for s in node.body
-                     if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)}
+    fields_by_class = {}
+    for tree_node in ast.walk(tree):
+        if isinstance(tree_node, ast.ClassDef):
+            named = {statement.target.id for statement in tree_node.body
+                     if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name)}
             if named:
-                out[node.name] = named
-    return out
+                fields_by_class[tree_node.name] = named
+    return fields_by_class
 
 
-def annotations_of(fn: ast.FunctionDef) -> dict[str, str]:
+def annotations_of(function: ast.FunctionDef) -> dict[str, str]:
     """Each parameter's annotation reduced to a bare name: `X | None` is X."""
-    out = {}
-    args = fn.args
-    for arg in list(args.args) + list(args.posonlyargs) + list(args.kwonlyargs):
+    annotation_by_param = {}
+    signature = function.args
+    for arg in list(signature.args) + list(signature.posonlyargs) + list(signature.kwonlyargs):
         if arg.annotation is None:
             continue
-        for name in ast.walk(arg.annotation):
-            if isinstance(name, ast.Name) and name.id != "None":
-                out[arg.arg] = name.id
+        for annotation_node in ast.walk(arg.annotation):
+            if isinstance(annotation_node, ast.Name) and annotation_node.id != "None":
+                annotation_by_param[arg.arg] = annotation_node.id
                 break
-    return out
+    return annotation_by_param
 
 
-def spread_fields(value: ast.AST, fn: ast.FunctionDef,
+def spread_fields(spread: ast.AST, function: ast.FunctionDef,
                   shapes: dict[str, set[str]]) -> set[str] | None:
     """What a `**something` in a send resolves to, or None when it is unbounded.
 
@@ -79,19 +79,19 @@ def spread_fields(value: ast.AST, fn: ast.FunctionDef,
     a dataclass is a closed list. `**extra` on a `**kwargs` parameter is not:
     that one is answered by reading the callers, in extra_at_call_sites().
     """
-    annotated = annotations_of(fn)
-    for node in ast.walk(value):
-        if (isinstance(node, ast.Attribute) and node.attr == "as_event"
-                and isinstance(node.value, ast.Name)):
-            shape = shapes.get(annotated.get(node.value.id, ""))
+    annotated = annotations_of(function)
+    for tree_node in ast.walk(spread):
+        if (isinstance(tree_node, ast.Attribute) and tree_node.attr == "as_event"
+                and isinstance(tree_node.value, ast.Name)):
+            shape = shapes.get(annotated.get(tree_node.value.id, ""))
             if shape:
                 return set(shape)
     return None
 
 
-def dict_pairs(node: ast.Dict) -> list:
+def dict_pairs(dict_node: ast.Dict) -> list:
     """The key and value nodes of a dict literal, paired."""
-    return [(node.keys[i], node.values[i]) for i in range(len(node.keys))]
+    return [(dict_node.keys[index], dict_node.values[index]) for index in range(len(dict_node.keys))]
 
 
 def runsdb_sends(path: Path) -> tuple[dict[str, set[str]], set[str]]:
@@ -101,31 +101,31 @@ def runsdb_sends(path: Path) -> tuple[dict[str, set[str]], set[str]]:
     shapes = dataclass_fields(tree)
     sends: dict[str, set[str]] = {}
     unbounded: set[str] = set()
-    for fn in ast.walk(tree):
-        if not isinstance(fn, ast.FunctionDef):
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
             continue
-        for node in ast.walk(fn):
-            if not isinstance(node, ast.Call):
+        for tree_node in ast.walk(function):
+            if not isinstance(tree_node, ast.Call):
                 continue
-            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-            if name == "_event" and node.args:
-                kind = getattr(node.args[0], "value", "?")
-                fields = {kw.arg for kw in node.keywords if kw.arg}
-                for kw in node.keywords:
-                    if kw.arg is not None:
+            callee = getattr(tree_node.func, "id", None) or getattr(tree_node.func, "attr", None)
+            if callee == "_event" and tree_node.args:
+                kind = getattr(tree_node.args[0], "value", "?")
+                fields = {keyword.arg for keyword in tree_node.keywords if keyword.arg}
+                for keyword in tree_node.keywords:
+                    if keyword.arg is not None:
                         continue
-                    named = spread_fields(kw.value, fn, shapes)
+                    named = spread_fields(keyword.value, function, shapes)
                     if named is None:
                         unbounded.add(kind)
                     else:
                         fields |= named
                 sends.setdefault(kind, set()).update(fields | ALWAYS)
-            elif name == "_post" and node.args[1:] and isinstance(node.args[1], ast.Dict):
-                path_arg, sent = getattr(node.args[0], "value", ""), node.args[1]
-                keys = {k.value for k in sent.keys if isinstance(k, ast.Constant)}
+            elif callee == "_post" and tree_node.args[1:] and isinstance(tree_node.args[1], ast.Dict):
+                path_arg, sent = getattr(tree_node.args[0], "value", ""), tree_node.args[1]
+                keys = {key_node.value for key_node in sent.keys if isinstance(key_node, ast.Constant)}
                 if path_arg == "/events":
-                    named = [getattr(v, "value", "?") for k, v in dict_pairs(sent)
-                             if getattr(k, "value", None) == "kind"]
+                    named = [getattr(value_node, "value", "?") for key_node, value_node in dict_pairs(sent)
+                             if getattr(key_node, "value", None) == "kind"]
                     sends.setdefault(named[0] if named else "?", set()).update(keys)
                 elif path_arg == "/documents":
                     sends.setdefault("DOCUMENT", set()).update(keys)
@@ -139,40 +139,40 @@ def extra_at_call_sites(root: Path, func: str) -> set[str]:
     the callers rather than by runsdb. The runner's own tests are left out: a
     test passes a field to prove the filter drops it.
     """
-    found: set[str] = set()
-    for py in sorted(root.glob("*.py")):
-        if py.name.startswith("test_"):
+    keywords_passed: set[str] = set()
+    for module_path in sorted(root.glob("*.py")):
+        if module_path.name.startswith("test_"):
             continue
         try:
-            tree = ast.parse(py.read_text())
+            tree = ast.parse(module_path.read_text())
         except SyntaxError:
             continue
-        for node in ast.walk(tree):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == func
-                    and getattr(node.func.value, "id", "") == "runsdb"):
-                found |= {kw.arg for kw in node.keywords if kw.arg}
-    return found
+        for tree_node in ast.walk(tree):
+            if (isinstance(tree_node, ast.Call) and isinstance(tree_node.func, ast.Attribute)
+                    and tree_node.func.attr == func
+                    and getattr(tree_node.func.value, "id", "") == "runsdb"):
+                keywords_passed |= {keyword.arg for keyword in tree_node.keywords if keyword.arg}
+    return keywords_passed
 
 
 def client_sends() -> dict[str, set[str]]:
     """Every name that looks like a field in the shipped clients."""
-    out = {}
+    fields_by_client = {}
     for path in sorted((AMMIT / "clients").rglob("*")):
         if path.is_file() and path.suffix != ".mod":
-            src = path.read_text(errors="replace")
-            out[str(path.relative_to(AMMIT))] = (
-                set(re.findall(r'"([a-z_][a-z_0-9]{1,20})"\s*[:=,]', src))
-                | set(re.findall(r"'([a-z_][a-z_0-9]{1,20})'\s*=>", src)))
-    py = AMMIT / "src/ammit/__init__.py"
-    out["src/ammit/__init__.py"] = set(re.findall(r'"([a-z_][a-z_0-9]{1,20})"\s*[:=]', py.read_text()))
-    return out
+            client_source = path.read_text(errors="replace")
+            fields_by_client[str(path.relative_to(AMMIT))] = (
+                set(re.findall(r'"([a-z_][a-z_0-9]{1,20})"\s*[:=,]', client_source))
+                | set(re.findall(r"'([a-z_][a-z_0-9]{1,20})'\s*=>", client_source)))
+    python_client = AMMIT / "src/ammit/__init__.py"
+    fields_by_client["src/ammit/__init__.py"] = set(re.findall(r'"([a-z_][a-z_0-9]{1,20})"\s*[:=]', python_client.read_text()))
+    return fields_by_client
 
 
 def main() -> int:
     envelope, per, docs = allowlist()
     known_any = set(envelope).union(*per.values())
-    bad = 0
+    lossy_kinds = 0
 
     if RUNSDB.exists():
         print(f"== the runner: {RUNSDB}")
@@ -187,14 +187,14 @@ def main() -> int:
             if kind == "DOCUMENT":
                 drops = sorted(fields - docs)
             elif kind not in per:
-                bad += 1
+                lossy_kinds += 1
                 print(f"  {kind:<16} KIND NOT ON THE LIST - drops {sorted(fields - envelope)}")
                 continue
             else:
-                drops = sorted(f for f in fields if f not in envelope and f not in per[kind])
+                drops = sorted(field for field in fields if field not in envelope and field not in per[kind])
             note = " (unbounded spread, no list can hold it)" if kind in unbounded else ""
             print(f"  {kind:<16} {'DROPPED' if drops or note else 'ok':<8} {drops or ''}{note}")
-            bad += bool(drops) or bool(note)
+            lossy_kinds += bool(drops) or bool(note)
         if extra:
             print(f"  run_end's **extra, from the runner's own finish() calls: {sorted(extra)}")
     else:
@@ -207,15 +207,15 @@ def main() -> int:
         print("WARN  set RUNSDB to a runsdb.py to check it.")
 
     print("\n== the shipped clients under clients/")
-    for name, keys in client_sends().items():
-        unknown = sorted(k for k in keys if k not in known_any and k not in docs and k not in per)
-        print(f"  {name:<30} unknown-to-the-allowlist: {unknown or 'none'}")
+    for client, keys in client_sends().items():
+        unknown = sorted(field for field in keys if field not in known_any and field not in docs and field not in per)
+        print(f"  {client:<30} unknown-to-the-allowlist: {unknown or 'none'}")
 
     if RUNSDB.exists():
-        print(f"\n{bad} kind(s) the runner sends lose fields.")
+        print(f"\n{lossy_kinds} kind(s) the runner sends lose fields.")
     else:
         print("\nchecked: the clients only. WARN above says what was skipped.")
-    return 1 if bad else 0
+    return 1 if lossy_kinds else 0
 
 
 if __name__ == "__main__":

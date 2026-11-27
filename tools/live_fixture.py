@@ -49,10 +49,10 @@ def calls(run: ammit.Run, phase: str, agent: str, spec: list[tuple[str, dict]]) 
 
 def build_a() -> None:
     run = ammit.Run(A_NAME, run_id=A_RUN, tags={"mode": "live-check"})
-    with run.phase("implementing"), run.session("coder", model="sonnet") as s:
+    with run.phase("implementing"), run.session("coder", model="sonnet") as coder:
         for _ in range(3):
-            s.turn()
-        s.spend(usd=0.40, tokens_in=100_000, tokens_out=2_000)
+            coder.turn()
+        coder.spend(usd=0.40, tokens_in=100_000, tokens_out=2_000)
         calls(run, "implementing", "coder", [
             ("Grep", {"pattern": "weigh", "path": "server"}),
             ("Grep", {"pattern": "feather", "path": "server"}),
@@ -61,11 +61,11 @@ def build_a() -> None:
             ("Read", {"file_path": "/repo/README.md"}),
             ("Write", {"file_path": "/repo/server/compare.go"}),
         ])
-    with run.phase("testing"), run.session("tester", model="haiku") as s:
-        s.turn()
-        s.spend(usd=0.10, tokens_in=20_000, tokens_out=500)
+    with run.phase("testing"), run.session("tester", model="haiku") as tester:
+        tester.turn()
+        tester.spend(usd=0.10, tokens_in=20_000, tokens_out=500)
         calls(run, "testing", "tester", [("Bash", {"command": "pytest tests -q"})])
-        s.log("AttributeError: 'NoneType' object has no attribute 'weigh'", level="text")
+        tester.log("AttributeError: 'NoneType' object has no attribute 'weigh'", level="text")
     # A phase that said nothing for five minutes. Nothing else in this fixture
     # is quiet, so the idle column is zero everywhere but here. Anchored on the
     # run's own start, not on now: the gap is measured to the run's first
@@ -79,10 +79,10 @@ def build_a() -> None:
 
 def build_b() -> None:
     run = ammit.Run(B_NAME, run_id=B_RUN, tags={"mode": "live-check"})
-    with run.phase("implementing"), run.session("coder", model="sonnet") as s:
+    with run.phase("implementing"), run.session("coder", model="sonnet") as coder:
         for _ in range(4):
-            s.turn()
-        s.spend(usd=0.60, tokens_in=150_000, tokens_out=3_000)
+            coder.turn()
+        coder.spend(usd=0.60, tokens_in=150_000, tokens_out=3_000)
         calls(run, "implementing", "coder", [
             ("Grep", {"pattern": "weigh", "path": "server"}),
             ("Grep", {"pattern": "feather", "path": "server"}),
@@ -91,14 +91,14 @@ def build_b() -> None:
             ("Read", {"file_path": "/repo/server/store.go"}),
             ("Write", {"file_path": "/repo/server/search.go"}),
         ])
-    with run.phase("testing"), run.session("tester", model="haiku") as s:
-        s.turn()
-        s.spend(usd=0.05, tokens_in=10_000, tokens_out=250)
+    with run.phase("testing"), run.session("tester", model="haiku") as tester:
+        tester.turn()
+        tester.spend(usd=0.05, tokens_in=10_000, tokens_out=250)
         calls(run, "testing", "tester", [
             ("Bash", {"command": "pytest tests -q"}),
             ("Bash", {"command": "pytest tests -q --last-failed"}),
         ])
-        s.log("AttributeError raised again, in the other run", level="text")
+        tester.log("AttributeError raised again, in the other run", level="text")
     run.finish("PASS", "the live check's second run")
 
 
@@ -108,10 +108,10 @@ def settled() -> bool:
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=5) as response:
-            body = json.loads(response.read())
+            summary = json.loads(response.read())
     except (urllib.error.URLError, OSError, ValueError):
         return False
-    totals = body.get("totals", {})
+    totals = summary.get("totals", {})
     return (totals.get("a", {}).get("turns") == _EXPECT_A_TURNS
             and totals.get("b", {}).get("turns") == _EXPECT_B_TURNS)
 

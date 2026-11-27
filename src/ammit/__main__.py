@@ -41,42 +41,42 @@ def _flags(argv: list[str]) -> tuple[list[str], dict[str, str]]:
     """Positional arguments and --key value pairs, with --json as a bare flag."""
     positional: list[str] = []
     named: dict[str, str] = {}
-    rest = list(argv)
-    while rest:
-        arg = rest.pop(0)
+    unread = list(argv)
+    while unread:
+        arg = unread.pop(0)
         if not arg.startswith("--"):
             positional.append(arg)
             continue
-        key = arg[2:]
-        if key == "json":
+        flag = arg[2:]
+        if flag == "json":
             named["json"] = "1"
             continue
-        if not rest:
-            raise SystemExit(f"--{key} wants a value\n\n{USAGE}")
-        named[key] = rest.pop(0)
+        if not unread:
+            raise SystemExit(f"--{flag} wants a value\n\n{USAGE}")
+        named[flag] = unread.pop(0)
     return positional, named
 
 
-def _get(path: str, params: dict[str, str], as_json: bool) -> str:
+def _get(path: str, query: dict[str, str], as_json: bool) -> str:
     """One GET, and a readable failure rather than a traceback.
 
     The client half of this package never raises at the caller; a command-line
     tool is the one place where being told what went wrong is the point.
     """
-    url = f"{endpoint()}{path}?{urllib.parse.urlencode(params)}"
+    url = f"{endpoint()}{path}?{urllib.parse.urlencode(query)}"
     accept = "application/json" if as_json else "text/plain"
     req = urllib.request.Request(url, headers={"Accept": accept}, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
-            body = response.read().decode("utf-8", "replace")
+            reply = response.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace").strip()
         raise SystemExit(f"ammit: {exc.code} from {url}\n{detail}") from exc
     except (urllib.error.URLError, OSError) as exc:
         raise SystemExit(f"ammit: cannot reach {endpoint()} ({exc})") from exc
     if as_json:
-        return json.dumps(json.loads(body), indent=2)
-    return body
+        return json.dumps(json.loads(reply), indent=2)
+    return reply
 
 
 def _compare(argv: list[str]) -> int:
@@ -85,10 +85,10 @@ def _compare(argv: list[str]) -> int:
         raise SystemExit(USAGE)
     if "url" in named:
         endpoint(named["url"])
-    params = {"a": positional[0], "b": positional[1]}
+    query = {"a": positional[0], "b": positional[1]}
     if named.get("by"):
-        params["by"] = named["by"]
-    print(_get("/compare", params, "json" in named), end="")
+        query["by"] = named["by"]
+    print(_get("/compare", query, "json" in named), end="")
     return _OK
 
 
@@ -98,24 +98,24 @@ def _search(argv: list[str]) -> int:
         raise SystemExit(USAGE)
     if "url" in named:
         endpoint(named["url"])
-    params = {"q": positional[0]}
-    for key in ("run", "kind", "limit"):
-        if named.get(key):
-            params[key] = named[key]
-    print(_get("/search", params, "json" in named), end="")
+    query = {"q": positional[0]}
+    for filter_name in ("run", "kind", "limit"):
+        if named.get(filter_name):
+            query[filter_name] = named[filter_name]
+    print(_get("/search", query, "json" in named), end="")
     return _OK
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in ("-h", "--help", "help"):
+    words = list(sys.argv[1:] if argv is None else argv)
+    if not words or words[0] in ("-h", "--help", "help"):
         print(USAGE, end="")
         return _OK
-    verb, rest = args[0], args[1:]
+    verb, verb_args = words[0], words[1:]
     if verb == "compare":
-        return _compare(rest)
+        return _compare(verb_args)
     if verb == "search":
-        return _search(rest)
+        return _search(verb_args)
     print(f"ammit: no command {verb}\n\n{USAGE}", end="", file=sys.stderr)
     return _MISUSE
 

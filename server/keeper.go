@@ -35,9 +35,9 @@ func keepTick(conf Config) {
 	if strings.TrimSpace(tickets) == "all" {
 		list = recentTickets()
 	}
-	for _, t := range list {
-		if t = strings.TrimSpace(t); t != "" {
-			keepOne(t, conf)
+	for _, ticket := range list {
+		if ticket = strings.TrimSpace(ticket); ticket != "" {
+			keepOne(ticket, conf)
 		}
 	}
 }
@@ -51,21 +51,21 @@ func keepTick(conf Config) {
 func recentTickets() []string {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`SELECT DISTINCT name FROM runs WHERE started > ?
+	nameRows, err := db.Query(`SELECT DISTINCT name FROM runs WHERE started > ?
 	                       AND name ~ '^[A-Z].*-[0-9]' AND name NOT ILIKE 'WD-%'
 	                       AND name NOT ILIKE 'ADHOC-%'`, wdNow()-2*86400)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer nameRows.Close()
 	var out []string
-	for rows.Next() {
+	for nameRows.Next() {
 		var n string
-		if rows.Scan(&n) == nil {
+		if nameRows.Scan(&n) == nil {
 			out = append(out, n)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter list it always was
+	_ = nameRows.Err() // a cut-off read is the shorter list it always was
 	return out
 }
 
@@ -94,18 +94,18 @@ func keepOne(ticket string, conf Config) {
 	case strings.Contains(summary, "waits for a person's approval"):
 		return
 	}
-	f, err := readRunFacts(run)
+	facts, err := readRunFacts(run)
 	if err != nil {
 		return
 	}
 	// A run a person stopped is not lying: it was put down. 2026-10-27: the
-	// keeper resumed APF-3301's 13c9a745, stopped by hand a minute earlier
+	// keeper resumed APF-3301's 13c9a745, stopped byHand hand a minute earlier
 	// because a later run had superseded it.
 	// A stop through the host orchestrator's own /cancel is a person's too,
 	// though no /act judgement says so (stoppedByHand). 2026-11-06: this
 	// queued 3f7ba7eb twenty seconds after e4420a99 of APF-1972 was put down
 	// that way, and the same hand put the resume down two minutes later.
-	if _, by := stoppedByHand(f); by {
+	if _, byHand := stoppedByHand(facts); byHand {
 		return
 	}
 	// Over budget is not a reason to leave a ticket lying: the keeper resumes
@@ -119,21 +119,21 @@ func keepOne(ticket string, conf Config) {
 		sayHeldOnce("keeper", ticket, holder)
 		return
 	}
-	phase := resumeFrom(f)
-	if handToFixer(ticket, f, phase, conf) {
+	phase := resumeFrom(facts)
+	if handToFixer(ticket, facts, phase, conf) {
 		return
 	}
-	body := map[string]any{"key": ticket, "rerun": "resume", "source_run": run}
-	if f.mode != "" {
-		body["mode"] = f.mode
+	payloadMap := map[string]any{"key": ticket, "rerun": "resume", "source_run": run}
+	if facts.mode != "" {
+		payloadMap["mode"] = facts.mode
 	}
 	if phase != "" {
-		body["from_phase"] = phase
+		payloadMap["from_phase"] = phase
 	}
-	for k, v := range runParams(run) {
-		body[k] = v
+	for field, fieldValue := range runParams(run) {
+		payloadMap[field] = fieldValue
 	}
-	payload, _ := json.Marshal(body)
+	payload, _ := json.Marshal(payloadMap)
 	// A resume the orchestrator refuses is no resume: three refused in a row
 	// for the same ended run, and the keeper says so once, as an ALERT, and
 	// stops asking - the refusal is the flow's or the stand's, and a person or
@@ -149,15 +149,15 @@ func keepOne(ticket string, conf Config) {
 	// the keeper leaves it to its holder. 2026-11-07: the keeper resumed
 	// APF-3313 a minute into cycle 3's fix run WD-9519cad8-3, the resume hit
 	// the same red gate, and the cycle was spent before its PR was merged.
-	q, holder := queueUnderAction(ticket, "keeper", run, string(payload))
-	if q == 0 {
+	queueID, holder := queueUnderAction(ticket, "keeper", run, string(payload))
+	if queueID == 0 {
 		sayHeldOnce("keeper", ticket, holder)
 		return
 	}
-	text := fmt.Sprintf("keeper: %s was lying since run %s ended %s; resume queued from %s (queue %d)",
-		ticket, shortRun(run), orDash(verdict), orDash(phase), q)
-	store(event{"kind": "keeper", "run": run, "text": text})
-	log.Printf("ammit: %s", text)
+	note := fmt.Sprintf("keeper: %s was lying since run %s ended %s; resume queued from %s (queue %d)",
+		ticket, shortRun(run), orDash(verdict), orDash(phase), queueID)
+	store(event{"kind": "keeper", "run": run, "text": note})
+	log.Printf("ammit: %s", note)
 }
 
 // What a BLOCKED run is compared on: its stored summary with run ids, numbers
@@ -167,8 +167,8 @@ func keepOne(ticket string, conf Config) {
 var blockedNoise = regexp.MustCompile(`\b[0-9a-f]{8,}\b|[0-9]+(\.[0-9]+)?`)
 
 func blockedKey(summary, phase string) string {
-	s := blockedNoise.ReplaceAllString(strings.ToLower(summary), "#")
-	return strings.Join(strings.Fields(s), " ") + " @ " + orDash(phase)
+	normalized := blockedNoise.ReplaceAllString(strings.ToLower(summary), "#")
+	return strings.Join(strings.Fields(normalized), " ") + " @ " + orDash(phase)
 }
 
 // handToFixer hands a ticket to the fixer instead of resuming it again, and
@@ -193,12 +193,12 @@ func handToFixer(ticket string, f *runFacts, phase string, conf Config) bool {
 	if prev == "" || strings.ToUpper(verdict) != "BLOCKED" {
 		return false
 	}
-	pf, err := readRunFacts(prev)
+	prevFacts, err := readRunFacts(prev)
 	if err != nil {
 		return false
 	}
-	key := blockedKey(f.summary, phase)
-	if key != blockedKey(pf.summary, resumeFrom(pf)) {
+	blocked := blockedKey(f.summary, phase)
+	if blocked != blockedKey(prevFacts.summary, resumeFrom(prevFacts)) {
 		return false
 	}
 	if _, done := wdMeta("escalated:" + f.run); done {
@@ -209,50 +209,50 @@ func handToFixer(ticket string, f *runFacts, phase string, conf Config) bool {
 	// dataGapsOnly). Said once, as an ALERT, and left lying.
 	if dataGapsOnly(f.summary) {
 		wdSetMeta("escalated:"+f.run, wdNow())
-		text := fmt.Sprintf("keeper: %s ended BLOCKED twice on data gaps only (%s, then %s: %q); "+
+		note := fmt.Sprintf("keeper: %s ended BLOCKED twice on data gaps only (%s, then %s: %q); "+
 			"no resume and no fix changes a stand's data - left for a person", ticket,
 			shortRun(prev), shortRun(f.run), f.summary)
 		ctx := map[string]string{"run": f.run, "name": ticket, "verdict": "DATA-GAPS",
-			"summary": text}
-		for k, v := range conf["context"] {
-			if ctx[k] == "" {
-				ctx[k] = v
+			"summary": note}
+		for field, fieldValue := range conf["context"] {
+			if ctx[field] == "" {
+				ctx[field] = fieldValue
 			}
 		}
 		judge("run", f.run, ticket, "keeper.escalate", 2, 2, "notify", act("notify", conf, ctx))
-		store(event{"kind": "keeper", "run": f.run, "text": text})
+		store(event{"kind": "keeper", "run": f.run, "text": note})
 		return true
 	}
-	d, why := classifyDrop(f, conf)
-	if d == nil {
+	drop, why := classifyDrop(f, conf)
+	if drop == nil {
 		log.Printf("ammit: keeper: %s blocked twice the same way, and the watchdog would not call %s "+
 			"a drop (%s); resumed as before", ticket, shortRun(f.run), why)
 		return false
 	}
 	// No code fix brings a network back: resumed, as before, until access answers.
-	if networkRefused(d) {
+	if networkRefused(drop) {
 		return false
 	}
 	wdSetMeta("escalated:"+f.run, wdNow())
-	text := fmt.Sprintf("keeper: %s ended BLOCKED twice in a row the same way (%s, then %s: %q); "+
+	note := fmt.Sprintf("keeper: %s ended BLOCKED twice in a row the same way (%s, then %s: %q); "+
 		"handed to the watchdog as a fix instead of another resume", ticket, shortRun(prev),
-		shortRun(f.run), key)
-	limit, on := watchdogCap(conf)
-	if !on || conf.str("watchdog", "fix_mode", "watchdogfix") == "off" {
-		text += " - but the fixer is off (loops.laps_watchdog unset or watchdog.fix_mode off); left for a person"
-		judge("run", f.run, ticket, "keeper.escalate", 2, 2, "notify", text)
-		store(event{"kind": "keeper", "run": f.run, "text": text})
-		log.Printf("ammit: %s", text)
+		shortRun(f.run), blocked)
+	limit, capped := watchdogCap(conf)
+	if !capped || conf.str("watchdog", "fix_mode", "watchdogfix") == "off" {
+		note += " - but the fixer is off (loops.laps_watchdog unset or watchdog.fix_mode off); left for a person"
+		judge("run", f.run, ticket, "keeper.escalate", 2, 2, "notify", note)
+		store(event{"kind": "keeper", "run": f.run, "text": note})
+		log.Printf("ammit: %s", note)
 		return true
 	}
-	d.evidence = append(d.evidence, fmt.Sprintf(
-		"the keeper saw the same BLOCKED on consecutive runs %s and %s: %s", prev, f.run, key))
+	drop.evidence = append(drop.evidence, fmt.Sprintf(
+		"the keeper saw the same BLOCKED on consecutive runs %s and %s: %s", prev, f.run, blocked))
 	root, _ := rootOf(f.run)
-	recordDrop(d, root) // false when the watchdog recorded it already: the same drop
-	judge("run", f.run, ticket, "keeper.escalate", 2, 2, "watchdog", key)
-	store(event{"kind": "keeper", "run": f.run, "text": text})
-	log.Printf("ammit: %s", text)
-	startCycle(d, root, conf, limit)
+	recordDrop(drop, root) // false when the watchdog recorded it already: the same drop
+	judge("run", f.run, ticket, "keeper.escalate", 2, 2, "watchdog", blocked)
+	store(event{"kind": "keeper", "run": f.run, "text": note})
+	log.Printf("ammit: %s", note)
+	startCycle(drop, root, conf, limit)
 	return true
 }
 
@@ -273,26 +273,26 @@ func refusedResumes(ticket, run string) int {
 // alertRefusedOnce raises the ALERT for a run whose resumes are all refused,
 // once per run, with the last refusal's own words.
 func alertRefusedOnce(ticket, run string, conf Config) {
-	key := "refused:" + run
-	if _, said := wdMeta(key); said {
+	refusedKey := "refused:" + run
+	if _, alerted := wdMeta(refusedKey); alerted {
 		return
 	}
-	wdSetMeta(key, wdNow())
+	wdSetMeta(refusedKey, wdNow())
 	var why string
 	mu.Lock()
 	db.QueryRow(`SELECT coalesce(why,'') FROM ticket_actions WHERE ticket=? AND run=? AND owner='keeper'
 	               AND kind='resume' AND state='failed' ORDER BY opened DESC LIMIT 1`, ticket, run).Scan(&why)
 	mu.Unlock()
-	text := fmt.Sprintf("keeper: %s cannot be resumed - the last three resumes of run %s were refused "+
+	note := fmt.Sprintf("keeper: %s cannot be resumed - the last three resumes of run %s were refused "+
 		"without becoming a run; the keeper stops asking until a run of it starts. Last refusal: %s",
 		ticket, shortRun(run), why)
-	ctx := map[string]string{"run": run, "name": ticket, "verdict": "RESUME-REFUSED", "summary": text}
-	for k, v := range conf["context"] {
-		if ctx[k] == "" {
-			ctx[k] = v
+	ctx := map[string]string{"run": run, "name": ticket, "verdict": "RESUME-REFUSED", "summary": note}
+	for field, fieldValue := range conf["context"] {
+		if ctx[field] == "" {
+			ctx[field] = fieldValue
 		}
 	}
 	judge("run", run, ticket, "keeper.refused", 3, 3, "notify", act("notify", conf, ctx))
-	store(event{"kind": "keeper", "run": run, "text": text})
-	log.Printf("ammit: %s", text)
+	store(event{"kind": "keeper", "run": run, "text": note})
+	log.Printf("ammit: %s", note)
 }

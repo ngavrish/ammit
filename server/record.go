@@ -134,28 +134,28 @@ var (
 // would be storing it for nobody.
 func recordOf(e event) (event, []string) {
 	allowed := map[string]bool{}
-	for _, f := range envelope {
-		allowed[f] = true
+	for _, field := range envelope {
+		allowed[field] = true
 	}
-	for _, f := range perKind[e.s("kind")] {
-		allowed[f] = true
+	for _, field := range perKind[e.s("kind")] {
+		allowed[field] = true
 	}
 	kept := event{}
 	dropped := make([]string, 0, len(e))
-	for key, value := range e {
-		if allowed[key] {
-			kept[key] = value
+	for field, fieldValue := range e {
+		if allowed[field] {
+			kept[field] = fieldValue
 			continue
 		}
-		dropped = append(dropped, key)
+		dropped = append(dropped, field)
 	}
 	if len(dropped) == 0 {
 		return kept, nil
 	}
 	sort.Strings(dropped)
 	droppedMu.Lock()
-	for _, key := range dropped {
-		droppedCount[e.s("kind")+"."+key]++
+	for _, field := range dropped {
+		droppedCount[e.s("kind")+"."+field]++
 	}
 	droppedMu.Unlock()
 	return kept, dropped
@@ -166,11 +166,11 @@ func recordOf(e event) (event, []string) {
 func droppedSoFar() map[string]int {
 	droppedMu.Lock()
 	defer droppedMu.Unlock()
-	out := make(map[string]int, len(droppedCount))
-	for key, n := range droppedCount {
-		out[key] = n
+	counts := make(map[string]int, len(droppedCount))
+	for field, count := range droppedCount {
+		counts[field] = count
 	}
-	return out
+	return counts
 }
 
 // recordPage is the same contract as data, for a client that would rather ask

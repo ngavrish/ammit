@@ -36,12 +36,12 @@ func recently(rule, subject string, cooldown float64) bool {
 		cooldown = 60
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
-	key := rule + "\x1f" + subject
-	if last, ok := judged[key]; ok && now-last < cooldown {
+	cooldownKey := rule + "\x1f" + subject
+	if last, ok := judged[cooldownKey]; ok && now-last < cooldown {
 		return true
 	}
-	judged[key] = now
-	judgedCount[key]++
+	judged[cooldownKey] = now
+	judgedCount[cooldownKey]++
 	return false
 }
 
@@ -62,8 +62,8 @@ func escalated(conf Config, rule string, threshold, observed float64,
 	if !ok || factor <= 1 || threshold <= 0 || observed < threshold*factor {
 		return action, false
 	}
-	key := "on_" + strings.TrimPrefix(strings.TrimPrefix(rule, "limits."), "timeouts.")
-	if over := conf.str("actions", key+"_over", ""); over != "" {
+	escalation := "on_" + strings.TrimPrefix(strings.TrimPrefix(rule, "limits."), "timeouts.")
+	if over := conf.str("actions", escalation+"_over", ""); over != "" {
 		return over, true
 	}
 	return conf.str("actions", "on_escalation", action), true
@@ -99,12 +99,12 @@ func judgeBy(who *handWho, scope, run, subject, rule string, threshold, observed
 	if action == "warn" {
 		mark = "ammit WARN"
 	}
-	by := ""
+	byWho := ""
 	if who != nil {
-		by = " (by " + who.String() + ")"
+		byWho = " (by " + who.String() + ")"
 	}
 	log.Printf("%s: %s — %.0f against %.0f on %s %s -> %s %s%s",
-		mark, rule, observed, threshold, orDash(run), subject, action, outcome, by)
+		mark, rule, observed, threshold, orDash(run), subject, action, outcome, byWho)
 }
 
 func orDash(s string) string {
@@ -131,9 +131,9 @@ func orDash(s string) string {
 // guess: a pipeline whose "restart" genuinely resumes work says so by leaving
 // it out.
 func endsRun(conf Config, action string) bool {
-	for _, name := range strings.Split(conf.str("actions", "ends_run",
+	for _, listed := range strings.Split(conf.str("actions", "ends_run",
 		"stop_run,restart_worker"), ",") {
-		if strings.TrimSpace(name) == action && action != "" {
+		if strings.TrimSpace(listed) == action && action != "" {
 			return true
 		}
 	}
@@ -165,8 +165,8 @@ func judgeRunEnd(run, name, verdict, summary string) {
 	action := conf.str("actions", "on_run_verdict", "notify")
 	ctx := map[string]string{"run": run, "name": name, "verdict": verdict,
 		"summary": summary}
-	for k, v := range conf["context"] {
-		ctx[k] = v
+	for field, fieldValue := range conf["context"] {
+		ctx[field] = fieldValue
 	}
 	judge("run", run, name, "verdict."+strings.ToLower(verdict), 0, 0,
 		action, act(action, conf, ctx))
@@ -201,8 +201,8 @@ func judgeEmptyRun(run, verdict, summary string) {
 	}
 	action := conf.str("actions", "on_turns_min", "warn")
 	ctx := map[string]string{"run": run, "verdict": verdict, "summary": summary}
-	for k, v := range conf["context"] {
-		ctx[k] = v
+	for field, fieldValue := range conf["context"] {
+		ctx[field] = fieldValue
 	}
 	lived := 0.0
 	if started.Valid && finished.Valid {
@@ -313,34 +313,34 @@ func act(name string, conf Config, ctx map[string]string) string {
 		}
 		stop = openStop(ctx["run"], ctx["name"], owner)
 	}
-	out, err := exec.Command("sh", "-c", tmpl).CombinedOutput()
+	output, err := exec.Command("sh", "-c", tmpl).CombinedOutput()
 	if err != nil {
 		stopNotSent(stop, err.Error())
 	}
-	said := strings.TrimSpace(string(out))
-	if len(said) > 200 {
+	reply := strings.TrimSpace(string(output))
+	if len(reply) > 200 {
 		// On a rune boundary: a cut through a Cyrillic letter left a broken
 		// byte at the end of every Russian notice.
 		cut := 200
-		for cut > 0 && !utf8.RuneStart(said[cut]) {
+		for cut > 0 && !utf8.RuneStart(reply[cut]) {
 			cut--
 		}
-		said = said[:cut]
+		reply = reply[:cut]
 	}
 	if err != nil {
 		// What the command printed is why it failed. 2026-11-03:
 		// watchdog_merge for agentic-v-model#1096 (chain 23884d89, cycle 1)
 		// answered "failed: exit status 1" on a green, clean PR, and nothing
 		// on record could say why it was not merged.
-		if said == "" {
+		if reply == "" {
 			return fmt.Sprintf("failed: %v", err)
 		}
-		return fmt.Sprintf("failed: %v: %s", err, said)
+		return fmt.Sprintf("failed: %v: %s", err, reply)
 	}
-	if said == "" {
+	if reply == "" {
 		return "done"
 	}
-	return said
+	return reply
 }
 
 func finish(run, verdict, summary string) {
@@ -407,9 +407,9 @@ func deafAfter() float64 { return math.Float64frombits(_deafAfter.Load()) }
 func nowWall() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 func weigh(conf Config) {
-	up := nowWall() - upSince()
-	for _, r := range openRuns() {
-		age := float64(time.Now().UnixNano())/1e9 - r.started
+	uptime := nowWall() - upSince()
+	for _, openRun := range openRuns() {
+		age := float64(time.Now().UnixNano())/1e9 - openRun.started
 		// The fast pulse check, ahead of the slow work-silence one. The runner
 		// posts a heartbeat every minute; timeouts.heartbeat (120s) is two
 		// missed in a row, which is the process wedged or gone - reanimate it
@@ -418,7 +418,7 @@ func weigh(conf Config) {
 		// is no heartbeat yet (-1): a pulse that never started is not a pulse
 		// that stopped, and the worker_gone/orphan path below still catches
 		// the run that died before its first beat.
-		if hb, ok := conf.num("timeouts", "heartbeat"); ok && hb > 0 {
+		if heartbeat, ok := conf.num("timeouts", "heartbeat"); ok && heartbeat > 0 {
 			// Only the silence measured AWAKE counts. The age of the pulse is
 			// not the same question as how long we have watched it: a laptop
 			// that sleeps for eighteen minutes wakes with every pulse aged
@@ -453,26 +453,26 @@ func weigh(conf Config) {
 			// process to reanimate, so this closes the row rather than firing
 			// a hand at it - the same treatment, and for the same reason, as
 			// the corpse below. Measured awake, like everything else here.
-			if pulse := heartbeatAge(r.run); pulse < 0 {
+			if pulse := heartbeatAge(openRun.run); pulse < 0 {
 				born := age
-				if up < born {
-					born = up
+				if uptime < born {
+					born = uptime
 				}
-				if born > hb {
-					finish(r.run, "BLOCKED", fmt.Sprintf(
+				if born > heartbeat {
+					finish(openRun.run, "BLOCKED", fmt.Sprintf(
 						"ammit: stillborn - no heartbeat in the %.0fs since "+
 							"the run started, so nothing ever got going", born))
 					log.Printf("ammit: closed stillborn run %s (%s) - no "+
-						"heartbeat in %.0fs", r.run, r.name, born)
+						"heartbeat in %.0fs", openRun.run, openRun.name, born)
 					continue
 				}
 			}
-			if pulse := heartbeatAge(r.run); pulse >= 0 {
+			if pulse := heartbeatAge(openRun.run); pulse >= 0 {
 				quiet := pulse
-				if up < quiet {
-					quiet = up
+				if uptime < quiet {
+					quiet = uptime
 				}
-				if quiet > hb {
+				if quiet > heartbeat {
 					action := conf.str("actions", "on_heartbeat_gone", "stop_run")
 					// A run on the host (run_start tags.where = local) has no
 					// process in the runner container, so restarting that
@@ -490,15 +490,15 @@ func weigh(conf Config) {
 					// event loop had stopped turning. The pulse is gone and
 					// nothing here can bring it back: close the row, say so,
 					// and the watchdog resumes it once the host runner is up.
-					if hostRun(r.run) {
+					if hostRun(openRun.run) {
 						// Any event from the host runner is a pulse: its heartbeat
 						// pauses through a network outage while it works on.
-						if ev := runnerEventAge(r.run); ev >= 0 && ev <= hb {
+						if eventAge := runnerEventAge(openRun.run); eventAge >= 0 && eventAge <= heartbeat {
 							continue
 						}
-						judge("run", r.run, r.name, "timeouts.heartbeat", hb, quiet,
+						judge("run", openRun.run, openRun.name, "timeouts.heartbeat", heartbeat, quiet,
 							"close", "a host run: no hand reaches its runner, the row is closed")
-						finish(r.run, "BLOCKED", fmt.Sprintf(
+						finish(openRun.run, "BLOCKED", fmt.Sprintf(
 							"ammit: the host runner stopped beating %.0fs ago - its process "+
 								"is wedged or gone; restart the host stand and resume", quiet))
 						continue
@@ -514,19 +514,19 @@ func weigh(conf Config) {
 					// The worker_gone check below never saw it: this branch
 					// `continue`s first.
 					if gone, ok := conf.num("timeouts", "worker_gone"); ok && gone > 0 && quiet > gone {
-						judge("run", r.run, r.name, "timeouts.heartbeat", hb, quiet,
+						judge("run", openRun.run, openRun.name, "timeouts.heartbeat", heartbeat, quiet,
 							"close", "no heartbeat past worker_gone; the stop reached nothing")
-						finish(r.run, "BLOCKED", fmt.Sprintf(
+						finish(openRun.run, "BLOCKED", fmt.Sprintf(
 							"ammit: no heartbeat for %.0fs, past worker_gone (%.0fs) - "+
 								"nothing holds this run any more", quiet, gone))
 						continue
 					}
-					ctx := map[string]string{"run": r.run, "name": r.name,
-						"branch": lastBranch(r.run)}
-					for k, v := range conf["context"] {
-						ctx[k] = v
+					ctx := map[string]string{"run": openRun.run, "name": openRun.name,
+						"branch": lastBranch(openRun.run)}
+					for field, fieldValue := range conf["context"] {
+						ctx[field] = fieldValue
 					}
-					judge("run", r.run, r.name, "timeouts.heartbeat", hb, quiet,
+					judge("run", openRun.run, openRun.name, "timeouts.heartbeat", heartbeat, quiet,
 						action, act(action, conf, ctx))
 					continue
 				}
@@ -552,7 +552,7 @@ func weigh(conf Config) {
 			// chatter, mid-suite, mid-frame. Only ammit's own instruments
 			// (samples, probes) stay excluded - they prove ammit is alive,
 			// not the worker.
-			if quiet := heardFrom(r.run); quiet > gone {
+			if quiet := heardFrom(openRun.run); quiet > gone {
 				// Ask the docker daemon before signing the certificate. Run
 				// 46a57530 sat in a real fifteen-minute wedge - a session
 				// resume hung with no event of any kind - and came back to
@@ -573,21 +573,21 @@ func weigh(conf Config) {
 				if workerUp(conf) {
 					continue
 				}
-				finish(r.run, "BLOCKED", fmt.Sprintf(
+				finish(openRun.run, "BLOCKED", fmt.Sprintf(
 					"ammit: worker gone - nothing heard for %.0fs", quiet))
 				continue
 			}
 		}
-		ctx := map[string]string{"run": r.run, "name": r.name,
+		ctx := map[string]string{"run": openRun.run, "name": openRun.name,
 			// Which fan-out branch the run was last heard from, so a command can
 			// name one branch instead of taking the whole run down with it.
-			"branch": lastBranch(r.run)}
+			"branch": lastBranch(openRun.run)}
 		// What shape of run this is, so the two limits that bound a whole run can
 		// be given a per-mode value. Empty for a run that never said, and an
 		// empty scope keeps every unscoped number exactly as it was.
-		mode := runMode(r.run)
-		for k, v := range conf["context"] {
-			ctx[k] = v
+		mode := runMode(openRun.run)
+		for field, fieldValue := range conf["context"] {
+			ctx[field] = fieldValue
 		}
 
 		// The ticket's budget, over its whole chain of runs (chainStart). Past
@@ -595,9 +595,9 @@ func weigh(conf Config) {
 		// more time is a person's decision, not a fix. Scoped by mode like
 		// timeouts.run: a regression is the whole suite, hours past a
 		// ticket's four (timeouts.ticket.regression).
-		if limit, ok := conf.numFor("timeouts", "ticket", mode); ok && limit > 0 && !strings.HasPrefix(r.name, "WD-") {
-			_, began := chainStart(r.run, r.started)
-			root, spent := chainSpent(r.run, r.started)
+		if limit, ok := conf.numFor("timeouts", "ticket", mode); ok && limit > 0 && !strings.HasPrefix(openRun.name, "WD-") {
+			_, began := chainStart(openRun.run, openRun.started)
+			root, spent := chainSpent(openRun.run, openRun.started)
 			// timeouts.ticket_since: chains that began before the limit was
 			// switched on finish under the terms they started with.
 			since, _ := conf.num("timeouts", "ticket_since")
@@ -606,22 +606,22 @@ func weigh(conf Config) {
 				// working on: run f69603e4 of APF-3122 (2026-10-27) was closed
 				// over budget and its host step went on, and the stand answered
 				// the next start with "already running". stop_run reaches it.
-				judge("run", r.run, r.name, TicketBudgetRule, limit, spent, "stop_run",
+				judge("run", openRun.run, openRun.name, TicketBudgetRule, limit, spent, "stop_run",
 					"the ticket's chain is over its budget: "+act("stop_run", conf, ctx))
-				finish(r.run, "BLOCKED", fmt.Sprintf(
+				finish(openRun.run, "BLOCKED", fmt.Sprintf(
 					"ammit: %s is over its ticket budget - %.1fh worked by its chain of runs from run %s, "+
 						"against timeouts.ticket = %.1fh. More time is a person's decision",
-					r.name, spent/3600, shortRun(root), limit/3600))
+					openRun.name, spent/3600, shortRun(root), limit/3600))
 				continue
 			}
 		}
 		if limit, ok := conf.numFor("timeouts", "run", mode); ok && age > limit {
 			action := conf.str("actions", "on_run_timeout", "stop_run")
-			judge("run", r.run, r.name, "timeouts.run", limit, age, action,
+			judge("run", openRun.run, openRun.name, "timeouts.run", limit, age, action,
 				act(action, conf, ctx))
 			// Same rule as the money cap below: the action decides.
 			if stops(action) {
-				finish(r.run, "BLOCKED",
+				finish(openRun.run, "BLOCKED",
 					fmt.Sprintf("ammit: over timeouts.run (%.0fs)", limit))
 				continue
 			}
@@ -633,9 +633,9 @@ func weigh(conf Config) {
 		// it has not. Judged on the bill alone, eighteen stopped sessions of
 		// run f4a30b19 cost nothing.
 		if limit, ok := conf.numFor("limits", "usd_per_run", mode); ok {
-			if usd := spentUSD(r); usd > limit {
+			if usd := spentUSD(openRun); usd > limit {
 				action := conf.str("actions", "on_usd", "stop_run")
-				judge("run", r.run, r.name, "limits.usd_per_run", limit, usd, action,
+				judge("run", openRun.run, openRun.name, "limits.usd_per_run", limit, usd, action,
 					act(action, conf, ctx))
 				// The close belongs to the action, not to the limit.
 				//
@@ -647,7 +647,7 @@ func weigh(conf Config) {
 				// action says what to do about it, and a config that cannot
 				// choose is not a config.
 				if stops(action) {
-					finish(r.run, "BLOCKED", "ammit: over limits.usd_per_run")
+					finish(openRun.run, "BLOCKED", "ammit: over limits.usd_per_run")
 					continue
 				}
 			}
@@ -672,11 +672,11 @@ func weigh(conf Config) {
 		// was heavy after it has finished; this says a turn is heavy while the
 		// next one has not been paid for yet.
 		if limit, ok := conf.num("limits", "turn_tokens"); ok && limit > 0 {
-			if size, who, phase := heaviestTurn(r.run); size > limit &&
-				!recently("limits.turn_tokens", r.run+who, 900) {
+			if size, who, phase := heaviestTurn(openRun.run); size > limit &&
+				!recently("limits.turn_tokens", openRun.run+who, 900) {
 				action := conf.str("actions", "on_turn_tokens", "warn")
 				ctx["agent"], ctx["phase"] = who, phase
-				judge("turn", r.run, who, "limits.turn_tokens", limit, size,
+				judge("turn", openRun.run, who, "limits.turn_tokens", limit, size,
 					action, act(action, conf, ctx))
 			}
 		}
@@ -685,16 +685,16 @@ func weigh(conf Config) {
 		// stayed under its own ceiling while the run stayed under its own, so
 		// nothing anywhere had an opinion about the middle.
 		if limit, ok := conf.num("limits", "turns_per_session"); ok && limit > 0 {
-			for who, turns := range turnsPerSession(r.run) {
-				if turns <= limit || recently("limits.turns_per_session", r.run+who, 900) {
+			for who, turns := range turnsPerSession(openRun.run) {
+				if turns <= limit || recently("limits.turns_per_session", openRun.run+who, 900) {
 					continue
 				}
 				action := conf.str("actions", "on_session_turns", "warn")
 				ctx["agent"] = who
-				judge("session", r.run, who, "limits.turns_per_session", limit, turns,
+				judge("session", openRun.run, who, "limits.turns_per_session", limit, turns,
 					action, act(action, conf, ctx))
 				if endsRun(conf, action) {
-					finish(r.run, "BLOCKED", fmt.Sprintf(
+					finish(openRun.run, "BLOCKED", fmt.Sprintf(
 						"ammit: %s took %.0f turns in one session", who, turns))
 					break
 				}
@@ -710,8 +710,8 @@ func weigh(conf Config) {
 			if !ok || minreq <= 0 {
 				minreq = 30
 			}
-			for session, reqs := range spinningSessions(r.run, window, minreq) {
-				if recently("limits.session_spin", r.run+session, window) {
+			for session, reqs := range spinningSessions(openRun.run, window, minreq) {
+				if recently("limits.session_spin", openRun.run+session, window) {
 					continue
 				}
 				action := conf.str("actions", "on_session_spin", "retry_session")
@@ -720,13 +720,13 @@ func weigh(conf Config) {
 				// agent@branch and ends exactly this branch's session.
 				ctx["session"] = session
 				ctx["agent"], ctx["branch"] = session, ""
-				if at := strings.Index(session, "@"); at >= 0 {
-					ctx["branch"] = session[at+1:]
+				if atSign := strings.Index(session, "@"); atSign >= 0 {
+					ctx["branch"] = session[atSign+1:]
 				}
-				judge("session", r.run, session, "limits.session_spin", minreq,
+				judge("session", openRun.run, session, "limits.session_spin", minreq,
 					reqs, action, act(action, conf, ctx))
 				if endsRun(conf, action) {
-					finish(r.run, "BLOCKED", fmt.Sprintf(
+					finish(openRun.run, "BLOCKED", fmt.Sprintf(
 						"ammit: %s made %.0f requests in %.0fs without touching "+
 							"a tool", session, reqs, window))
 					break
@@ -745,30 +745,30 @@ func weigh(conf Config) {
 			if window <= 0 {
 				window = 600
 			}
-			for session, secs := range retryWaits(r.run, window) {
-				if secs <= limit || recently("limits.retry_wait", r.run+session, window) {
+			for session, secs := range retryWaits(openRun.run, window) {
+				if secs <= limit || recently("limits.retry_wait", openRun.run+session, window) {
 					continue
 				}
 				action := conf.str("actions", "on_retry_wait", "warn")
 				ctx["session"] = session
 				ctx["agent"], ctx["branch"] = session, ""
-				if at := strings.Index(session, "@"); at >= 0 {
-					ctx["branch"] = session[at+1:]
+				if atSign := strings.Index(session, "@"); atSign >= 0 {
+					ctx["branch"] = session[atSign+1:]
 				}
-				judge("session", r.run, session, "limits.retry_wait", limit, secs,
+				judge("session", openRun.run, session, "limits.retry_wait", limit, secs,
 					action, act(action, conf, ctx))
 			}
 		}
-		if limit, ok := conf.num("limits", "turns_per_run"); ok && float64(r.turns) > limit {
+		if limit, ok := conf.num("limits", "turns_per_run"); ok && float64(openRun.turns) > limit {
 			action := conf.str("actions", "on_turns", "warn")
 			action, over := escalated(conf, "limits.turns_per_run", limit,
-				float64(r.turns), action)
-			if !recently("limits.turns_per_run", r.run+action, 1800) {
+				float64(openRun.turns), action)
+			if !recently("limits.turns_per_run", openRun.run+action, 1800) {
 				rule := "limits.turns_per_run"
 				if over {
 					rule += " (twice over)"
 				}
-				judge("run", r.run, r.name, rule, limit, float64(r.turns),
+				judge("run", openRun.run, openRun.name, rule, limit, float64(openRun.turns),
 					action, act(action, conf, ctx))
 			}
 		}
@@ -781,10 +781,10 @@ func weigh(conf Config) {
 			// gap between them and nothing changed. Twice, then leave it: if the
 			// action was going to work it worked, and if it was not, repeating it
 			// is only more damage.
-			if quiet, agent, phase := quietFor(r.run); quiet > limit &&
-				!testRunning(conf, r.run) &&
-				timesJudged("timeouts.turn", r.run) < 2 &&
-				!recently("timeouts.turn", r.run, limit) {
+			if quiet, agent, phase := quietFor(openRun.run); quiet > limit &&
+				!testRunning(conf, openRun.run) &&
+				timesJudged("timeouts.turn", openRun.run) < 2 &&
+				!recently("timeouts.turn", openRun.run, limit) {
 				// When a whole run goes quiet, the last thing that spoke is the
 				// thing that stopped speaking — so this can be aimed at that one
 				// session rather than at the container around it. Restarting the
@@ -797,10 +797,10 @@ func weigh(conf Config) {
 					// agent. Then, and only then, the blunt instrument.
 					action = conf.str("actions", "on_turn_timeout_blind", "stop_run")
 				}
-				judge("turn", r.run, strings.TrimSpace(agent+" "+phase), "timeouts.turn",
+				judge("turn", openRun.run, strings.TrimSpace(agent+" "+phase), "timeouts.turn",
 					limit, quiet, action, act(action, conf, ctx))
 				if endsRun(conf, action) {
-					finish(r.run, "BLOCKED", fmt.Sprintf(
+					finish(openRun.run, "BLOCKED", fmt.Sprintf(
 						"ammit: silent for %.0fs, and %s ends the run", quiet, action))
 					continue
 				}
@@ -821,7 +821,7 @@ func weigh(conf Config) {
 			// Which one this is comes from what the session said last: a tool
 			// call is logged before the wait it causes.
 			tool, hasTool := conf.num("timeouts", "request_tool")
-			for request, age := range openSpans(r.run, "request_start", "request_end", "session") {
+			for request, age := range openSpans(openRun.run, "request_start", "request_end", "session") {
 				// A wait inside a session that has already ended is not a wait.
 				//
 				// Events are sent best-effort — a pipeline must not stop because
@@ -834,18 +834,18 @@ func weigh(conf Config) {
 				//
 				// The record already answers it. A session says when it ended,
 				// under the same agent and branch the wait was opened with.
-				if spanIsOrphaned(r.run, request) {
+				if spanIsOrphaned(openRun.run, request) {
 					continue
 				}
 				rule, against := "timeouts.request", limit
-				if hasTool && afterTool(r.run, request) {
+				if hasTool && afterTool(openRun.run, request) {
 					rule, against = "timeouts.request_tool", tool
 					// A wait dressed as a tool call gets the turn's limit, not
 					// the browser suite's hour (progress.go, waitingCall) -
 					// unless a test is running, which is what the wait may
 					// be for, and a test has limits of its own.
-					if wait, ok := conf.num("timeouts", "wait"); ok && wait > 0 && !testRunning(conf, r.run) {
-						if waiting, _ := waitingCall(r.run, request); waiting {
+					if wait, ok := conf.num("timeouts", "wait"); ok && wait > 0 && !testRunning(conf, openRun.run) {
+						if waiting, _ := waitingCall(openRun.run, request); waiting {
 							rule, against = "timeouts.wait", wait
 						}
 					}
@@ -859,7 +859,7 @@ func weigh(conf Config) {
 				// went out with "{agent}" in it, unsubstituted, and asked the
 				// worker to retry a session by that literal name — which matched
 				// nothing, so a real hang would have been answered with a no-op.
-				who, wbr, _ := spanFacts(r.run, request)
+				who, wbr, _ := spanFacts(openRun.run, request)
 				// The full session key, not the bare agent: fourteen branches
 				// each run an agent called "implement", and a bare name asks
 				// the worker to end every one of them for one branch's hang.
@@ -867,10 +867,10 @@ func weigh(conf Config) {
 					who = who + "@" + wbr
 				}
 				ctx["request"], ctx["agent"] = request, who
-				judge("request", r.run, request, rule, against, age,
+				judge("request", openRun.run, request, rule, against, age,
 					action, act(action, conf, ctx))
 				if endsRun(conf, action) {
-					finish(r.run, "BLOCKED", fmt.Sprintf(
+					finish(openRun.run, "BLOCKED", fmt.Sprintf(
 						"ammit: a request ran %.0fs, and %s ends the run", age, action))
 					break
 				}
@@ -887,8 +887,8 @@ func weigh(conf Config) {
 		// client says what kind of thing it started and the limit is looked up
 		// under that name, so timeouts.test and timeouts.module are simply the
 		// two kinds that most stacks have.
-		for item, age := range openSpans(r.run, "item_start", "item_end", "session") {
-			kind, agent := itemFacts(r.run, item)
+		for spanItem, age := range openSpans(openRun.run, "item_start", "item_end", "session") {
+			kind, agent := itemFacts(openRun.run, spanItem)
 			if kind == "" || reserved[kind] {
 				continue
 			}
@@ -896,19 +896,19 @@ func weigh(conf Config) {
 			// The client's own deadline for this item, when it sent one and it
 			// is the larger: the judgement is against the number the item is
 			// actually killed at, not a limit set for the typical item.
-			if budget := itemBudget(r.run, item); budget > against {
+			if budget := itemBudget(openRun.run, spanItem); budget > against {
 				against, ok = budget, true
 			}
-			if !ok || against <= 0 || age <= against || recently("timeouts."+kind, item, against) {
+			if !ok || against <= 0 || age <= against || recently("timeouts."+kind, spanItem, against) {
 				continue
 			}
 			action := conf.str("actions", "on_"+kind+"_timeout",
 				conf.str("actions", "on_item_timeout", "warn"))
-			ctx["item"], ctx["kind"] = item, kind
+			ctx["item"], ctx["kind"] = spanItem, kind
 			if agent != "" {
 				ctx["agent"] = agent
 			}
-			judge(kind, r.run, item, "timeouts."+kind, against, age, action,
+			judge(kind, openRun.run, spanItem, "timeouts."+kind, against, age, action,
 				act(action, conf, ctx))
 		}
 		// One number for every phase is one number for phases that are not
@@ -920,13 +920,13 @@ func weigh(conf Config) {
 		// So `timeouts.phase_<name>` overrides `timeouts.phase` for that
 		// phase, and the judgement says which one it was measured against.
 		if base, ok := conf.num("timeouts", "phase"); ok {
-			for key, age := range openPhases(r.run) {
-				phase, branch := splitPhaseKey(key)
+			for phaseKey, age := range openPhases(openRun.run) {
+				phase, branch := splitPhaseKey(phaseKey)
 				limit, named := base, "timeouts.phase"
 				if own, has := conf.num("timeouts", "phase_"+phase); has && own > 0 {
 					limit, named = own, "timeouts.phase_"+phase
 				}
-				if age > limit && !recently(named, key, limit) {
+				if age > limit && !recently(named, phaseKey, limit) {
 					// actions.on_phase_timeout_<name> overrides the general
 					// action: a phase whose overrun means the run is lost
 					// (funcreqs at twenty minutes) ends the run, not the phase.
@@ -935,9 +935,9 @@ func weigh(conf Config) {
 					// The command's {phase} is the key: a branch's phase is
 					// stopped as phase@branch, so the sibling branches still
 					// in that phase are not stopped with it.
-					ctx["phase"] = key
+					ctx["phase"] = phaseKey
 					ctx["branch"] = branch
-					judge("phase", r.run, key, named, limit, age, action,
+					judge("phase", openRun.run, phaseKey, named, limit, age, action,
 						act(action, conf, ctx))
 				}
 			}
@@ -945,7 +945,7 @@ func weigh(conf Config) {
 		// A repair loop past its cap, counted from the run's own phase_start
 		// events: loops.laps_<phase>. laps.go says why it is not left to the
 		// runner.
-		judgeRepairLaps(r.run, conf, ctx)
+		judgeRepairLaps(openRun.run, conf, ctx)
 		// The silence limit below cannot see a session that never stops
 		// talking: a funcreq branch made fifty turns in twenty minutes on
 		// run 16922dd7 and was quiet for no more than four minutes at a
@@ -953,10 +953,10 @@ func weigh(conf Config) {
 		// session's AGE, from session_start, for that agent's sessions only;
 		// actions.on_session_age_<agent> answers it, stop_run by default,
 		// because a session that old has lost the run, not the branch.
-		for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
+		for session, age := range openSpans(openRun.run, "session_start", "session_end", "session") {
 			agent := session
-			if at := strings.Index(session, "@"); at >= 0 {
-				agent = session[:at]
+			if atSign := strings.Index(session, "@"); atSign >= 0 {
+				agent = session[:atSign]
 			}
 			limit, has := conf.num("timeouts", "session_age_"+agent)
 			if !has || limit <= 0 || age <= limit || recently("timeouts.session_age_"+agent, session, limit) {
@@ -965,10 +965,10 @@ func weigh(conf Config) {
 			action := conf.str("actions", "on_session_age_"+agent, "stop_run")
 			ctx["session"] = session
 			ctx["agent"], ctx["branch"] = session, ""
-			if at := strings.Index(session, "@"); at >= 0 {
-				ctx["branch"] = session[at+1:]
+			if atSign := strings.Index(session, "@"); atSign >= 0 {
+				ctx["branch"] = session[atSign+1:]
 			}
-			judge("session", r.run, session, "timeouts.session_age_"+agent, limit, age,
+			judge("session", openRun.run, session, "timeouts.session_age_"+agent, limit, age,
 				action, act(action, conf, ctx))
 		}
 		// The other edge of a phase. Every ceiling above says when a phase
@@ -987,16 +987,16 @@ func weigh(conf Config) {
 		// service could not read - dead the day they were written, which is
 		// how run 558879e7 was ended by a floor nobody had chosen for it.
 		if floor, ok := conf.num("timeouts", "phase_min"); ok && floor > 0 {
-			for phase, secs := range shortPhases(r.run, floor) {
-				if recently("timeouts.phase_min", r.run+phase, 86400) {
+			for phase, secs := range shortPhases(openRun.run, floor) {
+				if recently("timeouts.phase_min", openRun.run+phase, 86400) {
 					continue
 				}
 				action := conf.str("actions", "on_phase_min", "stop_run")
 				ctx["phase"] = phase
-				judge("phase", r.run, phase, "timeouts.phase_min", floor, secs,
+				judge("phase", openRun.run, phase, "timeouts.phase_min", floor, secs,
 					action, act(action, conf, ctx))
 				if endsRun(conf, action) {
-					finish(r.run, "BLOCKED", fmt.Sprintf(
+					finish(openRun.run, "BLOCKED", fmt.Sprintf(
 						"ammit: phase %s ran its agents, took no turn, and "+
 							"closed in %.0fs - under the %.0fs floor",
 						phase, secs, floor))
@@ -1005,7 +1005,7 @@ func weigh(conf Config) {
 			}
 		}
 		if limit, ok := conf.num("timeouts", "session"); ok {
-			for session, age := range openSpans(r.run, "session_start", "session_end", "session") {
+			for session, age := range openSpans(openRun.run, "session_start", "session_end", "session") {
 				// Judged by silence, not by age. An implement session did two
 				// and a half hours of honest engineering - a thousand model
 				// round-trips, tool calls every couple of minutes - and this
@@ -1013,7 +1013,7 @@ func weigh(conf Config) {
 				// a working session restarts a thousand requests from zero. A
 				// session that is TALKING is alive however old it is; a session
 				// that has gone silent for the limit is gone, however young.
-				quiet := sessionQuiet(r.run, session)
+				quiet := sessionQuiet(openRun.run, session)
 				if quiet < 0 {
 					quiet = age
 				}
@@ -1027,10 +1027,10 @@ func weigh(conf Config) {
 					// commands that address a branch.
 					ctx["session"] = session
 					ctx["agent"], ctx["branch"] = session, ""
-					if at := strings.Index(session, "@"); at >= 0 {
-						ctx["branch"] = session[at+1:]
+					if atSign := strings.Index(session, "@"); atSign >= 0 {
+						ctx["branch"] = session[atSign+1:]
 					}
-					judge("session", r.run, session, "timeouts.session", limit, quiet,
+					judge("session", openRun.run, session, "timeouts.session", limit, quiet,
 						action, act(action, conf, ctx))
 				}
 			}
@@ -1065,28 +1065,28 @@ func weigh(conf Config) {
 // is closed. A run born after we came back is weigh's to judge (stillborn).
 func sweepCrashed(conf Config) bool {
 	grace := 120.0
-	if hb, ok := conf.num("timeouts", "heartbeat"); ok && hb > 0 {
-		grace = hb
+	if heartbeat, ok := conf.num("timeouts", "heartbeat"); ok && heartbeat > 0 {
+		grace = heartbeat
 	}
 	since := upSince()
 	if nowWall()-since < grace {
 		return false
 	}
-	for _, r := range openRuns() {
-		if r.started >= since {
+	for _, openRun := range openRuns() {
+		if openRun.started >= since {
 			continue
 		}
-		at, ok := lastHeard(r.run)
-		if ok && at >= since {
+		heardAt, ok := lastHeard(openRun.run)
+		if ok && heardAt >= since {
 			continue
 		}
 		quiet := nowWall() - since
-		finish(r.run, "BLOCKED", fmt.Sprintf(
+		finish(openRun.run, "BLOCKED", fmt.Sprintf(
 			"ammit: crash sweep - nothing heard in the %.0fs since ammit came back "+
 				"(%.0fs grace, two heartbeats), so the process behind this row is gone",
 			quiet, grace))
 		log.Printf("ammit: crash sweep closed run %s (%s) - silent for %.0fs "+
-			"since ammit came back", r.run, r.name, quiet)
+			"since ammit came back", openRun.run, openRun.name, quiet)
 	}
 	return true
 }
@@ -1111,25 +1111,25 @@ func shellSafe(value string) string {
 func fillHoles(tmpl string, values map[string]string) string {
 	var b strings.Builder
 	quoted := false
-	for i := 0; i < len(tmpl); {
-		if tmpl[i] == '{' {
-			if end := strings.IndexByte(tmpl[i:], '}'); end > 0 {
-				if value, ok := values[tmpl[i+1:i+end]]; ok {
+	for pos := 0; pos < len(tmpl); {
+		if tmpl[pos] == '{' {
+			if end := strings.IndexByte(tmpl[pos:], '}'); end > 0 {
+				if filled, ok := values[tmpl[pos+1:pos+end]]; ok {
 					if quoted {
-						b.WriteString(dquoteSafe.Replace(shellSafe(value)))
+						b.WriteString(dquoteSafe.Replace(shellSafe(filled)))
 					} else {
-						b.WriteString(shellSafe(value))
+						b.WriteString(shellSafe(filled))
 					}
-					i += end + 1
+					pos += end + 1
 					continue
 				}
 			}
 		}
-		if tmpl[i] == '"' {
+		if tmpl[pos] == '"' {
 			quoted = !quoted
 		}
-		b.WriteByte(tmpl[i])
-		i++
+		b.WriteByte(tmpl[pos])
+		pos++
 	}
 	return b.String()
 }
@@ -1150,11 +1150,11 @@ var dquoteSafe = strings.NewReplacer("`", "’", "\"", "”", "$", "＄", "\\", 
 // mean exactly what they did.
 func withContext(conf Config, ctx map[string]string) map[string]string {
 	all := make(map[string]string, len(ctx)+len(conf["context"]))
-	for k, v := range conf["context"] {
-		all[k] = v
+	for field, fieldValue := range conf["context"] {
+		all[field] = fieldValue
 	}
-	for k, v := range ctx {
-		all[k] = v
+	for field, fieldValue := range ctx {
+		all[field] = fieldValue
 	}
 	return all
 }

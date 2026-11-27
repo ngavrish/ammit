@@ -499,32 +499,32 @@ var reserved = map[string]bool{
 
 func rows2json(w http.ResponseWriter, query string, args ...any) {
 	mu.Lock()
-	rows, err := db.Query(query, args...)
+	queried, err := db.Query(query, args...)
 	mu.Unlock()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
-	cols, _ := rows.Columns()
-	types := columnTypes(rows)
+	defer queried.Close()
+	cols, _ := queried.Columns()
+	types := columnTypes(queried)
 	// An empty answer is [], never null: a nil slice marshals to null, and
 	// a client iterating "the rows" over null dies - the runner's first
 	// repair lap of run 3774a812 did, before any call of that run existed.
-	out := []map[string]any{}
-	for rows.Next() {
-		cells, err := scanCells(rows, types)
+	records := []map[string]any{}
+	for queried.Next() {
+		cells, err := scanCells(queried, types)
 		if err != nil {
 			continue
 		}
-		row := map[string]any{}
-		for i, c := range cols {
-			row[c] = cells[i]
+		record := map[string]any{}
+		for index, column := range cols {
+			record[column] = cells[index]
 		}
-		out = append(out, row)
+		records = append(records, record)
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
-	writeJSON(w, http.StatusOK, out)
+	_ = queried.Err() // a cut-off read is the shorter answer it always was
+	writeJSON(w, http.StatusOK, records)
 }
 
 func writeJSON(w http.ResponseWriter, code int, payload any) {
@@ -597,8 +597,8 @@ func main() {
 			dsn = os.Args[2]
 		}
 		if len(os.Args) > 3 {
-			if d, err := strconv.ParseFloat(os.Args[3], 64); err == nil {
-				days = d
+			if parsedDays, err := strconv.ParseFloat(os.Args[3], 64); err == nil {
+				days = parsedDays
 			}
 		}
 		if err := watchdogHistory(os.Stdout, dsn, days, loadConfig(confPath)); err != nil {
@@ -793,25 +793,25 @@ func main() {
 	withdrawWaiting := func(query string, args ...any) int64 {
 		mu.Lock()
 		defer mu.Unlock()
-		res, err := db.Exec(query, append([]any{nowWall()}, args...)...)
+		purge, err := db.Exec(query, append([]any{nowWall()}, args...)...)
 		if err != nil {
 			return 0
 		}
-		n, _ := res.RowsAffected()
-		return n
+		purged, _ := purge.RowsAffected()
+		return purged
 	}
 	const withdrawOne = `UPDATE queue SET state='done', finished=? WHERE state='waiting' AND id=?`
 	const withdrawTicket = `UPDATE queue SET state='done', finished=? WHERE state='waiting' AND name=?`
 	const withdrawAll = `UPDATE queue SET state='done', finished=? WHERE state='waiting'`
 	mux.HandleFunc("DELETE /queue/{id}", func(w http.ResponseWriter, r *http.Request) {
-		n := withdrawWaiting(withdrawOne, r.PathValue("id"))
-		log.Printf("ammit: queue row %s withdrawn (%d)", r.PathValue("id"), n)
-		writeJSON(w, http.StatusOK, map[string]any{"withdrawn": n})
+		withdrawn := withdrawWaiting(withdrawOne, r.PathValue("id"))
+		log.Printf("ammit: queue row %s withdrawn (%d)", r.PathValue("id"), withdrawn)
+		writeJSON(w, http.StatusOK, map[string]any{"withdrawn": withdrawn})
 	})
 	mux.HandleFunc("DELETE /queue", func(w http.ResponseWriter, r *http.Request) {
 		var n int64
-		if name := r.URL.Query().Get("name"); name != "" {
-			n = withdrawWaiting(withdrawTicket, name)
+		if ticket := r.URL.Query().Get("name"); ticket != "" {
+			n = withdrawWaiting(withdrawTicket, ticket)
 		} else {
 			n = withdrawWaiting(withdrawAll)
 		}
@@ -830,7 +830,7 @@ func main() {
 		payload, _ := json.Marshal(in.Payload)
 		// A resume goes through ticket_actions; a person's is always queued,
 		// and replaces or joins what holds the ticket (actions.go).
-		id, said := queueByRequest(in.Name, string(payload))
+		id, queueNote := queueByRequest(in.Name, string(payload))
 		// A member's start (hands.go) is a hand on the record; any other
 		// queueing writes what it always wrote.
 		if who := memberOf(r); who != nil {
@@ -838,8 +838,8 @@ func main() {
 				fmt.Sprintf("queued %d", id))
 		}
 		reply := map[string]any{"queued": in.Name, "id": id}
-		if said != "" {
-			reply["action"] = said
+		if queueNote != "" {
+			reply["action"] = queueNote
 		}
 		writeJSON(w, http.StatusCreated, reply)
 	})
@@ -915,14 +915,14 @@ func main() {
 			Phase string `json:"phase"`
 			Body  string `json:"body"`
 		}
-		text := func(key string) string {
-			if v, ok := raw[key].(string); ok {
-				return v
+		field := func(key string) string {
+			if fieldText, ok := raw[key].(string); ok {
+				return fieldText
 			}
 			return ""
 		}
 		in.Run, in.Kind, in.Phase, in.Body =
-			text("run"), text("kind"), text("phase"), text("body")
+			field("run"), field("kind"), field("phase"), field("body")
 		if in.Kind == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind and body are required"})
 			return
@@ -931,13 +931,13 @@ func main() {
 		// phase and a body, and anything else sent alongside is named back
 		// rather than kept.
 		var dropped []string
-		for key := range raw {
+		for sentField := range raw {
 			known := false
-			for _, f := range documentFields {
-				known = known || f == key
+			for _, allowed := range documentFields {
+				known = known || allowed == sentField
 			}
 			if !known {
-				dropped = append(dropped, key)
+				dropped = append(dropped, sentField)
 			}
 		}
 		sort.Strings(dropped)
@@ -956,12 +956,12 @@ func main() {
 		path := base
 		var file *os.File
 		var err error
-		for n := 1; ; n++ {
+		for attempt := 1; ; attempt++ {
 			file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-			if !errors.Is(err, fs.ErrExist) || n > 1000 {
+			if !errors.Is(err, fs.ErrExist) || attempt > 1000 {
 				break
 			}
-			path = fmt.Sprintf("%s-%d", base, n)
+			path = fmt.Sprintf("%s-%d", base, attempt)
 		}
 		if err == nil {
 			_, err = file.WriteString(in.Body)
@@ -973,11 +973,11 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		at := float64(time.Now().UnixNano()) / 1e9
+		writtenAt := float64(time.Now().UnixNano()) / 1e9
 		mu.Lock()
 		_, err = db.Exec(`INSERT INTO documents (at, run, kind, phase, bytes, path)
 		         VALUES (?,?,?,?,?,?)`,
-			at, in.Run, in.Kind, in.Phase, len(in.Body), path)
+			writtenAt, in.Run, in.Kind, in.Phase, len(in.Body), path)
 		mu.Unlock()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -1028,17 +1028,17 @@ func main() {
 	// wear - because this service's tables are the pipeline's memory, and a
 	// memory that a query can edit is not a record.
 	mux.HandleFunc("GET /query", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query().Get("sql")
-		if q == "" {
+		sqlText := r.URL.Query().Get("sql")
+		if sqlText == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sql parameter required"})
 			return
 		}
-		if !readsOnly(q) {
+		if !readsOnly(sqlText) {
 			writeJSON(w, http.StatusBadRequest,
 				map[string]string{"error": "reads only: the query must start with SELECT or WITH"})
 			return
 		}
-		writeJSON(w, http.StatusOK, rows(q))
+		writeJSON(w, http.StatusOK, rows(sqlText))
 	})
 
 	// The same levers ammit pulls, offered to a hand. The command must be one
@@ -1073,18 +1073,18 @@ func main() {
 		// so act()'s never-filled guard refuses the command, rather than a
 		// silent "" that turns stop_run into touching /runs//.cancel.
 		ctx := map[string]string{}
-		for key, value := range map[string]string{
+		for field, fieldText := range map[string]string{
 			"run": in.Run, "name": in.Name, "phase": in.Phase,
 			"agent": in.Agent, "branch": in.Branch, "session": in.Session,
 			"payload": in.Payload,
 		} {
-			if value != "" {
-				ctx[key] = value
+			if fieldText != "" {
+				ctx[field] = fieldText
 			}
 		}
-		for key, value := range conf["context"] {
-			if ctx[key] == "" {
-				ctx[key] = value
+		for field, fallback := range conf["context"] {
+			if ctx[field] == "" {
+				ctx[field] = fallback
 			}
 		}
 		hand := memberOf(r)
@@ -1200,9 +1200,9 @@ func main() {
 			"taken": true, "holder": in.Holder, "since": at, "expires": now + in.TTL})
 	})
 	mux.HandleFunc("DELETE /lease", func(w http.ResponseWriter, r *http.Request) {
-		name := r.URL.Query().Get("name")
+		leaseName := r.URL.Query().Get("name")
 		holder := r.URL.Query().Get("holder")
-		if name == "" || holder == "" {
+		if leaseName == "" || holder == "" {
 			writeJSON(w, http.StatusBadRequest,
 				map[string]string{"error": "name and holder are required"})
 			return
@@ -1211,17 +1211,17 @@ func main() {
 		// that started afterwards are two different holders, and the late one
 		// must not release the live one's lease on its way out.
 		mu.Lock()
-		res, _ := db.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, name, holder)
+		release, _ := db.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, leaseName, holder)
 		mu.Unlock()
-		n := int64(0)
-		if res != nil {
-			n, _ = res.RowsAffected()
+		released := int64(0)
+		if release != nil {
+			released, _ = release.RowsAffected()
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"released": n > 0})
+		writeJSON(w, http.StatusOK, map[string]any{"released": released > 0})
 	})
 	mux.HandleFunc("GET /lease", func(w http.ResponseWriter, r *http.Request) {
-		name := r.URL.Query().Get("name")
-		if name == "" {
+		leaseName := r.URL.Query().Get("name")
+		if leaseName == "" {
 			rows2json(w, `SELECT * FROM leases ORDER BY name`)
 			return
 		}
@@ -1230,7 +1230,7 @@ func main() {
 		var holder string
 		var at, expires float64
 		err := db.QueryRow(`SELECT holder, at, expires FROM leases WHERE name=?`,
-			name).Scan(&holder, &at, &expires)
+			leaseName).Scan(&holder, &at, &expires)
 		mu.Unlock()
 		if err != nil || expires <= now {
 			writeJSON(w, http.StatusOK, map[string]any{"held": false})
@@ -1249,24 +1249,24 @@ func main() {
 	// keeping it is comparing two runs and knowing whether they ran the same
 	// thing; that question is a query now rather than a git archaeology.
 	mux.HandleFunc("GET /flows", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "1=1", []any{}
+		where, whereArgs := "1=1", []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
-			where, args = "run=?", []any{run}
+			where, whereArgs = "run=?", []any{run}
 		}
 		rows2json(w, `SELECT * FROM flows WHERE `+where+` ORDER BY at DESC LIMIT 50`,
-			args...)
+			whereArgs...)
 	})
 
 	mux.HandleFunc("GET /calls", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "1=1", []any{}
+		where, whereArgs := "1=1", []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
-			where, args = where+" AND run=?", append(args, run)
+			where, whereArgs = where+" AND run=?", append(whereArgs, run)
 		}
 		if r.URL.Query().Get("repeats") != "" {
 			where += " AND repeat > 1"
 		}
 		rows2json(w, `SELECT * FROM calls WHERE `+where+
-			` ORDER BY id DESC LIMIT 2000`, args...)
+			` ORDER BY id DESC LIMIT 2000`, whereArgs...)
 	})
 
 	// The same calls, added up: what ran more than once and how often. One row
@@ -1274,9 +1274,9 @@ func main() {
 	// four hundred and fifty-five calls" is not a finding and "it ran this one
 	// eleven times" is.
 	mux.HandleFunc("GET /calls/repeated", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "1=1", []any{}
+		where, whereArgs := "1=1", []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
-			where, args = where+" AND run=?", append(args, run)
+			where, whereArgs = where+" AND run=?", append(whereArgs, run)
 		}
 		// kind, tool and target are the signature's: one call, written down
 		// the same way each time. max() is how Postgres is told so.
@@ -1285,15 +1285,15 @@ func main() {
 		              signature, count(*) AS times, round(sum(seconds),1) AS seconds
 		              FROM calls WHERE `+where+`
 		              GROUP BY agent, branch, signature
-		              HAVING count(*) > 1 ORDER BY times DESC LIMIT 500`, args...)
+		              HAVING count(*) > 1 ORDER BY times DESC LIMIT 500`, whereArgs...)
 	})
 
 	// And by what was touched rather than how: the same file read with Read,
 	// then with cat, then with three sed windows is five calls and one target.
 	mux.HandleFunc("GET /calls/targets", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "1=1", []any{}
+		where, whereArgs := "1=1", []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
-			where, args = where+" AND run=?", append(args, run)
+			where, whereArgs = where+" AND run=?", append(whereArgs, run)
 		}
 		// Every kind that touched it, not whichever row the group happened to
 		// yield: a file that was searched six times and written once came back
@@ -1303,7 +1303,7 @@ func main() {
 		              count(*) AS times, count(DISTINCT signature) AS ways
 		              FROM calls WHERE `+where+` AND coalesce(target,'') <> ''
 		              GROUP BY agent, branch, target
-		              HAVING count(*) > 1 ORDER BY times DESC LIMIT 500`, args...)
+		              HAVING count(*) > 1 ORDER BY times DESC LIMIT 500`, whereArgs...)
 	})
 
 	// What waiting on the model actually bought. A request_end carries how long
@@ -1327,12 +1327,12 @@ func main() {
 	// of a list about slowness. ?closed= brings them back for anyone asking
 	// about the closing rather than about the waiting.
 	mux.HandleFunc("GET /requests", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "kind='request_end'"+notClosed(r), []any{}
+		where, whereArgs := "kind='request_end'"+notClosed(r), []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
-			where, args = where+" AND run=?", append(args, run)
+			where, whereArgs = where+" AND run=?", append(whereArgs, run)
 		}
-		if ph := r.URL.Query().Get("phase"); ph != "" {
-			where, args = where+" AND phase=?", append(args, ph)
+		if phase := r.URL.Query().Get("phase"); phase != "" {
+			where, whereArgs = where+" AND phase=?", append(whereArgs, phase)
 		}
 		order := "at DESC"
 		if r.URL.Query().Get("slow") != "" {
@@ -1344,7 +1344,7 @@ func main() {
 		              payload->'ok'      AS ok,
 		              payload->'error'   AS error
 		              FROM events WHERE `+where+`
-		              ORDER BY `+order+` LIMIT 2000`, args...)
+		              ORDER BY `+order+` LIMIT 2000`, whereArgs...)
 	})
 
 	// The same requests added up per agent, which is where the question starts:
@@ -1371,20 +1371,20 @@ func main() {
 		if err != nil || min < 0 {
 			min = 20
 		}
-		to := time.Now().UnixMilli()
-		from := to - int64(days*86400*1000)
+		untilMs := time.Now().UnixMilli()
+		from := untilMs - int64(days*86400*1000)
 		// One run's answers, for the gate that rotates a phase's model: no
 		// window and no minimum count - a phase that answered twice in this run
 		// is judged on those two answers.
 		if run := r.URL.Query().Get("run"); run != "" {
-			where, args := "run ILIKE ? AND phase <> '' AND model IS NOT NULL", []any{run + "%"}
-			if br, ok := r.URL.Query()["branch"]; ok {
-				where, args = where+" AND branch = ?", append(args, br[0])
+			where, whereArgs := "run ILIKE ? AND phase <> '' AND model IS NOT NULL", []any{run + "%"}
+			if branches, ok := r.URL.Query()["branch"]; ok {
+				where, whereArgs = where+" AND branch = ?", append(whereArgs, branches[0])
 			}
 			rows2json(w, `SELECT phase, model, count(*) AS answers, round(min(seconds),1) AS min_s,
 			              round(avg(seconds),1) AS avg_s, round(max(seconds),0) AS max_s,
 			              round(100.0*sum((seconds > 120)::int)/count(*),2) AS over_2min_pct
-			              FROM model_answers WHERE `+where+` GROUP BY phase, model ORDER BY phase, model`, args...)
+			              FROM model_answers WHERE `+where+` GROUP BY phase, model ORDER BY phase, model`, whereArgs...)
 			return
 		}
 		if r.URL.Query().Get("by") == "day" {
@@ -1398,13 +1398,13 @@ func main() {
 			return
 		}
 		rows2json(w, fill(`SELECT * FROM $__model_answers WHERE answers >= `+strconv.Itoa(min)+
-			` ORDER BY avg_s DESC`, from, to))
+			` ORDER BY avg_s DESC`, from, untilMs))
 	})
 
 	mux.HandleFunc("GET /requests/by-agent", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "kind='request_end'"+notClosed(r), []any{}
+		where, whereArgs := "kind='request_end'"+notClosed(r), []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
-			where, args = where+" AND run=?", append(args, run)
+			where, whereArgs = where+" AND run=?", append(whereArgs, run)
 		}
 		rows2json(w, `SELECT agent, phase, count(*) AS times,
 		              round(sum(jnum(payload->'seconds')),1) AS seconds,
@@ -1415,7 +1415,7 @@ func main() {
 		                AS out_per_second
 		              FROM events WHERE `+where+`
 		              GROUP BY agent, phase
-		              ORDER BY seconds DESC NULLS LAST LIMIT 500`, args...)
+		              ORDER BY seconds DESC NULLS LAST LIMIT 500`, whereArgs...)
 	})
 
 	// Is anything running right now — asked by whoever is about to disturb it.
@@ -1430,13 +1430,13 @@ func main() {
 	// any outage worth deploying over.
 	mux.HandleFunc("GET /inflight", func(w http.ResponseWriter, r *http.Request) {
 		quiet := 120.0
-		if v := r.URL.Query().Get("quiet"); v != "" {
-			if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
-				quiet = n
+		if quietParam := r.URL.Query().Get("quiet"); quietParam != "" {
+			if quietSeconds, err := strconv.ParseFloat(quietParam, 64); err == nil && quietSeconds > 0 {
+				quiet = quietSeconds
 			}
 		}
 		mu.Lock()
-		rows, err := db.Query(`SELECT r.run, coalesce(r.name,''), r.started,
+		openRows, err := db.Query(`SELECT r.run, coalesce(r.name,''), r.started,
 		                       coalesce(max(e.at), r.started) AS last
 		                       FROM runs r LEFT JOIN events e ON e.run = r.run
 		                       WHERE r.finished IS NULL GROUP BY r.run`)
@@ -1448,18 +1448,18 @@ func main() {
 		var out []live
 		now := float64(time.Now().UnixNano()) / 1e9
 		if err == nil {
-			for rows.Next() {
+			for openRows.Next() {
 				var l live
 				var started, last float64
-				if rows.Scan(&l.Run, &l.Name, &started, &last) == nil {
+				if openRows.Scan(&l.Run, &l.Name, &started, &last) == nil {
 					l.Silent = now - last
 					if l.Silent <= quiet {
 						out = append(out, l)
 					}
 				}
 			}
-			_ = rows.Err() // a cut-off read is the shorter list it always was
-			rows.Close()
+			_ = openRows.Err() // a cut-off read is the shorter list it always was
+			openRows.Close()
 		}
 		mu.Unlock()
 		if out == nil {
@@ -1473,13 +1473,13 @@ func main() {
 	// containers, which are recreated by every deploy — so the record of a
 	// failure outlived the failure by minutes.
 	mux.HandleFunc("GET /logs", func(w http.ResponseWriter, r *http.Request) {
-		where, args := "kind='service_log'", []any{}
+		where, whereArgs := "kind='service_log'", []any{}
 		if run := r.URL.Query().Get("run"); run != "" {
-			where, args = where+" AND run=?", append(args, run)
+			where, whereArgs = where+" AND run=?", append(whereArgs, run)
 		}
 		if svc := r.URL.Query().Get("service"); svc != "" {
 			where += " AND payload->>'service' = ?"
-			args = append(args, svc)
+			whereArgs = append(whereArgs, svc)
 		}
 		rows2json(w, `SELECT at, run,
 		              payload->'service'  AS service,
@@ -1487,7 +1487,7 @@ func main() {
 		              payload->'logger'   AS logger,
 		              payload->'text'     AS text
 		              FROM events WHERE `+where+`
-		              ORDER BY id DESC LIMIT 500`, args...)
+		              ORDER BY id DESC LIMIT 500`, whereArgs...)
 	})
 
 	mux.HandleFunc("GET /judgements", func(w http.ResponseWriter, r *http.Request) {
@@ -1557,12 +1557,12 @@ func archive(conf Config) {
 	}
 
 	ctx := context.Background()
-	tx, err := db.BeginTx(ctx, nil)
+	txn, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		log.Printf("ammit: could not open the archive (%v)", err)
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = txn.Rollback() }()
 
 	for _, ddl := range []string{
 		`CREATE TABLE IF NOT EXISTS archive.runs (LIKE public.runs)`,
@@ -1576,7 +1576,7 @@ func archive(conf Config) {
 		`CREATE TABLE IF NOT EXISTS archive.limits (LIKE public.limits)`,
 		`CREATE INDEX IF NOT EXISTS archive_events_run ON archive.events (run, at)`,
 	} {
-		if _, err := tx.ExecContext(ctx, ddl); err != nil {
+		if _, err := txn.ExecContext(ctx, ddl); err != nil {
 			log.Printf("ammit: archive schema (%v)", err)
 			return
 		}
@@ -1607,13 +1607,13 @@ func archive(conf Config) {
 		 AND id NOT IN (SELECT max(id) FROM limits GROUP BY name)`,
 		`DELETE FROM runs WHERE finished IS NOT NULL AND finished < ?`,
 	}
-	for _, q := range moves {
-		if _, err := tx.ExecContext(ctx, q, cutoff); err != nil {
+	for _, move := range moves {
+		if _, err := txn.ExecContext(ctx, move, cutoff); err != nil {
 			log.Printf("ammit: archiving stopped (%v)", err)
 			return
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := txn.Commit(); err != nil {
 		log.Printf("ammit: archiving stopped (%v)", err)
 		return
 	}
@@ -1628,25 +1628,25 @@ func safeName(s string) string {
 	if s == "" {
 		return "unnamed"
 	}
-	out := make([]rune, 0, len(s))
-	for _, r := range s {
+	safe := make([]rune, 0, len(s))
+	for _, char := range s {
 		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.':
-			out = append(out, r)
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9',
+			char == '-', char == '_', char == '.':
+			safe = append(safe, char)
 		default:
-			out = append(out, '_')
+			safe = append(safe, '_')
 		}
 	}
-	if len(out) > 80 {
-		out = out[:80]
+	if len(safe) > 80 {
+		safe = safe[:80]
 	}
 	// A leading dot is how "." and ".." climb out of the directory this name
 	// is joined onto; a run called ".." wrote its documents beside the store.
-	for i := 0; i < len(out) && out[i] == '.'; i++ {
-		out[i] = '_'
+	for index := 0; index < len(safe) && safe[index] == '.'; index++ {
+		safe[index] = '_'
 	}
-	return string(out)
+	return string(safe)
 }
 
 // runnerCaller is the address a request came from when that is agent-runner,
@@ -1655,14 +1655,14 @@ func runnerCaller(r *http.Request) string {
 	runner, _ := net.DefaultResolver.LookupHost(r.Context(), "agent-runner")
 	from := []string{r.RemoteAddr, r.Header.Get("X-Real-Ip")}
 	from = append(from, strings.Split(r.Header.Get("X-Forwarded-For"), ",")...)
-	for _, f := range from {
-		f = strings.TrimSpace(f)
-		if h, _, err := net.SplitHostPort(f); err == nil {
-			f = h
+	for _, forwarded := range from {
+		forwarded = strings.TrimSpace(forwarded)
+		if host, _, err := net.SplitHostPort(forwarded); err == nil {
+			forwarded = host
 		}
-		for _, ip := range runner {
-			if f != "" && f == ip {
-				return f
+		for _, runnerIP := range runner {
+			if forwarded != "" && forwarded == runnerIP {
+				return forwarded
 			}
 		}
 	}

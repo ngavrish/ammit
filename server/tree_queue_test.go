@@ -17,9 +17,9 @@ func TestTreeHolderOf(t *testing.T) {
 		{"claim ledger: nothing recorded", ""},
 		{"waiting for the working tree (5m) — APF 1 has it", ""},
 	}
-	for _, c := range cases {
-		if got := treeHolderOf(c.in); got != c.want {
-			t.Errorf("treeHolderOf(%q) = %q, want %q", c.in, got, c.want)
+	for _, testCase := range cases {
+		if holder := treeHolderOf(testCase.in); holder != testCase.want {
+			t.Errorf("treeHolderOf(%q) = %q, want %q", testCase.in, holder, testCase.want)
 		}
 	}
 }

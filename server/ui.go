@@ -352,19 +352,19 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 	})
 
 	mux.HandleFunc("GET /limits.yml", func(w http.ResponseWriter, r *http.Request) {
-		body, err := os.ReadFile(confPath)
+		limitsYAML, err := os.ReadFile(confPath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write(body)
+		w.Write(limitsYAML)
 	})
 
 	// The whole file, for what fields cannot say: a new command, a renamed
 	// section, a comment explaining why a number is what it is.
 	mux.HandleFunc("PUT /limits.yml", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		posted, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -372,12 +372,12 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 		// Refuse a file the server would then fail to read: a limits file that
 		// does not parse is a pipeline with no limits, and finding that out on
 		// the next tick is too late.
-		if len(parseConfig(string(body))) == 0 {
+		if len(parseConfig(string(posted))) == 0 {
 			http.Error(w, "that does not parse as limits", http.StatusBadRequest)
 			return
 		}
-		if bad := limitsBroken(confPath, string(body)); len(bad) > 0 {
-			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(bad, "\n"), http.StatusBadRequest)
+		if broken := limitsBroken(confPath, string(posted)); len(broken) > 0 {
+			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(broken, "\n"), http.StatusBadRequest)
 			return
 		}
 		// A fresh install's volume has no config directory yet: the first PUT
@@ -386,11 +386,11 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := os.WriteFile(confPath, body, 0o600); err != nil {
+		if err := os.WriteFile(confPath, posted, 0o600); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("ammit: limits replaced through the page (%d bytes)", len(body))
+		log.Printf("ammit: limits replaced through the page (%d bytes)", len(posted))
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -421,28 +421,28 @@ func serveUI(mux *http.ServeMux, confPath, chartsURL string) {
 			http.Error(w, "that does not parse as limits", http.StatusBadRequest)
 			return
 		}
-		if bad := limitsBroken(confPath, after); len(bad) > 0 {
-			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(bad, "\n"), http.StatusBadRequest)
+		if broken := limitsBroken(confPath, after); len(broken) > 0 {
+			http.Error(w, "refused, this breaks the limits:\n"+strings.Join(broken, "\n"), http.StatusBadRequest)
 			return
 		}
 		if err := os.WriteFile(confPath, []byte(after), 0o600); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		for _, name := range sortedKeys(values) {
-			log.Printf("ammit: %s set to %s through the page", name, values[name])
+		for _, setting := range sortedKeys(values) {
+			log.Printf("ammit: %s set to %s through the page", setting, values[setting])
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
 
 func sortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+	sorted := make([]string, 0, len(m))
+	for mapKey := range m {
+		sorted = append(sorted, mapKey)
 	}
-	sort.Strings(out)
-	return out
+	sort.Strings(sorted)
+	return sorted
 }
 
 // setValues rewrites named settings in the file and leaves everything else
@@ -451,53 +451,53 @@ func sortedKeys(m map[string]string) []string {
 // setting the file does not have yet is added to its section, or the section is
 // added at the end.
 func setValues(text string, values map[string]string) (string, error) {
-	for name, value := range values {
-		if !strings.Contains(name, ".") {
-			return "", errNamed(name)
+	for setting, newValue := range values {
+		if !strings.Contains(setting, ".") {
+			return "", errNamed(setting)
 		}
-		if strings.ContainsAny(value, "\n\r") {
-			return "", errNamed(name)
+		if strings.ContainsAny(newValue, "\n\r") {
+			return "", errNamed(setting)
 		}
 	}
 	lines := strings.Split(text, "\n")
 	section := ""
 	done := map[string]bool{}
 
-	for i, line := range lines {
-		body, comment := cutComment(line)
-		if strings.TrimSpace(body) == "" {
+	for lineIndex, confLine := range lines {
+		code, comment := cutComment(confLine)
+		if strings.TrimSpace(code) == "" {
 			continue
 		}
-		if !strings.HasPrefix(body, " ") && !strings.HasPrefix(body, "\t") {
-			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(body), ":"))
+		if !strings.HasPrefix(code, " ") && !strings.HasPrefix(code, "\t") {
+			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(code), ":"))
 			continue
 		}
-		key, _, found := strings.Cut(strings.TrimSpace(body), ":")
-		if !found {
+		field, _, hasColon := strings.Cut(strings.TrimSpace(code), ":")
+		if !hasColon {
 			continue
 		}
-		name := section + "." + strings.TrimSpace(key)
-		value, wanted := values[name]
+		setting := section + "." + strings.TrimSpace(field)
+		newValue, wanted := values[setting]
 		if !wanted {
 			continue
 		}
-		indent := body[:len(body)-len(strings.TrimLeft(body, " \t"))]
+		indent := code[:len(code)-len(strings.TrimLeft(code, " \t"))]
 		// The gap before a trailing comment is kept, so a column of aligned
 		// comments stays a column.
 		gap := ""
 		if comment != "" {
-			gap = strings.Repeat(" ", max(1, len(body)-len(strings.TrimRight(body, " "))))
+			gap = strings.Repeat(" ", max(1, len(code)-len(strings.TrimRight(code, " "))))
 		}
-		lines[i] = indent + strings.TrimSpace(key) + ": " + quoted(value) + gap + comment
-		done[name] = true
+		lines[lineIndex] = indent + strings.TrimSpace(field) + ": " + quoted(newValue) + gap + comment
+		done[setting] = true
 	}
 
-	for _, name := range sortedKeys(values) {
-		if done[name] {
+	for _, setting := range sortedKeys(values) {
+		if done[setting] {
 			continue
 		}
-		want, key, _ := strings.Cut(name, ".")
-		lines = insertInto(lines, want, "  "+key+": "+quoted(values[name]))
+		want, field, _ := strings.Cut(setting, ".")
+		lines = insertInto(lines, want, "  "+field+": "+quoted(values[setting]))
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -506,26 +506,26 @@ func setValues(text string, values map[string]string) (string, error) {
 // file has never had one.
 func insertInto(lines []string, want, line string) []string {
 	section, last := "", -1
-	for i, l := range lines {
-		body, _ := cutComment(l)
-		if strings.TrimSpace(body) == "" {
+	for lineIndex, confLine := range lines {
+		code, _ := cutComment(confLine)
+		if strings.TrimSpace(code) == "" {
 			continue
 		}
-		if !strings.HasPrefix(body, " ") && !strings.HasPrefix(body, "\t") {
-			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(body), ":"))
+		if !strings.HasPrefix(code, " ") && !strings.HasPrefix(code, "\t") {
+			section = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(code), ":"))
 			continue
 		}
 		if section == want {
-			last = i
+			last = lineIndex
 		}
 	}
 	if last < 0 {
 		return append(lines, "", want+":", line)
 	}
-	out := make([]string, 0, len(lines)+1)
-	out = append(out, lines[:last+1]...)
-	out = append(out, line)
-	return append(out, lines[last+1:]...)
+	inserted := make([]string, 0, len(lines)+1)
+	inserted = append(inserted, lines[:last+1]...)
+	inserted = append(inserted, line)
+	return append(inserted, lines[last+1:]...)
 }
 
 // quoted keeps a value that would confuse the reader — a comment marker, a
@@ -534,7 +534,7 @@ func quoted(value string) string {
 	if value == "" {
 		return `""`
 	}
-	if body, comment := cutComment(value); comment != "" || body == "" ||
+	if code, comment := cutComment(value); comment != "" || code == "" ||
 		strings.TrimSpace(value) != value {
 		return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 	}
@@ -561,33 +561,33 @@ const runCeiling = 14400
 func limitsBroken(confPath, after string) []string {
 	next := parseConfig(after)
 	var out []string
-	if raw, err := os.ReadFile(confPath); err == nil {
-		for section, keys := range parseConfig(string(raw)) {
-			for key := range keys {
-				if _, ok := next[section][key]; !ok {
-					out = append(out, section+"."+key+" would be removed")
+	if current, err := os.ReadFile(confPath); err == nil {
+		for section, keys := range parseConfig(string(current)) {
+			for field := range keys {
+				if _, ok := next[section][field]; !ok {
+					out = append(out, section+"."+field+" would be removed")
 				}
 			}
 		}
 	}
 	for section, keys := range next {
-		for key, value := range keys {
-			if f, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil && f <= 0 {
-				out = append(out, section+"."+key+" = "+value+": zero or below switches the limit off")
+		for field, setTo := range keys {
+			if number, err := strconv.ParseFloat(strings.TrimSpace(setTo), 64); err == nil && number <= 0 {
+				out = append(out, section+"."+field+" = "+setTo+": zero or below switches the limit off")
 			}
 		}
 	}
 	// A person's approval is never what a limit does when it fires.
-	for key, value := range next["actions"] {
-		if personCommands[strings.TrimSpace(value)] {
-			out = append(out, "actions."+key+" = "+value+": publishing is a person's "+
+	for field, command := range next["actions"] {
+		if personCommands[strings.TrimSpace(command)] {
+			out = append(out, "actions."+field+" = "+command+": publishing is a person's "+
 				"approval, never a limit's action")
 		}
 	}
-	if f, err := strconv.ParseFloat(strings.TrimSpace(next["timeouts"]["run"]), 64); err != nil {
+	if runTimeout, err := strconv.ParseFloat(strings.TrimSpace(next["timeouts"]["run"]), 64); err != nil {
 		out = append(out, "timeouts.run is missing or not a number")
-	} else if f > runCeiling {
-		out = append(out, fmt.Sprintf("timeouts.run = %.0f: past the %d s (4 h) a run is given", f, runCeiling))
+	} else if runTimeout > runCeiling {
+		out = append(out, fmt.Sprintf("timeouts.run = %.0f: past the %d s (4 h) a run is given", runTimeout, runCeiling))
 	}
 	sort.Strings(out)
 	return out

@@ -41,6 +41,6 @@ var limitTitles = map[string]string{
 
 // limitTitlesJS is the map as a JavaScript literal, for the pages.
 func limitTitlesJS() string {
-	b, _ := json.Marshal(limitTitles)
-	return string(b)
+	encoded, _ := json.Marshal(limitTitles)
+	return string(encoded)
 }

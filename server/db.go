@@ -65,18 +65,18 @@ func (d *DB) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Ro
 	return d.DB.QueryRowContext(ctx, rebind(q), clean(args)...)
 }
 func (d *DB) Begin() (*Tx, error) {
-	tx, err := d.DB.Begin() //nolint:noctx // the callers' choice, as before
+	txn, err := d.DB.Begin() //nolint:noctx // the callers' choice, as before
 	if err != nil {
 		return nil, err
 	}
-	return &Tx{tx}, nil
+	return &Tx{txn}, nil
 }
 func (d *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
-	tx, err := d.DB.BeginTx(ctx, opts)
+	txn, err := d.DB.BeginTx(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	return &Tx{tx}, nil
+	return &Tx{txn}, nil
 }
 
 func (t *Tx) Exec(q string, args ...any) (sql.Result, error) {
@@ -112,49 +112,49 @@ func rebind(q string) string {
 	}
 	var b strings.Builder
 	b.Grow(len(q) + 16)
-	n := 0
-	for i := 0; i < len(q); i++ {
-		c := q[i]
+	placeholder := 0
+	for pos := 0; pos < len(q); pos++ {
+		char := q[pos]
 		switch {
-		case c == '\'' || c == '"':
-			j := i + 1
-			for j < len(q) {
-				if q[j] == c {
-					if j+1 < len(q) && q[j+1] == c { // '' or "" inside the quotes
-						j += 2
+		case char == '\'' || char == '"':
+			quoteEnd := pos + 1
+			for quoteEnd < len(q) {
+				if q[quoteEnd] == char {
+					if quoteEnd+1 < len(q) && q[quoteEnd+1] == char { // '' or "" inside the quotes
+						quoteEnd += 2
 						continue
 					}
 					break
 				}
-				j++
+				quoteEnd++
 			}
-			if j >= len(q) {
-				j = len(q) - 1
+			if quoteEnd >= len(q) {
+				quoteEnd = len(q) - 1
 			}
-			b.WriteString(q[i : j+1])
-			i = j
-		case c == '-' && i+1 < len(q) && q[i+1] == '-':
-			j := strings.IndexByte(q[i:], '\n')
-			if j < 0 {
-				b.WriteString(q[i:])
+			b.WriteString(q[pos : quoteEnd+1])
+			pos = quoteEnd
+		case char == '-' && pos+1 < len(q) && q[pos+1] == '-':
+			lineEnd := strings.IndexByte(q[pos:], '\n')
+			if lineEnd < 0 {
+				b.WriteString(q[pos:])
 				return b.String()
 			}
-			b.WriteString(q[i : i+j])
-			i += j - 1
-		case c == '?':
-			j := i + 1
-			for j < len(q) && q[j] >= '0' && q[j] <= '9' {
-				j++
+			b.WriteString(q[pos : pos+lineEnd])
+			pos += lineEnd - 1
+		case char == '?':
+			digitsEnd := pos + 1
+			for digitsEnd < len(q) && q[digitsEnd] >= '0' && q[digitsEnd] <= '9' {
+				digitsEnd++
 			}
-			if j > i+1 {
-				b.WriteString("$" + q[i+1:j])
-				i = j - 1
+			if digitsEnd > pos+1 {
+				b.WriteString("$" + q[pos+1:digitsEnd])
+				pos = digitsEnd - 1
 			} else {
-				n++
-				b.WriteString("$" + strconv.Itoa(n))
+				placeholder++
+				b.WriteString("$" + strconv.Itoa(placeholder))
 			}
 		default:
-			b.WriteByte(c)
+			b.WriteByte(char)
 		}
 	}
 	return b.String()
@@ -164,9 +164,9 @@ func rebind(q string) string {
 // refuses the whole statement ("invalid byte sequence for encoding UTF8:
 // 0x00"), and an event refused for one invisible character is an event lost.
 func clean(args []any) []any {
-	for i, a := range args {
-		if s, ok := a.(string); ok && strings.IndexByte(s, 0) >= 0 {
-			args[i] = strings.ReplaceAll(s, "\x00", "�")
+	for index, arg := range args {
+		if str, ok := arg.(string); ok && strings.IndexByte(str, 0) >= 0 {
+			args[index] = strings.ReplaceAll(str, "\x00", "�")
 		}
 	}
 	return args
@@ -175,27 +175,27 @@ func clean(args []any) []any {
 // noNUL is clean for a value about to become JSON: jsonb refuses \u0000 the
 // same way text refuses the byte.
 func noNUL(v any) any {
-	switch x := v.(type) {
+	switch typed := v.(type) {
 	case string:
-		if strings.IndexByte(x, 0) >= 0 {
-			return strings.ReplaceAll(x, "\x00", "�")
+		if strings.IndexByte(typed, 0) >= 0 {
+			return strings.ReplaceAll(typed, "\x00", "�")
 		}
-		return x
+		return typed
 	case map[string]any:
-		for k, e := range x {
-			x[k] = noNUL(e)
+		for field, fieldValue := range typed {
+			typed[field] = noNUL(fieldValue)
 		}
-		return x
+		return typed
 	case event:
-		for k, e := range x {
-			x[k] = noNUL(e)
+		for field, fieldValue := range typed {
+			typed[field] = noNUL(fieldValue)
 		}
-		return x
+		return typed
 	case []any:
-		for i, e := range x {
-			x[i] = noNUL(e)
+		for index, member := range typed {
+			typed[index] = noNUL(member)
 		}
-		return x
+		return typed
 	}
 	return v
 }
@@ -214,45 +214,45 @@ func sqlCell(v any, dbType string) any {
 	switch dbType {
 	case "NUMERIC":
 		var s string
-		switch x := v.(type) {
+		switch typed := v.(type) {
 		case string:
-			s = x
+			s = typed
 		case []byte:
-			s = string(x)
+			s = string(typed)
 		default:
 			return v
 		}
-		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return n
+		if whole, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return whole
 		}
-		if f, err := strconv.ParseFloat(s, 64); err == nil {
-			if f == float64(int64(f)) && !strings.ContainsAny(s, "eE") && len(s) < 19 {
-				return int64(f)
+		if number, err := strconv.ParseFloat(s, 64); err == nil {
+			if number == float64(int64(number)) && !strings.ContainsAny(s, "eE") && len(s) < 19 {
+				return int64(number)
 			}
-			return f
+			return number
 		}
 		return s
 	case "BOOL":
-		if b, ok := v.(bool); ok {
-			if b {
+		if flag, ok := v.(bool); ok {
+			if flag {
 				return int64(1)
 			}
 			return int64(0)
 		}
 	case "JSON", "JSONB":
 		var raw []byte
-		switch x := v.(type) {
+		switch typed := v.(type) {
 		case []byte:
-			raw = x
+			raw = typed
 		case string:
-			raw = []byte(x)
+			raw = []byte(typed)
 		default:
 			return v
 		}
 		return jsonCell(raw)
 	}
-	if b, ok := v.([]byte); ok {
-		return string(b)
+	if cellBytes, ok := v.([]byte); ok {
+		return string(cellBytes)
 	}
 	return v
 }
@@ -264,44 +264,44 @@ func jsonCell(raw []byte) any {
 	if err := dec.Decode(&x); err != nil {
 		return string(raw)
 	}
-	switch t := x.(type) {
+	switch decoded := x.(type) {
 	case nil:
 		return nil
 	case bool:
-		if t {
+		if decoded {
 			return int64(1)
 		}
 		return int64(0)
 	case json.Number:
-		if n, err := t.Int64(); err == nil {
-			return n
+		if whole, err := decoded.Int64(); err == nil {
+			return whole
 		}
-		if f, err := t.Float64(); err == nil {
-			return f
+		if number, err := decoded.Float64(); err == nil {
+			return number
 		}
-		return t.String()
+		return decoded.String()
 	case string:
-		return t
+		return decoded
 	}
-	out, err := json.Marshal(x)
+	encoded, err := json.Marshal(x)
 	if err != nil {
 		return string(raw)
 	}
-	return string(out)
+	return string(encoded)
 }
 
 // scanCells reads one row of any shape through cell.
 func scanCells(rows *sql.Rows, types []string) ([]any, error) {
 	cells := make([]any, len(types))
 	holders := make([]any, len(types))
-	for i := range cells {
-		holders[i] = &cells[i]
+	for index := range cells {
+		holders[index] = &cells[index]
 	}
 	if err := rows.Scan(holders...); err != nil {
 		return nil, err
 	}
-	for i := range cells {
-		cells[i] = sqlCell(cells[i], types[i])
+	for index := range cells {
+		cells[index] = sqlCell(cells[index], types[index])
 	}
 	return cells, nil
 }
@@ -311,11 +311,11 @@ func columnTypes(rows *sql.Rows) []string {
 	if err != nil {
 		return nil
 	}
-	out := make([]string, len(cts))
-	for i, c := range cts {
-		out[i] = c.DatabaseTypeName()
+	types := make([]string, len(cts))
+	for index, colType := range cts {
+		types[index] = colType.DatabaseTypeName()
 	}
-	return out
+	return types
 }
 
 // pgConfig is where the database is and who this service is there: AMMIT_DSN
@@ -336,23 +336,23 @@ func pgConfig(dsn string) (*pgx.ConnConfig, error) {
 	if dsn == "" {
 		return nil, errors.New("AMMIT_DSN is not set: ammit keeps its record in Postgres")
 	}
-	cfg, err := pgx.ParseConfig(dsn)
+	pgConf, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		// The parser's message can quote the string it was given.
 		return nil, errors.New("AMMIT_DSN is not a Postgres connection string")
 	}
-	if cfg.Password != "" {
+	if pgConf.Password != "" {
 		return nil, errors.New("AMMIT_DSN carries a password: the password comes from Vault " +
 			"(AMMIT_PG_VAULT), never from the environment")
 	}
 	if path := os.Getenv("AMMIT_PG_VAULT"); path != "" {
-		key := env("AMMIT_PG_VAULT_KEY", "POSTGRES_PASSWORD")
+		vaultKey := env("AMMIT_PG_VAULT_KEY", "POSTGRES_PASSWORD")
 		var pw string
 		var verr error
 		// Vault may be coming up beside this container; give it a minute
 		// before calling it absent.
 		for try := 0; try < 30; try++ {
-			if pw, verr = vaultValue(path, key); verr == nil {
+			if pw, verr = vaultValue(path, vaultKey); verr == nil {
 				break
 			}
 			if try == 0 {
@@ -363,13 +363,13 @@ func pgConfig(dsn string) (*pgx.ConnConfig, error) {
 		if verr != nil {
 			return nil, verr
 		}
-		cfg.Password = pw
+		pgConf.Password = pw
 	}
-	if cfg.RuntimeParams == nil {
-		cfg.RuntimeParams = map[string]string{}
+	if pgConf.RuntimeParams == nil {
+		pgConf.RuntimeParams = map[string]string{}
 	}
-	cfg.RuntimeParams["application_name"] = "ammit"
-	return cfg, nil
+	pgConf.RuntimeParams["application_name"] = "ammit"
+	return pgConf, nil
 }
 
 // dbLabel is where the record is, for /health and the log: host, port and
@@ -378,11 +378,11 @@ func dbLabel(dsn string) string {
 	if statestore.Embedded {
 		return statestore.Label()
 	}
-	cfg, err := pgx.ParseConfig(dsn)
+	pgConf, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return "postgres"
 	}
-	return fmt.Sprintf("postgres://%s:%d/%s", cfg.Host, cfg.Port, cfg.Database)
+	return fmt.Sprintf("postgres://%s:%d/%s", pgConf.Host, pgConf.Port, pgConf.Database)
 }
 
 // vaultValue reads one KEY=value line of a sut/ secret, the way vault-env
@@ -406,7 +406,7 @@ func vaultValue(path, key string) (string, error) {
 		return "", fmt.Errorf("no answer from Vault for sut/%s", path)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("no sut/%s in Vault (HTTP %d)", path, resp.StatusCode)
 	}
@@ -417,13 +417,13 @@ func vaultValue(path, key string) (string, error) {
 			} `json:"data"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(body, &out) != nil || out.Data.Data.Content == "" {
+	if json.Unmarshal(respBody, &out) != nil || out.Data.Data.Content == "" {
 		return "", fmt.Errorf("the Vault secret sut/%s has no content", path)
 	}
-	for _, line := range strings.Split(out.Data.Data.Content, "\n") {
-		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && strings.TrimSpace(k) == key {
-			return v, nil
+	for _, envLine := range strings.Split(out.Data.Data.Content, "\n") {
+		envName, envValue, ok := strings.Cut(strings.TrimSpace(envLine), "=")
+		if ok && strings.TrimSpace(envName) == key {
+			return envValue, nil
 		}
 	}
 	return "", fmt.Errorf("the Vault secret sut/%s has no %s line", path, key)
@@ -435,55 +435,55 @@ func vaultValue(path, key string) (string, error) {
 // holds however the statement is spelled.
 func openPools(dsn string) (*DB, *DB, error) {
 	if statestore.Embedded {
-		w, r, err := statestore.Open(strings.TrimSuffix(env("AMMIT_DATA", "/data"), "/"))
+		writer, reader, err := statestore.Open(strings.TrimSuffix(env("AMMIT_DATA", "/data"), "/"))
 		if err != nil {
 			return nil, nil, err
 		}
-		return &DB{w}, &DB{r}, nil
+		return &DB{writer}, &DB{reader}, nil
 	}
-	cfg, err := pgConfig(dsn)
+	pgConf, err := pgConfig(dsn)
 	if err != nil {
 		return nil, nil, err
 	}
-	w := stdlib.OpenDB(*cfg)
-	w.SetMaxOpenConns(8)
-	w.SetConnMaxIdleTime(5 * time.Minute)
-	rcfg := cfg.Copy()
+	writer := stdlib.OpenDB(*pgConf)
+	writer.SetMaxOpenConns(8)
+	writer.SetConnMaxIdleTime(5 * time.Minute)
+	rcfg := pgConf.Copy()
 	rcfg.RuntimeParams["default_transaction_read_only"] = "on"
 	rcfg.RuntimeParams["application_name"] = "ammit-read"
-	r := stdlib.OpenDB(*rcfg)
-	r.SetMaxOpenConns(4)
-	r.SetConnMaxIdleTime(5 * time.Minute)
+	reader := stdlib.OpenDB(*rcfg)
+	reader.SetMaxOpenConns(4)
+	reader.SetConnMaxIdleTime(5 * time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for {
-		if err = w.PingContext(ctx); err == nil || ctx.Err() != nil {
+		if err = writer.PingContext(ctx); err == nil || ctx.Err() != nil {
 			break
 		}
 		time.Sleep(time.Second)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("no answer from Postgres at %s:%d/%s: %w",
-			cfg.Host, cfg.Port, cfg.Database, err)
+			pgConf.Host, pgConf.Port, pgConf.Database, err)
 	}
-	return &DB{w}, &DB{r}, nil
+	return &DB{writer}, &DB{reader}, nil
 }
 
 // readOnly runs one caller's query in a read-only transaction of its own, so
 // nothing the query does to its session (a set_config, a SET) outlives it.
 func readOnly(ctx context.Context, q string, each func(*sql.Rows) error) error {
-	tx, err := readDB.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	txn, err := readDB.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-	rs, err := tx.QueryContext(ctx, q)
+	defer func() { _ = txn.Rollback() }()
+	queried, err := txn.QueryContext(ctx, q)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rs.Close() }()
-	if err := each(rs); err != nil {
+	defer func() { _ = queried.Close() }()
+	if err := each(queried); err != nil {
 		return err
 	}
-	return rs.Err()
+	return queried.Err()
 }

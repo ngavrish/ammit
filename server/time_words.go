@@ -21,8 +21,8 @@ var timeWords = map[string]string{
 }
 
 func timeWordsJS() string {
-	b, _ := json.Marshal(timeWords)
-	return string(b)
+	encoded, _ := json.Marshal(timeWords)
+	return string(encoded)
 }
 
 // abbreviations are what an axis must never say for a unit of time.
@@ -35,9 +35,9 @@ var abbreviations = regexp.MustCompile(`"\s?(h|m|s|d|hr|hrs|min|mins|sec|secs)"`
 // words from timeWords at all. The words themselves are checked too: a map
 // entry that is an abbreviation would pass the formatter and fail the reader.
 func axisTimeIsSpelledOut(page string) error {
-	for k, w := range timeWords {
-		if len(w) < 3 || abbreviations.MatchString(`"`+w+`"`) {
-			return fmt.Errorf("timeWords[%q] = %q is an abbreviation", k, w)
+	for unit, word := range timeWords {
+		if len(word) < 3 || abbreviations.MatchString(`"`+word+`"`) {
+			return fmt.Errorf("timeWords[%q] = %q is an abbreviation", unit, word)
 		}
 	}
 	start := strings.Index(page, "function dur(")
@@ -48,31 +48,31 @@ func axisTimeIsSpelledOut(page string) error {
 	if end < 0 {
 		return fmt.Errorf("dur() does not end")
 	}
-	body := page[start : start+end]
-	if !strings.Contains(body, "TIME_WORDS") {
+	formatter := page[start : start+end]
+	if !strings.Contains(formatter, "TIME_WORDS") {
 		return fmt.Errorf("dur() does not take its words from TIME_WORDS")
 	}
-	if m := abbreviations.FindString(body); m != "" {
-		return fmt.Errorf("dur() writes a unit of time as %s", m)
+	if abbreviation := abbreviations.FindString(formatter); abbreviation != "" {
+		return fmt.Errorf("dur() writes a unit of time as %s", abbreviation)
 	}
-	// And then the rest of the page, because the rule's own sentence is that a
+	// And then the outside of the page, because the rule's own sentence is that a
 	// label built anywhere else is a label the gate cannot see - and one was.
 	// `ago()` returned h+"h "+m+"m" beside the correct formatter for as long
 	// as both existed: the gate read dur() alone, found it clean, and said the
 	// page spelled its units out while the runs table wrote "27h 47m".
-	rest := page[:start] + page[start+end:]
-	for _, m := range abbreviations.FindAllStringIndex(rest, -1) {
-		line := nearby(rest, m[0])
+	outside := page[:start] + page[start+end:]
+	for _, span := range abbreviations.FindAllStringIndex(outside, -1) {
+		context := nearby(outside, span[0])
 		// A one-letter literal is only a unit when it is glued onto a number
 		// and the line is doing time arithmetic. Without both, the gate reds
 		// on `+"s"` pluralising a word, which is what it did on its first run
 		// over the whole page - and a gate that cries wolf on the page's
 		// English is one somebody narrows back to dur() within the week.
-		if !glued.MatchString(line) || !clockwork.MatchString(line) {
+		if !glued.MatchString(context) || !clockwork.MatchString(context) {
 			continue
 		}
 		return fmt.Errorf("a time label outside dur() writes a unit as %s: %s",
-			rest[m[0]:m[1]], line)
+			outside[span[0]:span[1]], context)
 	}
 	return nil
 }
@@ -90,9 +90,9 @@ var clockwork = regexp.MustCompile(
 // to look rather than what to grep for.
 func nearby(text string, at int) string {
 	from := strings.LastIndex(text[:at], "\n") + 1
-	to := strings.Index(text[at:], "\n")
-	if to < 0 {
-		to = len(text) - at
+	lineEnd := strings.Index(text[at:], "\n")
+	if lineEnd < 0 {
+		lineEnd = len(text) - at
 	}
-	return strings.TrimSpace(text[from : at+to])
+	return strings.TrimSpace(text[from : at+lineEnd])
 }

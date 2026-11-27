@@ -99,17 +99,17 @@ type ticketAction struct {
 }
 
 func (a *ticketAction) String() string {
-	s := fmt.Sprintf("%s by %s (action %d", a.kind, a.owner, a.id)
+	described := fmt.Sprintf("%s by %s (action %d", a.kind, a.owner, a.id)
 	if a.cycle.Valid {
-		s += fmt.Sprintf(", cycle %d", a.cycle.Int64)
+		described += fmt.Sprintf(", cycle %d", a.cycle.Int64)
 	}
 	if a.queue.Valid {
-		s += fmt.Sprintf(", queue %d", a.queue.Int64)
+		described += fmt.Sprintf(", queue %d", a.queue.Int64)
 	}
 	if a.run != "" {
-		s += ", run " + shortRun(a.run)
+		described += ", run " + shortRun(a.run)
 	}
-	return s + ")"
+	return described + ")"
 }
 
 // querier is the pool or a transaction on it.
@@ -128,17 +128,17 @@ func uniqueViolation(err error) bool {
 
 // openActionOf is the ticket's open action, or nil. lock takes it FOR UPDATE.
 func openActionOf(x querier, ticket string, lock bool) *ticketAction {
-	q := `SELECT id, ticket, kind, owner, coalesce(run,''), cycle_id, queue_id, opened
+	query := `SELECT id, ticket, kind, owner, coalesce(run,''), cycle_id, queue_id, opened
 	      FROM ticket_actions WHERE ticket=? AND state='open'`
 	if lock {
-		q += ` FOR UPDATE`
+		query += ` FOR UPDATE`
 	}
-	a := &ticketAction{}
-	if x.QueryRow(q, ticket).Scan(&a.id, &a.ticket, &a.kind, &a.owner, &a.run,
-		&a.cycle, &a.queue, &a.opened) != nil {
+	action := &ticketAction{}
+	if x.QueryRow(query, ticket).Scan(&action.id, &action.ticket, &action.kind, &action.owner, &action.run,
+		&action.cycle, &action.queue, &action.opened) != nil {
 		return nil
 	}
-	return a
+	return action
 }
 
 // openAction inserts an open action. A unique violation means the ticket is
@@ -165,7 +165,7 @@ func sayHeldOnce(asker, ticket string, holder *ticketAction) {
 	if holder == nil {
 		return
 	}
-	if _, said := actionSaid.LoadOrStore(fmt.Sprintf("%s|%s|%d", asker, ticket, holder.id), true); said {
+	if _, alreadySaid := actionSaid.LoadOrStore(fmt.Sprintf("%s|%s|%d", asker, ticket, holder.id), true); alreadySaid {
 		return
 	}
 	log.Printf("ammit: %s leaves %s alone: it is held by %s", asker, ticket, holder)
@@ -176,13 +176,13 @@ func sayHeldOnce(asker, ticket string, holder *ticketAction) {
 func queueUnderAction(ticket, owner, run, payload string) (int64, *ticketAction) {
 	mu.Lock()
 	defer mu.Unlock()
-	tx, err := db.Begin()
+	txn, err := db.Begin()
 	if err != nil {
 		return 0, nil
 	}
-	id, err := openAction(tx, ticketAction{ticket: ticket, kind: actResume, owner: owner, run: run})
+	id, err := openAction(txn, ticketAction{ticket: ticket, kind: actResume, owner: owner, run: run})
 	if err != nil {
-		_ = tx.Rollback()
+		_ = txn.Rollback()
 		if uniqueViolation(err) {
 			return 0, openActionOf(db, ticket, false)
 		}
@@ -190,16 +190,16 @@ func queueUnderAction(ticket, owner, run, payload string) (int64, *ticketAction)
 		return 0, nil
 	}
 	var q int64
-	err = tx.QueryRow(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?) RETURNING id`,
+	err = txn.QueryRow(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?) RETURNING id`,
 		ticket, payload, wdNow()).Scan(&q)
 	if err == nil {
-		_, err = tx.Exec(`UPDATE ticket_actions SET queue_id=? WHERE id=?`, q, id)
+		_, err = txn.Exec(`UPDATE ticket_actions SET queue_id=? WHERE id=?`, q, id)
 	}
 	if err == nil {
-		err = tx.Commit()
+		err = txn.Commit()
 	}
 	if err != nil {
-		_ = tx.Rollback()
+		_ = txn.Rollback()
 		log.Printf("ammit: could not queue the resume of %s: %v", ticket, err)
 		return 0, nil
 	}
@@ -223,11 +223,11 @@ func openCycleAction(tx *Tx, ticket, run string, cycle int64) (*ticketAction, er
 func holdCycle(c wdCycle, ticket string) (*ticketAction, *ticketAction) {
 	mu.Lock()
 	defer mu.Unlock()
-	if a := openActionOf(db, ticket, false); a != nil {
-		if a.kind == actFix && a.cycle.Valid && a.cycle.Int64 == c.id {
-			return a, nil
+	if action := openActionOf(db, ticket, false); action != nil {
+		if action.kind == actFix && action.cycle.Valid && action.cycle.Int64 == c.id {
+			return action, nil
 		}
-		return nil, a
+		return nil, action
 	}
 	if _, err := openAction(db, ticketAction{ticket: ticket, kind: actFix, owner: "watchdog",
 		run: c.run, cycle: sql.NullInt64{Int64: c.id, Valid: true}}); err != nil {
@@ -239,15 +239,15 @@ func holdCycle(c wdCycle, ticket string) (*ticketAction, *ticketAction) {
 
 // closeCycleAction closes the fix action of a cycle that ended.
 func closeCycleAction(cycle int64, state string) {
-	result := "done"
+	outcome := "done"
 	if state == wdFailed {
-		result = "failed"
+		outcome = "failed"
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	_, _ = db.Exec(`UPDATE ticket_actions SET state=?, closed=?, why=?
 	                         WHERE kind='fix' AND cycle_id=? AND state='open'`,
-		result, wdNow(), "watchdog cycle "+fmt.Sprint(cycle)+" ended "+state, cycle)
+		outcome, wdNow(), "watchdog cycle "+fmt.Sprint(cycle)+" ended "+state, cycle)
 }
 
 // pendingRow says whether a queue row is still to become a run: waiting, or
@@ -266,25 +266,25 @@ func pendingRow(x querier, q sql.NullInt64) bool {
 func queueCycleResume(a *ticketAction, ticket, payload string) int64 {
 	mu.Lock()
 	defer mu.Unlock()
-	tx, err := db.Begin()
+	txn, err := db.Begin()
 	if err != nil {
 		return 0
 	}
 	var q int64
-	err = tx.QueryRow(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?) RETURNING id`,
+	err = txn.QueryRow(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?) RETURNING id`,
 		ticket, payload, wdNow()).Scan(&q)
 	if err == nil {
 		var res sql.Result
-		res, err = tx.Exec(`UPDATE ticket_actions SET queue_id=? WHERE id=? AND state='open'`, q, a.id)
-		if n, _ := rowsOf(res); err == nil && n == 0 {
+		res, err = txn.Exec(`UPDATE ticket_actions SET queue_id=? WHERE id=? AND state='open'`, q, a.id)
+		if affected, _ := rowsOf(res); err == nil && affected == 0 {
 			err = errors.New("the cycle's action was closed under it")
 		}
 	}
 	if err == nil {
-		err = tx.Commit()
+		err = txn.Commit()
 	}
 	if err != nil {
-		_ = tx.Rollback()
+		_ = txn.Rollback()
 		log.Printf("ammit: could not queue the resume of %s: %v", ticket, err)
 		return 0
 	}
@@ -315,12 +315,12 @@ func queueByRequest(name, payload string) (int64, string) {
 	}
 	source, _ := p["source_run"].(string)
 	for try := 0; try < 2; try++ {
-		q, said, err := personResume(name, source, payload)
+		queueID, note, err := personResume(name, source, payload)
 		if err == nil || !uniqueViolation(err) {
-			if said != "" {
-				log.Printf("ammit: queue row %d (%s): %s", q, name, said)
+			if note != "" {
+				log.Printf("ammit: queue row %d (%s): %s", queueID, name, note)
 			}
-			return q, said
+			return queueID, note
 		}
 	}
 	return 0, "the ticket's action changed twice under this request; not queued"
@@ -329,29 +329,29 @@ func queueByRequest(name, payload string) (int64, string) {
 func personResume(name, source, payload string) (int64, string, error) {
 	mu.Lock()
 	defer mu.Unlock()
-	tx, err := db.Begin()
+	txn, err := db.Begin()
 	if err != nil {
 		return 0, "", err
 	}
-	holder := openActionOf(tx, name, true)
+	holder := openActionOf(txn, name, true)
 	var q int64
-	if err = tx.QueryRow(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?) RETURNING id`,
+	if err = txn.QueryRow(`INSERT INTO queue (name, payload, requested) VALUES (?,?,?) RETURNING id`,
 		name, payload, wdNow()).Scan(&q); err != nil {
-		_ = tx.Rollback()
+		_ = txn.Rollback()
 		return 0, "", err
 	}
-	said := ""
+	note := ""
 	replaceWaiting := func() bool {
 		if !holder.queue.Valid {
 			return false
 		}
-		res, _ := tx.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND state='waiting'`,
+		withdraw, _ := txn.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND state='waiting'`,
 			wdNow(), holder.queue.Int64)
-		n, _ := rowsOf(res)
-		return n > 0
+		withdrawn, _ := rowsOf(withdraw)
+		return withdrawn > 0
 	}
 	own := func() error {
-		_, err := openAction(tx, ticketAction{ticket: name, kind: actResume, owner: "person", run: source,
+		_, err := openAction(txn, ticketAction{ticket: name, kind: actResume, owner: "person", run: source,
 			queue: sql.NullInt64{Int64: q, Valid: true}})
 		return err
 	}
@@ -360,11 +360,11 @@ func personResume(name, source, payload string) (int64, string, error) {
 		err = own()
 	case holder.kind == actResume:
 		if replaceWaiting() {
-			closeAction(tx, holder.id, "done", fmt.Sprintf("replaced by a person's request (queue row %d)", q))
-			said = fmt.Sprintf("replaces the waiting %s", holder)
+			closeAction(txn, holder.id, "done", fmt.Sprintf("replaced by a person's request (queue row %d)", q))
+			note = fmt.Sprintf("replaces the waiting %s", holder)
 			err = own()
 		} else {
-			said = fmt.Sprintf("queued beside %s, whose row is already starting", holder)
+			note = fmt.Sprintf("queued beside %s, whose row is already starting", holder)
 		}
 	case holder.kind == actFix:
 		// The cycle's own resume, or a person's taken before it, is replaced
@@ -372,29 +372,29 @@ func personResume(name, source, payload string) (int64, string, error) {
 		// and stays its resume_queue.
 		old := holder.queue
 		replaced := false
-		if pendingRow(tx, old) {
+		if pendingRow(txn, old) {
 			if replaced = replaceWaiting(); !replaced {
-				said = fmt.Sprintf("queued beside %s, whose resume is already starting", holder)
+				note = fmt.Sprintf("queued beside %s, whose resume is already starting", holder)
 				break
 			}
 		}
-		_, err = tx.Exec(`UPDATE ticket_actions SET queue_id=? WHERE id=?`, q, holder.id)
+		_, err = txn.Exec(`UPDATE ticket_actions SET queue_id=? WHERE id=?`, q, holder.id)
 		if err == nil && replaced && holder.cycle.Valid {
-			_, err = tx.Exec(`UPDATE watchdog_cycles SET resume_queue=?, updated=?
+			_, err = txn.Exec(`UPDATE watchdog_cycles SET resume_queue=?, updated=?
 			                            WHERE id=? AND resume_queue=?`, q, wdNow(), holder.cycle.Int64, old.Int64)
 		}
-		said = fmt.Sprintf("taken as the resume of %s", holder)
+		note = fmt.Sprintf("taken as the resume of %s", holder)
 	default: // a stop
-		said = fmt.Sprintf("queued beside %s: the ticket's run is closing", holder)
+		note = fmt.Sprintf("queued beside %s: the ticket's run is closing", holder)
 	}
 	if err == nil {
-		err = tx.Commit()
+		err = txn.Commit()
 	}
 	if err != nil {
-		_ = tx.Rollback()
+		_ = txn.Rollback()
 		return 0, "", err
 	}
-	return q, said, nil
+	return q, note, nil
 }
 
 // openStop records a stop of a run as the ticket's action, taking over any
@@ -418,13 +418,13 @@ func openStop(run, name, owner string) int64 {
 		return 0
 	}
 	for try := 0; try < 2; try++ {
-		tx, err := db.Begin()
+		txn, err := db.Begin()
 		if err != nil {
 			return 0
 		}
-		holder := openActionOf(tx, ticket, true)
+		holder := openActionOf(txn, ticket, true)
 		if holder != nil && holder.kind == actStop {
-			_ = tx.Rollback()
+			_ = txn.Rollback()
 			if holder.run != run {
 				sayHeldOnce("the stop of "+shortRun(run), ticket, holder)
 			}
@@ -433,20 +433,20 @@ func openStop(run, name, owner string) int64 {
 		if holder != nil {
 			why := fmt.Sprintf("taken over by a stop of run %s (%s)", shortRun(run), owner)
 			if holder.kind == actResume && holder.queue.Valid {
-				_, _ = tx.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND state='waiting'`,
+				_, _ = txn.Exec(`UPDATE queue SET state='done', finished=? WHERE id=? AND state='waiting'`,
 					wdNow(), holder.queue.Int64)
 			}
-			closeAction(tx, holder.id, "done", why)
+			closeAction(txn, holder.id, "done", why)
 			log.Printf("ammit: %s on %s %s", holder, ticket, why)
 		}
-		id, err := openAction(tx, ticketAction{ticket: ticket, kind: actStop, owner: owner, run: run})
+		id, err := openAction(txn, ticketAction{ticket: ticket, kind: actStop, owner: owner, run: run})
 		if err == nil {
-			err = tx.Commit()
+			err = txn.Commit()
 		}
 		if err == nil {
 			return id
 		}
-		_ = tx.Rollback()
+		_ = txn.Rollback()
 		if !uniqueViolation(err) {
 			log.Printf("ammit: could not record the stop of %s: %v", run, err)
 			return 0
@@ -538,31 +538,31 @@ func sweepActions(conf Config) {
 	}
 	var stops []stale
 	mu.Lock()
-	for _, q := range closes {
-		rows, err := db.Query(q, now)
+	for _, closeQuery := range closes {
+		closed, err := db.Query(closeQuery, now)
 		if err != nil {
 			log.Printf("ammit: sweeping ticket actions: %v", err)
 			continue
 		}
-		for rows.Next() {
+		for closed.Next() {
 			var ticket, kind, why string
-			if rows.Scan(&ticket, &kind, &why) == nil {
+			if closed.Scan(&ticket, &kind, &why) == nil {
 				log.Printf("ammit: %s action on %s closed: %s", kind, ticket, why)
 			}
 		}
-		_ = rows.Err() // a cut-off read closes the rest next tick
-		rows.Close()
+		_ = closed.Err() // a cut-off read closes the rest next tick
+		closed.Close()
 	}
-	if rows, err := db.Query(`SELECT id, ticket, run, owner, opened FROM ticket_actions
+	if openRows, err := db.Query(`SELECT id, ticket, run, owner, opened FROM ticket_actions
 	                                     WHERE state='open' AND kind='stop'`); err == nil {
-		for rows.Next() {
+		for openRows.Next() {
 			var s stale
-			if rows.Scan(&s.id, &s.ticket, &s.run, &s.owner, &s.opened) == nil {
+			if openRows.Scan(&s.id, &s.ticket, &s.run, &s.owner, &s.opened) == nil {
 				stops = append(stops, s)
 			}
 		}
-		_ = rows.Err() // a cut-off read is the shorter answer it always was
-		rows.Close()
+		_ = openRows.Err() // a cut-off read is the shorter answer it always was
+		openRows.Close()
 	}
 	mu.Unlock()
 	limit, ok := conf.num("timeouts", "run_close")
@@ -574,22 +574,22 @@ func sweepActions(conf Config) {
 	}
 	// Measured awake, as every age here: a stop ordered just before the host
 	// slept is not a stop the run ignored.
-	up := nowWall() - upSince()
-	for _, s := range stops {
-		waited := now - s.opened
-		if up < waited {
-			waited = up
+	uptime := nowWall() - upSince()
+	for _, stop := range stops {
+		waited := now - stop.opened
+		if uptime < waited {
+			waited = uptime
 		}
 		if waited <= limit {
 			continue
 		}
 		why := fmt.Sprintf("force-closed by ammit: the stop ordered by %s at %s was not "+
-			"acknowledged within timeouts.run_close (%.0fs)", s.owner,
-			time.Unix(int64(s.opened), 0).UTC().Format("15:04:05 UTC"), limit)
+			"acknowledged within timeouts.run_close (%.0fs)", stop.owner,
+			time.Unix(int64(stop.opened), 0).UTC().Format("15:04:05 UTC"), limit)
 		mu.Lock()
-		closeAction(db, s.id, "failed", why)
+		closeAction(db, stop.id, "failed", why)
 		mu.Unlock()
-		finish(s.run, "BLOCKED", why)
-		judge("run", s.run, s.ticket, "timeouts.run_close", limit, waited, "closed", why)
+		finish(stop.run, "BLOCKED", why)
+		judge("run", stop.run, stop.ticket, "timeouts.run_close", limit, waited, "closed", why)
 	}
 }

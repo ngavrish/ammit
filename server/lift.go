@@ -53,19 +53,19 @@ func lift(id int64, at float64, e event) {
 
 // liftResults makes one results row per scenario of a result event.
 func liftResults(id int64, at float64, e event) {
-	rows, _ := e["rows"].([]any)
-	for i, raw := range rows {
-		r, ok := raw.(map[string]any)
+	resultRows, _ := e["rows"].([]any)
+	for index, resultRow := range resultRows {
+		fields, ok := resultRow.(map[string]any)
 		if !ok {
 			continue
 		}
-		row := event(r)
+		resultEvent := event(fields)
 		execSQL(`INSERT INTO results (event_id, idx, at, run, ticket, phase, branch, feature, suite,
 		        file, name, classname, status, message, text, seconds, product_commit, observed_at)
 		      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
-			id, int64(i), at, e.s("run"), e.s("ticket"), e.s("phase"), e.s("branch"), e.s("feature"),
-			e.s("suite"), e.s("file"), row.s("name"), row.s("classname"), row.s("status"), row.s("message"), row.s("text"),
-			row.optf("seconds"), e.s("commit"), e.optf("observed_at"))
+			id, int64(index), at, e.s("run"), e.s("ticket"), e.s("phase"), e.s("branch"), e.s("feature"),
+			e.s("suite"), e.s("file"), resultEvent.s("name"), resultEvent.s("classname"), resultEvent.s("status"), resultEvent.s("message"), resultEvent.s("text"),
+			resultEvent.optf("seconds"), e.s("commit"), e.optf("observed_at"))
 	}
 }
 

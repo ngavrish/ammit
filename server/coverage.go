@@ -64,14 +64,14 @@ func putCoverage(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 	}
 	var refused []string
 	written := 0
-	at := float64(time.Now().UnixNano()) / 1e9
+	savedAt := float64(time.Now().UnixNano()) / 1e9
 	mu.Lock()
 	defer mu.Unlock()
-	for _, row := range in.Rows {
-		kind := strings.TrimSpace(strings.ToLower(row.Kind))
-		rid := strings.TrimSpace(row.ID)
+	for _, coverageRow := range in.Rows {
+		kind := strings.TrimSpace(strings.ToLower(coverageRow.Kind))
+		rid := strings.TrimSpace(coverageRow.ID)
 		if !coverageKinds[kind] || rid == "" {
-			refused = append(refused, fmt.Sprintf("%s/%s", row.Kind, row.ID))
+			refused = append(refused, fmt.Sprintf("%s/%s", coverageRow.Kind, coverageRow.ID))
 			continue
 		}
 		// Written again rather than added again: a phase that retries after a
@@ -84,9 +84,9 @@ func putCoverage(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 			  source=excluded.source, quote=excluded.quote, title=excluded.title,
 			  tests=CASE WHEN excluded.tests <> '' THEN excluded.tests ELSE coverage.tests END,
 			  body=excluded.body`,
-			at, in.Run, in.Ticket, kind, rid, strings.Join(row.Covers, " "),
-			strings.Join(row.Source, " "), row.Quote, row.Title,
-			strings.Join(row.Tests, " "), string(row.Body))
+			savedAt, in.Run, in.Ticket, kind, rid, strings.Join(coverageRow.Covers, " "),
+			strings.Join(coverageRow.Source, " "), coverageRow.Quote, coverageRow.Title,
+			strings.Join(coverageRow.Tests, " "), string(coverageRow.Body))
 		if err != nil {
 			refused = append(refused, fmt.Sprintf("%s/%s: %v", kind, rid, err))
 			continue
@@ -131,7 +131,7 @@ func getCoverage(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer func() { _ = rows.Close() }()
-	out := []map[string]any{}
+	records := []map[string]any{}
 	for rows.Next() {
 		var at float64
 		var run, ticket, kind, rid, covers, source, quote, title, tests, body sql.NullString
@@ -141,7 +141,7 @@ func getCoverage(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		at = atv
-		row := map[string]any{
+		record := map[string]any{
 			"at": at, "run": run.String, "ticket": ticket.String,
 			"kind": kind.String, "id": rid.String,
 			"covers": strings.Fields(covers.String),
@@ -150,9 +150,9 @@ func getCoverage(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 			"tests":  strings.Fields(tests.String),
 		}
 		if body.String != "" {
-			row["body"] = json.RawMessage(body.String)
+			record["body"] = json.RawMessage(body.String)
 		}
-		out = append(out, row)
+		records = append(records, record)
 	}
 	// A cursor that stopped because the read failed looks exactly like one
 	// that stopped because there was nothing left; the difference is here.
@@ -160,5 +160,5 @@ func getCoverage(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"rows": out})
+	writeJSON(w, http.StatusOK, map[string]any{"rows": records})
 }

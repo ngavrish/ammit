@@ -24,9 +24,9 @@ var pages = []pageDef{
 
 // pageOf is the page with this key, or nil.
 func pageOf(key string) *pageDef {
-	for i := range pages {
-		if pages[i].Key == key {
-			return &pages[i]
+	for index := range pages {
+		if pages[index].Key == key {
+			return &pages[index]
 		}
 	}
 	return nil
@@ -34,6 +34,6 @@ func pageOf(key string) *pageDef {
 
 // pagesJSON is the registry as the browser reads it.
 func pagesJSON() string {
-	b, _ := json.Marshal(pages)
-	return string(b)
+	encoded, _ := json.Marshal(pages)
+	return string(encoded)
 }

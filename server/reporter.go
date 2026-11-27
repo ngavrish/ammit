@@ -31,8 +31,8 @@ func reporterLoop(confPath string) {
 	for {
 		conf := loadConfig(confPath)
 		every := reporterEvery
-		if n, ok := conf.num("reporter", "every_s"); ok && n > 0 {
-			every = n
+		if configured, ok := conf.num("reporter", "every_s"); ok && configured > 0 {
+			every = configured
 		}
 		time.Sleep(time.Duration(every) * time.Second)
 		conf = loadConfig(confPath)
@@ -46,8 +46,8 @@ func reporterLoop(confPath string) {
 // reportOnce builds and sends one status message; how many tickets it named.
 func reportOnce(conf Config) int {
 	recent := reporterRecent
-	if n, ok := conf.num("reporter", "recent_s"); ok && n > 0 {
-		recent = n
+	if recentSecs, ok := conf.num("reporter", "recent_s"); ok && recentSecs > 0 {
+		recent = recentSecs
 	}
 	tickets := activeTickets(nowWall() - recent)
 	if len(tickets) == 0 {
@@ -55,25 +55,25 @@ func reportOnce(conf Config) int {
 	}
 	var blocks []string
 	ended := false
-	for _, t := range tickets {
-		if b, end := ticketStatus(t, nowWall()-recent); b != "" {
-			blocks = append(blocks, b)
+	for _, ticket := range tickets {
+		if block, end := ticketStatus(ticket, nowWall()-recent); block != "" {
+			blocks = append(blocks, block)
 			ended = ended || end
 		}
 	}
 	if len(blocks) == 0 {
 		return 0
 	}
-	text := "Статус тикетов, " + time.Now().UTC().Format("15:04") + " UTC\n\n" + strings.Join(blocks, "\n\n")
+	report := "Ticket status, " + time.Now().UTC().Format("15:04") + " UTC\n\n" + strings.Join(blocks, "\n\n")
 	// A {word} in a summary would read as an unfilled hole to the command check.
-	text = strings.NewReplacer("{", "(", "}", ")").Replace(text)
-	if len(text) > reporterMax {
-		text = text[:reporterMax] + "…"
+	report = strings.NewReplacer("{", "(", "}", ")").Replace(report)
+	if len(report) > reporterMax {
+		report = report[:reporterMax] + "…"
 	}
-	text, entities := mentionOwner(conf, text, ended)
-	out, err := command("report_status", conf, map[string]string{"text": text, "entities": entities})
+	report, entities := mentionOwner(conf, report, ended)
+	sent, err := command("report_status", conf, map[string]string{"text": report, "entities": entities})
 	if err != nil {
-		log.Printf("ammit: reporter could not send: %v %s", err, strings.TrimSpace(out))
+		log.Printf("ammit: reporter could not send: %v %s", err, strings.TrimSpace(sent))
 		return 0
 	}
 	log.Printf("ammit: reporter sent %d ticket(s)", len(blocks))
@@ -87,7 +87,7 @@ func reportOnce(conf Config) int {
 func activeTickets(since float64) []string {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`
+	ticketRows, err := db.Query(`
 		SELECT name FROM (
 		  SELECT DISTINCT ON (name) name, finished, coalesce(verdict,'') AS verdict
 		  FROM runs WHERE name NOT LIKE 'WD-%' AND name <> run
@@ -102,15 +102,15 @@ func activeTickets(since float64) []string {
 		log.Printf("ammit: reporter: %v", err)
 		return nil
 	}
-	defer rows.Close()
+	defer ticketRows.Close()
 	var out []string
-	for rows.Next() {
+	for ticketRows.Next() {
 		var n string
-		if rows.Scan(&n) == nil && n != "" {
+		if ticketRows.Scan(&n) == nil && n != "" {
 			out = append(out, n)
 		}
 	}
-	_ = rows.Err() // a cut-off read names fewer tickets, never a wrong one
+	_ = ticketRows.Err() // a cut-off read names fewer tickets, never a wrong one
 	return out
 }
 
@@ -136,49 +136,49 @@ func mentionOwner(conf Config, text string, ended bool) (string, string) {
 		log.Printf("ammit: reporter: TELEGRAM_OWNER_ID is not a number")
 		return text, "[]"
 	}
-	name := conf.str("reporter", "mention_name", "owner")
+	mention := conf.str("reporter", "mention_name", "owner")
 	// Telegram counts offsets and lengths in UTF-16 code units.
-	n := len(utf16.Encode([]rune(name)))
-	return name + ", " + text, fmt.Sprintf(`[{"type":"text_mention","offset":0,"length":%d,"user":{"id":%s}}]`, n, id)
+	mentionLen := len(utf16.Encode([]rune(mention)))
+	return mention + ", " + text, fmt.Sprintf(`[{"type":"text_mention","offset":0,"length":%d,"user":{"id":%s}}]`, mentionLen, id)
 }
 
 // ticketStatus is one ticket's block, or "" when there is nothing to say
 // (a finished run already reported done), and whether the block is the first
 // to tell of its run's end.
 func ticketStatus(ticket string, since float64) (string, bool) {
-	r, ok := latestRun(ticket)
+	latest, ok := latestRun(ticket)
 	if !ok {
 		return "", false
 	}
 	ended := false
-	if r.finished != nil {
-		key := "reporter_ended:" + r.run
-		if _, said := wdMeta(key); !said {
-			wdSetMeta(key, nowWall())
+	if latest.finished != nil {
+		endedKey := "reporter_ended:" + latest.run
+		if _, reported := wdMeta(endedKey); !reported {
+			wdSetMeta(endedKey, nowWall())
 			ended = true
 		}
 	}
 	var lines []string
-	head := ticket + " " + shortRun(r.run) + ": "
+	prefix := ticket + " " + shortRun(latest.run) + ": "
 	switch {
-	case r.finished == nil:
-		phase, at := lastPhase(r.run)
-		lines = append(lines, fmt.Sprintf("%sидёт: фаза %s с %s UTC, %d мин, $%.0f", head, orDash(phase),
-			clock(at), int((nowWall()-r.started)/60), r.usd))
-	case r.verdict == "BLOCKED" || r.verdict == "UNKNOWN" || r.verdict == "":
-		lines = append(lines, fmt.Sprintf("%sвстал %s в %s: %s", head, orDash(r.verdict), clock(*r.finished),
-			headLine(r.summary, 200)))
+	case latest.finished == nil:
+		phase, since := lastPhase(latest.run)
+		lines = append(lines, fmt.Sprintf("%srunning: phase %s since %s UTC, %d min, $%.0f", prefix, orDash(phase),
+			clock(since), int((nowWall()-latest.started)/60), latest.usd))
+	case latest.verdict == "BLOCKED" || latest.verdict == "UNKNOWN" || latest.verdict == "":
+		lines = append(lines, fmt.Sprintf("%sstopped %s at %s: %s", prefix, orDash(latest.verdict), clock(*latest.finished),
+			headLine(latest.summary, 200)))
 	default:
-		key := "reporter_done:" + r.run
-		if _, said := wdMeta(key); said || *r.finished < since {
+		doneKey := "reporter_done:" + latest.run
+		if _, reported := wdMeta(doneKey); reported || *latest.finished < since {
 			return "", false
 		}
-		wdSetMeta(key, nowWall())
-		line := fmt.Sprintf("%sготово: %s в %s", head, r.verdict, clock(*r.finished))
-		if pr := publishedPR(r.run); pr != "" {
-			line += ", PR " + pr
+		wdSetMeta(doneKey, nowWall())
+		doneLine := fmt.Sprintf("%sdone: %s at %s", prefix, latest.verdict, clock(*latest.finished))
+		if prURL := publishedPR(latest.run); prURL != "" {
+			doneLine += ", PR " + prURL
 		}
-		lines = append(lines, line)
+		lines = append(lines, doneLine)
 	}
 	lines = append(lines, watchdogLines(ticket)...)
 	lines = append(lines, queuedLines(ticket)...)
@@ -194,8 +194,8 @@ func latestRun(ticket string) (lastRun, bool) {
 	                    FROM runs WHERE name=? ORDER BY started DESC LIMIT 1`, ticket).
 		Scan(&r.run, &r.verdict, &r.summary, &r.started, &r.usd, &fin)
 	if fin.Valid {
-		v := fin.Float64
-		r.finished = &v
+		finishedAt := fin.Float64
+		r.finished = &finishedAt
 	}
 	return r, err == nil
 }
@@ -221,9 +221,9 @@ func publishedPR(run string) string {
 	                AND phase='publish' ORDER BY at DESC LIMIT 1`, run).Scan(&text) != nil {
 		return ""
 	}
-	for _, f := range strings.Fields(text) {
-		if strings.HasPrefix(f, "http") && strings.Contains(f, "/pull") {
-			return strings.Trim(f, "\"'(),.;")
+	for _, word := range strings.Fields(text) {
+		if strings.HasPrefix(word, "http") && strings.Contains(word, "/pull") {
+			return strings.Trim(word, "\"'(),.;")
 		}
 	}
 	return ""
@@ -232,53 +232,53 @@ func publishedPR(run string) string {
 func watchdogLines(ticket string) []string {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`SELECT c.cycle, c.state, coalesce(c.prs,'') FROM watchdog_cycles c
+	cycleRows, err := db.Query(`SELECT c.cycle, c.state, coalesce(c.prs,'') FROM watchdog_cycles c
 	                       JOIN runs r ON r.run = c.run
 	                       WHERE r.name=? AND c.state IN ('fixing','ci','merging','deploying','resumed')
 	                       ORDER BY c.id`, ticket)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer cycleRows.Close()
 	var out []string
-	for rows.Next() {
+	for cycleRows.Next() {
 		var cycle int
 		var state, prs string
-		if rows.Scan(&cycle, &state, &prs) != nil {
+		if cycleRows.Scan(&cycle, &state, &prs) != nil {
 			continue
 		}
-		line := fmt.Sprintf("  вотчдог: цикл %d %s", cycle, state)
+		cycleLine := fmt.Sprintf("  watchdog: cycle %d %s", cycle, state)
 		var urls []string
 		if json.Unmarshal([]byte(prs), &urls) == nil && len(urls) > 0 {
-			line += " " + strings.Join(urls, " ")
+			cycleLine += " " + strings.Join(urls, " ")
 		}
-		out = append(out, line)
+		out = append(out, cycleLine)
 	}
-	_ = rows.Err() // a cut-off read is fewer lines
+	_ = cycleRows.Err() // a cut-off read is fewer lines
 	return out
 }
 
 func queuedLines(ticket string) []string {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`SELECT coalesce(payload,'') FROM queue WHERE name=? AND finished IS NULL
+	queueRows, err := db.Query(`SELECT coalesce(payload,'') FROM queue WHERE name=? AND finished IS NULL
 	                       AND coalesce(run,'') = '' ORDER BY id`, ticket)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer queueRows.Close()
 	var out []string
-	for rows.Next() {
+	for queueRows.Next() {
 		var payload string
-		if rows.Scan(&payload) != nil {
+		if queueRows.Scan(&payload) != nil {
 			continue
 		}
 		var p map[string]any
 		_ = json.Unmarshal([]byte(payload), &p)
 		from, _ := p["from_phase"].(string)
-		out = append(out, "  в очереди: "+orDash(from))
+		out = append(out, "  queued: "+orDash(from))
 	}
-	_ = rows.Err() // a cut-off read is fewer lines
+	_ = queueRows.Err() // a cut-off read is fewer lines
 	return out
 }
 
@@ -291,11 +291,11 @@ func clock(at float64) string {
 
 func headLine(s string, max int) string {
 	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
+	if newline := strings.IndexByte(s, '\n'); newline >= 0 {
+		s = s[:newline]
 	}
-	if r := []rune(s); len(r) > max {
-		s = string(r[:max]) + "…"
+	if runes := []rune(s); len(runes) > max {
+		s = string(runes[:max]) + "…"
 	}
 	return s
 }

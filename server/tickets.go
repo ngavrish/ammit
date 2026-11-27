@@ -75,89 +75,89 @@ func parseTickets(body []byte, mediaType string) ([]Ticket, error) {
 		}
 		out = doc.Tickets
 	case "text/csv", "text/tab-separated-values":
-		r := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))))
+		csvReader := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))))
 		if mediaType == "text/tab-separated-values" {
-			r.Comma = '\t'
+			csvReader.Comma = '\t'
 		}
-		r.FieldsPerRecord = -1
-		rows, err := r.ReadAll()
+		csvReader.FieldsPerRecord = -1
+		records, err := csvReader.ReadAll()
 		if err != nil {
 			return nil, fmt.Errorf("not a readable table: %w", err)
 		}
-		if len(rows) < 2 {
+		if len(records) < 2 {
 			return nil, fmt.Errorf("the table has no rows under its header")
 		}
 		col := map[string]int{}
-		for i, h := range rows[0] {
-			name := notWord.ReplaceAllString(strings.ToLower(h), "")
+		for column, header := range records[0] {
+			heading := notWord.ReplaceAllString(strings.ToLower(header), "")
 			for field, names := range ticketColumns {
 				if _, taken := col[field]; taken {
 					continue
 				}
-				for _, n := range names {
-					if name == n {
-						col[field] = i
+				for _, alias := range names {
+					if heading == alias {
+						col[field] = column
 					}
 				}
 			}
 		}
 		if _, ok := col["summary"]; !ok {
 			return nil, fmt.Errorf("no column says what the ticket is: name one Title, Summary or Name (header was: %s)",
-				strings.Join(rows[0], ", "))
+				strings.Join(records[0], ", "))
 		}
 		cell := func(row []string, field string) string {
-			i, ok := col[field]
-			if !ok || i >= len(row) {
+			column, ok := col[field]
+			if !ok || column >= len(row) {
 				return ""
 			}
-			return strings.TrimSpace(row[i])
+			return strings.TrimSpace(row[column])
 		}
-		for _, row := range rows[1:] {
-			t := Ticket{Key: cell(row, "key"), Summary: cell(row, "summary"), Description: cell(row, "description"),
-				Status: cell(row, "status"), URL: cell(row, "url")}
-			if t.Summary == "" && t.Description == "" {
+		for _, record := range records[1:] {
+			ticket := Ticket{Key: cell(record, "key"), Summary: cell(record, "summary"), Description: cell(record, "description"),
+				Status: cell(record, "status"), URL: cell(record, "url")}
+			if ticket.Summary == "" && ticket.Description == "" {
 				continue
 			}
-			out = append(out, t)
+			out = append(out, ticket)
 		}
 	case "text/markdown", "text/plain":
-		item := regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+(?:\[( |x|X)\]\s+)?(.+)$`)
-		for _, line := range strings.Split(string(body), "\n") {
-			m := item.FindStringSubmatch(line)
-			if m == nil {
+		listItem := regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+(?:\[( |x|X)\]\s+)?(.+)$`)
+		for _, bodyLine := range strings.Split(string(body), "\n") {
+			match := listItem.FindStringSubmatch(bodyLine)
+			if match == nil {
 				continue
 			}
-			t := Ticket{Summary: strings.TrimSpace(m[2])}
-			if strings.EqualFold(m[1], "x") {
-				t.Status = "Done"
+			ticket := Ticket{Summary: strings.TrimSpace(match[2])}
+			if strings.EqualFold(match[1], "x") {
+				ticket.Status = "Done"
 			}
 			// "WEB-12: Cart keeps its items" names its own key.
-			if k, rest, ok := strings.Cut(t.Summary, ":"); ok && keyShape.MatchString(strings.TrimSpace(k)) {
-				t.Key, t.Summary = strings.TrimSpace(k), strings.TrimSpace(rest)
+			if prefix, summary, ok := strings.Cut(ticket.Summary, ":"); ok && keyShape.MatchString(strings.TrimSpace(prefix)) {
+				ticket.Key, ticket.Summary = strings.TrimSpace(prefix), strings.TrimSpace(summary)
 			}
-			out = append(out, t)
+			out = append(out, ticket)
 		}
 	default:
 		return nil, fmt.Errorf("cannot read %s: send CSV, TSV, Markdown or JSON", mediaType)
 	}
-	seen := map[string]bool{}
-	n := 0
-	for i := range out {
-		if out[i].Key == "" {
+	taken := map[string]bool{}
+	counter := 0
+	for index := range out {
+		if out[index].Key == "" {
 			for {
-				n++
-				if k := fmt.Sprintf("T-%d", n); !seen[k] {
-					out[i].Key = k
+				counter++
+				if made := fmt.Sprintf("T-%d", counter); !taken[made] {
+					out[index].Key = made
 					break
 				}
 			}
 		}
-		if seen[out[i].Key] {
-			return nil, fmt.Errorf("ticket %s appears twice", out[i].Key)
+		if taken[out[index].Key] {
+			return nil, fmt.Errorf("ticket %s appears twice", out[index].Key)
 		}
-		seen[out[i].Key] = true
-		if out[i].Summary == "" {
-			out[i].Summary = firstLineOf(out[i].Description)
+		taken[out[index].Key] = true
+		if out[index].Summary == "" {
+			out[index].Summary = firstLineOf(out[index].Description)
 		}
 	}
 	if len(out) == 0 {
@@ -167,23 +167,23 @@ func parseTickets(body []byte, mediaType string) ([]Ticket, error) {
 }
 
 func firstLineOf(s string) string {
-	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
-	return line
+	first, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
+	return first
 }
 
 func serveTickets(mux *http.ServeMux, path string) {
 	var mu sync.Mutex
 	load := func() (ticketDoc, error) {
 		var doc ticketDoc
-		body, err := os.ReadFile(path)
+		stored, err := os.ReadFile(path)
 		if err != nil {
 			return doc, err
 		}
-		return doc, json.Unmarshal(body, &doc)
+		return doc, json.Unmarshal(stored, &doc)
 	}
 	mux.HandleFunc("GET /tickets", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		doc, err := load()
+		stored, err := load()
 		mu.Unlock()
 		if errors.Is(err, fs.ErrNotExist) {
 			writeJSON(w, http.StatusOK, ticketDoc{Tickets: []Ticket{}})
@@ -193,49 +193,49 @@ func serveTickets(mux *http.ServeMux, path string) {
 			http.Error(w, "the tickets ammit holds are unreadable: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, doc)
+		writeJSON(w, http.StatusOK, stored)
 	})
 	mux.HandleFunc("GET /tickets/{key}", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		doc, err := load()
+		stored, err := load()
 		mu.Unlock()
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "the tickets ammit holds are unreadable: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		key := r.PathValue("key")
-		for _, t := range doc.Tickets {
-			if strings.EqualFold(t.Key, key) {
-				writeJSON(w, http.StatusOK, t)
+		ticketKey := r.PathValue("key")
+		for _, ticket := range stored.Tickets {
+			if strings.EqualFold(ticket.Key, ticketKey) {
+				writeJSON(w, http.StatusOK, ticket)
 				return
 			}
 		}
-		http.Error(w, "no such ticket: "+key, http.StatusNotFound)
+		http.Error(w, "no such ticket: "+ticketKey, http.StatusNotFound)
 	})
 	mux.HandleFunc("PUT /tickets", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, ticketsMaxBytes))
+		upload, err := io.ReadAll(io.LimitReader(r.Body, ticketsMaxBytes))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if mt == "" {
-			mt = "application/json"
+		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if mediaType == "" {
+			mediaType = "application/json"
 		}
-		tickets, err := parseTickets(body, mt)
+		tickets, err := parseTickets(upload, mediaType)
 		if err != nil {
 			http.Error(w, "refused: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		doc := ticketDoc{Tickets: tickets, Updated: time.Now().Unix()}
-		out, _ := json.MarshalIndent(doc, "", " ")
+		stored := ticketDoc{Tickets: tickets, Updated: time.Now().Unix()}
+		encoded, _ := json.MarshalIndent(stored, "", " ")
 		mu.Lock()
 		defer mu.Unlock()
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := os.WriteFile(path, out, 0o600); err != nil {
+		if err := os.WriteFile(path, encoded, 0o600); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

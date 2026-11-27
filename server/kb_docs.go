@@ -104,8 +104,8 @@ func kbChunks(text string) []string {
 	var out []string
 	var cur strings.Builder
 	flush := func() {
-		if s := strings.TrimSpace(cur.String()); s != "" {
-			out = append(out, s)
+		if chunk := strings.TrimSpace(cur.String()); chunk != "" {
+			out = append(out, chunk)
 		}
 		cur.Reset()
 	}
@@ -150,11 +150,11 @@ var kbEmbedder = ollamaEmbed
 var kbPrefixes = map[string][2]string{"nomic-embed-text": {"search_query: ", "search_document: "}}
 
 func kbPrefix(model string, query bool) string {
-	p := kbPrefixes[strings.SplitN(model, ":", 2)[0]]
+	prefixes := kbPrefixes[strings.SplitN(model, ":", 2)[0]]
 	if query {
-		return p[0]
+		return prefixes[0]
 	}
-	return p[1]
+	return prefixes[1]
 }
 
 var errNoEmbedder = errors.New("AMMIT_EMBED_URL is not set")
@@ -165,13 +165,13 @@ func ollamaEmbed(ctx context.Context, inputs []string, query bool) ([][]float32,
 		return nil, model, errNoEmbedder
 	}
 	prefixed := make([]string, len(inputs))
-	for i, in := range inputs {
-		prefixed[i] = kbPrefix(model, query) + in
+	for index, input := range inputs {
+		prefixed[index] = kbPrefix(model, query) + input
 	}
-	body, _ := json.Marshal(map[string]any{"model": model, "input": prefixed})
+	request, _ := json.Marshal(map[string]any{"model": model, "input": prefixed})
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url+"/api/embed", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url+"/api/embed", bytes.NewReader(request))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -191,8 +191,8 @@ func ollamaEmbed(ctx context.Context, inputs []string, query bool) ([][]float32,
 	if len(out.Embeddings) != len(inputs) {
 		return nil, model, fmt.Errorf("embed %s: %d vectors for %d inputs", model, len(out.Embeddings), len(inputs))
 	}
-	for _, v := range out.Embeddings {
-		kbNormalize(v)
+	for _, vector := range out.Embeddings {
+		kbNormalize(vector)
 	}
 	// The stored model name says the prefixes were used, so vectors made
 	// without them are re-embedded rather than compared.
@@ -204,32 +204,32 @@ func ollamaEmbed(ctx context.Context, inputs []string, query bool) ([][]float32,
 
 func kbNormalize(v []float32) {
 	var s float64
-	for _, x := range v {
-		s += float64(x) * float64(x)
+	for _, component := range v {
+		s += float64(component) * float64(component)
 	}
 	if s == 0 {
 		return
 	}
-	n := float32(1 / math.Sqrt(s))
-	for i := range v {
-		v[i] *= n
+	scale := float32(1 / math.Sqrt(s))
+	for index := range v {
+		v[index] *= scale
 	}
 }
 
 func kbVecBlob(v []float32) []byte {
-	b := make([]byte, 4*len(v))
-	for i, x := range v {
-		binary.LittleEndian.PutUint32(b[4*i:], math.Float32bits(x))
+	blob := make([]byte, 4*len(v))
+	for index, component := range v {
+		binary.LittleEndian.PutUint32(blob[4*index:], math.Float32bits(component))
 	}
-	return b
+	return blob
 }
 
 func kbBlobVec(b []byte) []float32 {
-	v := make([]float32, len(b)/4)
-	for i := range v {
-		v[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[4*i:]))
+	vector := make([]float32, len(b)/4)
+	for index := range vector {
+		vector[index] = math.Float32frombits(binary.LittleEndian.Uint32(b[4*index:]))
 	}
-	return v
+	return vector
 }
 
 func kbDot(a, b []float32) float64 {
@@ -237,8 +237,8 @@ func kbDot(a, b []float32) float64 {
 		return -2
 	}
 	var s float64
-	for i := range a {
-		s += float64(a[i]) * float64(b[i])
+	for index := range a {
+		s += float64(a[index]) * float64(b[index])
 	}
 	return s
 }
@@ -262,16 +262,16 @@ type kbEmbedded struct {
 }
 
 func embedKBDoc(ctx context.Context, d kbDoc) kbEmbedded {
-	e := kbEmbedded{parts: kbChunks(d.Text)}
-	if len(e.parts) == 0 {
-		e.err = errors.New("text is empty")
-		return e
+	embedded := kbEmbedded{parts: kbChunks(d.Text)}
+	if len(embedded.parts) == 0 {
+		embedded.err = errors.New("text is empty")
+		return embedded
 	}
-	e.vecs, e.model, e.err = kbEmbedder(ctx, e.parts, false)
-	if e.err != nil {
-		log.Printf("ammit: kb doc %s/%s stored without vectors: %v", d.Project, d.Topic, e.err)
+	embedded.vecs, embedded.model, embedded.err = kbEmbedder(ctx, embedded.parts, false)
+	if embedded.err != nil {
+		log.Printf("ammit: kb doc %s/%s stored without vectors: %v", d.Project, d.Topic, embedded.err)
 	}
-	return e
+	return embedded
 }
 
 // storeKBDoc replaces a document and its chunks, with their vectors when the
@@ -279,44 +279,44 @@ func embedKBDoc(ctx context.Context, d kbDoc) kbEmbedded {
 // vectors; the next ask embeds them (kbBackfill), so nothing is lost to an
 // outage. The caller holds the database mutex.
 func storeKBDoc(ctx context.Context, d kbDoc, e kbEmbedded) (chunks int, embedded bool, err error) {
-	parts, vecs, model, eerr := e.parts, e.vecs, e.model, e.err
-	if len(parts) == 0 {
+	chunkTexts, vecs, model, eerr := e.parts, e.vecs, e.model, e.err
+	if len(chunkTexts) == 0 {
 		return 0, false, errors.New("text is empty")
 	}
-	tx, err := db.BeginTx(ctx, nil)
+	txn, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, false, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = txn.Rollback() }()
 	var old sql.NullInt64
-	_ = tx.QueryRowContext(ctx, `SELECT id FROM kb_docs WHERE project = ? AND topic = ?`, d.Project, d.Topic).Scan(&old)
+	_ = txn.QueryRowContext(ctx, `SELECT id FROM kb_docs WHERE project = ? AND topic = ?`, d.Project, d.Topic).Scan(&old)
 	if old.Valid {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM kb_chunks WHERE doc = ?`, old.Int64); err != nil {
+		if _, err := txn.ExecContext(ctx, `DELETE FROM kb_chunks WHERE doc = ?`, old.Int64); err != nil {
 			return 0, false, err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM kb_docs WHERE id = ?`, old.Int64); err != nil {
+		if _, err := txn.ExecContext(ctx, `DELETE FROM kb_docs WHERE id = ?`, old.Int64); err != nil {
 			return 0, false, err
 		}
 	}
 	var doc int64
-	if err := tx.QueryRowContext(ctx, `INSERT INTO kb_docs (project, topic, kind, text, cite, learned_by, at)
+	if err := txn.QueryRowContext(ctx, `INSERT INTO kb_docs (project, topic, kind, text, cite, learned_by, at)
 		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`, d.Project, d.Topic, d.Kind, d.Text, d.Cite, d.LearnedBy,
 		kbNow()).Scan(&doc); err != nil {
 		return 0, false, err
 	}
-	for i, p := range parts {
+	for index, chunkText := range chunkTexts {
 		var m any
 		var blob any
 		if eerr == nil {
-			m, blob = model, kbVecBlob(vecs[i])
+			m, blob = model, kbVecBlob(vecs[index])
 		}
 		// The words column fills itself from text: the insert is the index.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO kb_chunks (doc, project, seq, text, model, vec) VALUES (?, ?, ?, ?, ?, ?)`,
-			doc, d.Project, i, p, m, blob); err != nil {
+		if _, err := txn.ExecContext(ctx, `INSERT INTO kb_chunks (doc, project, seq, text, model, vec) VALUES (?, ?, ?, ?, ?, ?)`,
+			doc, d.Project, index, chunkText, m, blob); err != nil {
 			return 0, false, err
 		}
 	}
-	return len(parts), eerr == nil, tx.Commit()
+	return len(chunkTexts), eerr == nil, txn.Commit()
 }
 
 // kbEntryText is a structured entry as words: what it is, and its body flattened
@@ -329,22 +329,22 @@ func kbEntryText(e kbEntry) string {
 	_ = json.Unmarshal(e.Body, &body)
 	var walk func(prefix string, v any)
 	walk = func(prefix string, v any) {
-		switch t := v.(type) {
+		switch typed := v.(type) {
 		case map[string]any:
-			keys := make([]string, 0, len(t))
-			for k := range t {
-				keys = append(keys, k)
+			keys := make([]string, 0, len(typed))
+			for field := range typed {
+				keys = append(keys, field)
 			}
 			sort.Strings(keys)
-			for _, k := range keys {
-				walk(strings.TrimPrefix(prefix+" "+k, " "), t[k])
+			for _, field := range keys {
+				walk(strings.TrimPrefix(prefix+" "+field, " "), typed[field])
 			}
 		case []any:
-			for _, x := range t {
-				walk(prefix, x)
+			for _, element := range typed {
+				walk(prefix, element)
 			}
 		default:
-			fmt.Fprintf(&b, "%s: %v\n", prefix, t)
+			fmt.Fprintf(&b, "%s: %v\n", prefix, typed)
 		}
 	}
 	walk("", body)
@@ -355,28 +355,28 @@ func kbEntryText(e kbEntry) string {
 func kbEntryCite(e kbEntry) string {
 	var body map[string]any
 	_ = json.Unmarshal(e.Body, &body)
-	for _, k := range []string{"citations", "citation", "cite", "source"} {
-		switch v := body[k].(type) {
+	for _, field := range []string{"citations", "citation", "cite", "source"} {
+		switch cite := body[field].(type) {
 		case string:
-			if v != "" {
-				return v
+			if cite != "" {
+				return cite
 			}
 		case []any:
-			if len(v) == 0 {
+			if len(cite) == 0 {
 				continue
 			}
 			// A citation is a string, or {source, ref} as the envplan phase writes it.
-			if m, ok := v[0].(map[string]any); ok {
-				if ref, _ := m["ref"].(string); ref != "" {
-					if src, _ := m["source"].(string); src != "" {
-						return src + ": " + ref
+			if citeMap, ok := cite[0].(map[string]any); ok {
+				if ref, _ := citeMap["ref"].(string); ref != "" {
+					if source, _ := citeMap["source"].(string); source != "" {
+						return source + ": " + ref
 					}
 					return ref
 				}
-				b, _ := json.Marshal(m)
-				return string(b)
+				encoded, _ := json.Marshal(citeMap)
+				return string(encoded)
 			}
-			return fmt.Sprint(v[0])
+			return fmt.Sprint(cite[0])
 		}
 	}
 	return "kb:" + e.Project + "/" + e.Topic
@@ -401,39 +401,39 @@ func putKBDoc(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "need cite: the file, ticket, PR or probe this came from"})
 		return
 	}
-	e := embedKBDoc(r.Context(), d)
+	embedding := embedKBDoc(r.Context(), d)
 	mu.Lock()
 	defer mu.Unlock()
-	n, embedded, err := storeKBDoc(r.Context(), d, e)
+	chunkCount, embedded, err := storeKBDoc(r.Context(), d, embedding)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "project": d.Project, "topic": d.Topic,
-		"chunks": n, "embedded": embedded})
+		"chunks": chunkCount, "embedded": embedded})
 }
 
 // kbEach runs a query and hands every row to each; the rows are closed and
 // their error returned, whatever each did.
 func kbEach(ctx context.Context, each func(*sql.Rows), query string, args ...any) error {
-	rows, err := db.QueryContext(ctx, query, args...)
+	matched, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		each(rows)
+	defer func() { _ = matched.Close() }()
+	for matched.Next() {
+		each(matched)
 	}
-	return rows.Err()
+	return matched.Err()
 }
 
 func kbSortedKinds() []string {
-	out := make([]string, 0, len(kbDocKinds))
-	for k := range kbDocKinds {
-		out = append(out, k)
+	kinds := make([]string, 0, len(kbDocKinds))
+	for kind := range kbDocKinds {
+		kinds = append(kinds, kind)
 	}
-	sort.Strings(out)
-	return out
+	sort.Strings(kinds)
+	return kinds
 }
 
 // kbBackfill embeds chunks stored while no model answered, and chunks a
@@ -461,8 +461,8 @@ func kbBackfill(ctx context.Context, mu *sync.Mutex, project, model string) {
 	if err != nil {
 		return
 	}
-	for i, id := range ids {
-		_, _ = db.ExecContext(ctx, `UPDATE kb_chunks SET model = ?, vec = ? WHERE id = ?`, model, kbVecBlob(vecs[i]), id)
+	for index, id := range ids {
+		_, _ = db.ExecContext(ctx, `UPDATE kb_chunks SET model = ?, vec = ? WHERE id = ?`, model, kbVecBlob(vecs[index]), id)
 	}
 }
 
@@ -500,9 +500,9 @@ func askKB(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		q := r.URL.Query()
-		in.Project, in.Q = q.Get("project"), q.Get("q")
-		in.K, _ = strconv.Atoi(q.Get("k"))
+		query := r.URL.Query()
+		in.Project, in.Q = query.Get("project"), query.Get("q")
+		in.K, _ = strconv.Atoi(query.Get("k"))
 	}
 	in.Project, in.Q = strings.TrimSpace(in.Project), strings.TrimSpace(in.Q)
 	if in.Project == "" || in.Q == "" {
@@ -513,7 +513,7 @@ func askKB(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		in.K = 8
 	}
 	ctx := r.Context()
-	qv, model, eerr := kbEmbedder(ctx, []string{in.Q}, true)
+	queryVecs, model, eerr := kbEmbedder(ctx, []string{in.Q}, true)
 	if eerr == nil {
 		kbBackfill(ctx, mu, in.Project, model)
 	}
@@ -523,9 +523,9 @@ func askKB(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		var hits []kbHit
 		err := kbEach(ctx, func(rows *sql.Rows) {
 			var blob []byte
-			if h, err := scanKBHit(rows, &blob); err == nil {
-				h.Score = math.Round(kbDot(qv[0], kbBlobVec(blob))*10000) / 10000
-				hits = append(hits, h)
+			if chunkHit, err := scanKBHit(rows, &blob); err == nil {
+				chunkHit.Score = math.Round(kbDot(queryVecs[0], kbBlobVec(blob))*10000) / 10000
+				hits = append(hits, chunkHit)
 			}
 		}, `SELECT `+kbHitCols+`, c.vec FROM kb_chunks c JOIN kb_docs d ON d.id = c.doc
 			WHERE c.project = ? AND c.model = ?`, in.Project, model)
@@ -573,39 +573,39 @@ func kbFuse(lists ...[]kbHit) []kbHit {
 		hit   kbHit
 		score float64
 	}
-	by := map[string]*acc{}
+	byKey := map[string]*acc{}
 	var order []string
-	for _, l := range lists {
-		for rank, h := range l {
-			key := h.Topic + "\x00" + h.Text
-			a, ok := by[key]
+	for _, list := range lists {
+		for rank, rankedHit := range list {
+			hitKey := rankedHit.Topic + "\x00" + rankedHit.Text
+			fused, ok := byKey[hitKey]
 			if !ok {
-				a = &acc{hit: h}
-				by[key] = a
-				order = append(order, key)
+				fused = &acc{hit: rankedHit}
+				byKey[hitKey] = fused
+				order = append(order, hitKey)
 			}
-			a.score += 1 / float64(kbFuseK+rank+1)
+			fused.score += 1 / float64(kbFuseK+rank+1)
 		}
 	}
-	out := make([]kbHit, 0, len(order))
-	for _, k := range order {
-		h := by[k].hit
-		h.Score = math.Round(by[k].score*100000) / 100000
-		out = append(out, h)
+	fusedHits := make([]kbHit, 0, len(order))
+	for _, hitKey := range order {
+		fusedHit := byKey[hitKey].hit
+		fusedHit.Score = math.Round(byKey[hitKey].score*100000) / 100000
+		fusedHits = append(fusedHits, fusedHit)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Score > out[j].Score })
-	return out
+	sort.SliceStable(fusedHits, func(i, j int) bool { return fusedHits[i].Score > fusedHits[j].Score })
+	return fusedHits
 }
 
 // kbWordHits ranks by bm25 over the question's words, any of them matching.
 func kbWordHits(ctx context.Context, project, q string, k int) ([]kbHit, string, error) {
 	var words []string
-	for _, f := range strings.FieldsFunc(strings.ToLower(q), func(c rune) bool {
+	for _, word := range strings.FieldsFunc(strings.ToLower(q), func(c rune) bool {
 		isWord := c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c > 127
 		return !isWord
 	}) {
-		if len(f) > 2 {
-			words = append(words, `"`+f+`"`)
+		if len(word) > 2 {
+			words = append(words, `"`+word+`"`)
 		}
 	}
 	hits := []kbHit{}
@@ -614,8 +614,8 @@ func kbWordHits(ctx context.Context, project, q string, k int) ([]kbHit, string,
 	}
 	if !kbFTS {
 		err := kbEach(ctx, func(rows *sql.Rows) {
-			if h, err := scanKBHit(rows); err == nil {
-				hits = append(hits, h)
+			if chunkHit, err := scanKBHit(rows); err == nil {
+				hits = append(hits, chunkHit)
 			}
 		}, `SELECT `+kbHitCols+` FROM kb_chunks c JOIN kb_docs d ON d.id = c.doc
 			WHERE c.project = ? AND c.text ILIKE ? LIMIT ?`, project, "%"+strings.Trim(words[0], `"`)+"%", k)
@@ -625,9 +625,9 @@ func kbWordHits(ctx context.Context, project, q string, k int) ([]kbHit, string,
 	// is the rank itself (bm25 was negative, so its score was -bm25).
 	err := kbEach(ctx, func(rows *sql.Rows) {
 		var rank float64
-		if h, err := scanKBHit(rows, &rank); err == nil {
-			h.Score = math.Round(rank*10000) / 10000
-			hits = append(hits, h)
+		if chunkHit, err := scanKBHit(rows, &rank); err == nil {
+			chunkHit.Score = math.Round(rank*10000) / 10000
+			hits = append(hits, chunkHit)
 		}
 	}, `WITH q AS (SELECT websearch_to_tsquery('simple', ?) AS q)
 		SELECT `+kbHitCols+`, ts_rank(c.words, q.q) FROM kb_chunks c
@@ -639,13 +639,13 @@ func kbWordHits(ctx context.Context, project, q string, k int) ([]kbHit, string,
 
 // staleKBDoc marks a document whose content a run found false.
 func staleKBDoc(ctx context.Context, project, topic, why string) int64 {
-	res, err := db.ExecContext(ctx, `UPDATE kb_docs SET stale = 1, stale_why = ? WHERE project = ? AND topic = ?`,
+	update, err := db.ExecContext(ctx, `UPDATE kb_docs SET stale = 1, stale_why = ? WHERE project = ? AND topic = ?`,
 		why, project, topic)
 	if err != nil {
 		return 0
 	}
-	n, _ := res.RowsAffected()
-	return n
+	staled, _ := update.RowsAffected()
+	return staled
 }
 
 // getKBDocs lists ?project= documents (no chunks), stale ones marked.
@@ -657,13 +657,13 @@ func getKBDocs(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	out := []map[string]any{}
+	docs := []map[string]any{}
 	err := kbEach(r.Context(), func(rows *sql.Rows) {
 		var topic, kind, cite, by, why string
 		var at float64
 		var stale, chars, chunks, embedded int
 		if rows.Scan(&topic, &kind, &cite, &by, &at, &stale, &why, &chars, &chunks, &embedded) == nil {
-			out = append(out, map[string]any{"topic": topic, "kind": kind, "cite": cite, "learned_by": by, "at": at,
+			docs = append(docs, map[string]any{"topic": topic, "kind": kind, "cite": cite, "learned_by": by, "at": at,
 				"stale": stale != 0, "stale_why": why, "chars": chars, "chunks": chunks, "embedded": embedded})
 		}
 	}, `SELECT d.topic, d.kind, d.cite, coalesce(d.learned_by, ''), d.at, d.stale,
@@ -674,5 +674,5 @@ func getKBDocs(mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": project, "docs": out})
+	writeJSON(w, http.StatusOK, map[string]any{"project": project, "docs": docs})
 }

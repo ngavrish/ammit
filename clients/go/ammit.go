@@ -33,8 +33,8 @@ var (
 )
 
 func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	if envValue := os.Getenv(key); envValue != "" {
+		return envValue
 	}
 	return fallback
 }
@@ -49,15 +49,15 @@ func Send(kind string, fields map[string]any) {
 		return
 	}
 	payload := map[string]any{"kind": kind, "at": float64(time.Now().UnixNano()) / 1e9}
-	for k, v := range fields {
-		payload[k] = v
+	for field, fieldValue := range fields {
+		payload[field] = fieldValue
 	}
-	body, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
 	go func() {
-		resp, err := client.Post(endpoint+"/events", "application/json", bytes.NewReader(body))
+		resp, err := client.Post(endpoint+"/events", "application/json", bytes.NewReader(encoded))
 		if err != nil {
 			quiet.Do(func() { println("ammit: not reporting:", err.Error()) })
 			return
@@ -69,14 +69,14 @@ func Send(kind string, fields map[string]any) {
 func encode(kind string, fields map[string]any) []byte {
 	payload := map[string]any{"kind": kind,
 		"at": float64(time.Now().UnixNano()) / 1e9}
-	for k, v := range fields {
-		payload[k] = v
+	for field, fieldValue := range fields {
+		payload[field] = fieldValue
 	}
-	body, err := json.Marshal(payload)
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil
 	}
-	return body
+	return encoded
 }
 
 // SendAndWait is Send for the events whose loss leaves a shape behind: the ones
@@ -85,22 +85,22 @@ func SendAndWait(kind string, fields map[string]any) {
 	if !enabled {
 		return
 	}
-	body := encode(kind, fields)
-	if body == nil {
+	encoded := encode(kind, fields)
+	if encoded == nil {
 		return
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Post(endpoint+"/events", "application/json",
-		bytes.NewReader(body))
+		bytes.NewReader(encoded))
 	if err == nil {
 		resp.Body.Close()
 	}
 }
 
 func id() string {
-	b := make([]byte, 6)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	random := make([]byte, 6)
+	rand.Read(random)
+	return hex.EncodeToString(random)
 }
 
 // Run is one unit of work the outside world cares about — a ticket, a job.
@@ -112,9 +112,9 @@ type Run struct {
 }
 
 func NewRun(name string, tags map[string]string) *Run {
-	r := &Run{ID: id(), Name: name, t0: time.Now()}
-	Send("run_start", map[string]any{"run": r.ID, "name": name, "tags": tags})
-	return r
+	run := &Run{ID: id(), Name: name, t0: time.Now()}
+	Send("run_start", map[string]any{"run": run.ID, "name": name, "tags": tags})
+	return run
 }
 
 func (r *Run) Finish(verdict, summary string) {
@@ -154,10 +154,10 @@ type StepSpan struct {
 // "gate" — and the server looks up timeouts.<kind> under that name, so a
 // pipeline can bound its own units without this library knowing what they are.
 func (r *Run) Step(name, kind string) *StepSpan {
-	s := &StepSpan{run: r, name: name, kind: kind, started: time.Now()}
+	span := &StepSpan{run: r, name: name, kind: kind, started: time.Now()}
 	Send("item_start", map[string]any{"run": r.ID, "item": name, "session": name,
 		"itemkind": kind, "phase": name})
-	return s
+	return span
 }
 
 // Log says the step is still going, and what it is doing. Once a minute is
@@ -221,11 +221,11 @@ type SessionSpan struct {
 }
 
 func (r *Run) Session(agent, branch, model string) *SessionSpan {
-	s := &SessionSpan{run: r, ID: id(), Agent: agent, Branch: branch, Model: model,
+	span := &SessionSpan{run: r, ID: id(), Agent: agent, Branch: branch, Model: model,
 		t0: time.Now()}
-	Send("session_start", map[string]any{"run": r.ID, "session": s.ID, "agent": agent,
+	Send("session_start", map[string]any{"run": r.ID, "session": span.ID, "agent": agent,
 		"branch": branch, "model": model, "phase": r.phase})
-	return s
+	return span
 }
 
 func (s *SessionSpan) Turn(note string) {

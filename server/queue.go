@@ -57,7 +57,7 @@ func sweepAbandoned(conf Config) {
 		return
 	}
 	mu.Lock()
-	rows, err := db.Query(`SELECT r.run, coalesce(max(e.at), r.started)
+	lastHeard, err := db.Query(`SELECT r.run, coalesce(max(e.at), r.started)
 	                       FROM runs r LEFT JOIN events e ON e.run = r.run
 	                       WHERE r.finished IS NULL GROUP BY r.run`)
 	type quiet struct {
@@ -66,14 +66,14 @@ func sweepAbandoned(conf Config) {
 	}
 	var found []quiet
 	if err == nil {
-		for rows.Next() {
+		for lastHeard.Next() {
 			var q quiet
-			if rows.Scan(&q.run, &q.at) == nil {
+			if lastHeard.Scan(&q.run, &q.at) == nil {
 				found = append(found, q)
 			}
 		}
-		_ = rows.Err() // a cut-off read is the shorter answer it always was
-		rows.Close()
+		_ = lastHeard.Err() // a cut-off read is the shorter answer it always was
+		lastHeard.Close()
 	}
 	mu.Unlock()
 	// Only the silence measured AWAKE counts, as in weigh and sweepCrashed.
@@ -87,13 +87,13 @@ func sweepAbandoned(conf Config) {
 	// one timeouts.run after we woke, and a dead worker much sooner through
 	// weigh's heartbeat check.
 	now := nowWall()
-	up := now - upSince()
-	for _, q := range found {
-		silent := math.Min(now-q.at, up)
+	uptime := now - upSince()
+	for _, abandoned := range found {
+		silent := math.Min(now-abandoned.at, uptime)
 		if silent <= limit {
 			continue
 		}
-		finish(q.run, "ABANDONED", fmt.Sprintf(
+		finish(abandoned.run, "ABANDONED", fmt.Sprintf(
 			"nothing has reported on this run for %.0f minutes, which is longer "+
 				"than timeouts.run — closed as abandoned, not as finished",
 			silent/60))
@@ -128,8 +128,8 @@ func pumpQueue(conf Config) {
 // ("ui-regression holds the stack"), with the host free.
 func pumpQueueSkipping(conf Config, held map[string]bool) {
 	slots := 1.0
-	if v, ok := conf.num("queue", "parallel"); ok {
-		slots = v
+	if parallel, ok := conf.num("queue", "parallel"); ok {
+		slots = parallel
 	}
 	host := conf.str("context", "host_starter", "")
 	mu.Lock()
@@ -151,17 +151,17 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// the start and its run_start the stand looks free for a tick, and a
 	// second item sent into it then waits in its runner for the clone.
 	starting := map[string]int{}
-	if rows, err := db.Query(`SELECT coalesce(payload,'') FROM queue
+	if standRows, err := db.Query(`SELECT coalesce(payload,'') FROM queue
 	                           WHERE state='running' AND coalesce(run,'') = '' AND started > ?`,
 		float64(time.Now().Add(-3*time.Minute).UnixNano())/1e9); err == nil {
-		for rows.Next() {
+		for standRows.Next() {
 			var p string
-			if rows.Scan(&p) == nil {
+			if standRows.Scan(&p) == nil {
 				starting[standOf(p)]++
 			}
 		}
-		_ = rows.Err() // a cut-off read is the shorter answer it always was
-		rows.Close()
+		_ = standRows.Err() // a cut-off read is the shorter answer it always was
+		standRows.Close()
 	}
 	docker += starting["docker"] + starting[""]
 	onHost += starting["local"]
@@ -170,16 +170,16 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 		name, payload string
 	}
 	var waiting []item
-	if rows, err := db.Query(`SELECT id, name, coalesce(payload,'') FROM queue
+	if waitingRows, err := db.Query(`SELECT id, name, coalesce(payload,'') FROM queue
 	                           WHERE state='waiting' ORDER BY requested LIMIT 100`); err == nil {
-		for rows.Next() {
+		for waitingRows.Next() {
 			var it item
-			if rows.Scan(&it.id, &it.name, &it.payload) == nil {
+			if waitingRows.Scan(&it.id, &it.name, &it.payload) == nil {
 				waiting = append(waiting, it)
 			}
 		}
-		_ = rows.Err() // a cut-off read is the shorter answer it always was
-		rows.Close()
+		_ = waitingRows.Err() // a cut-off read is the shorter answer it always was
+		waitingRows.Close()
 	}
 	// A resume of a ticket whose fix is not on the stand yet waits for it. A
 	// person's resume taken as a fix cycle's resume (personResume) is the
@@ -190,10 +190,10 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	// still unmerged, started at 09:11:34, and runs 729a8369 and 17ddf386
 	// dropped on the bug #1299 fixed.
 	unfixed := map[int64]string{}
-	for _, it := range waiting {
-		if strings.Contains(it.payload, `"rerun":"resume"`) {
-			if why := fixNotOnStand(it.name); why != "" {
-				unfixed[it.id] = why
+	for _, queued := range waiting {
+		if strings.Contains(queued.payload, `"rerun":"resume"`) {
+			if why := fixNotOnStand(queued.name); why != "" {
+				unfixed[queued.id] = why
 			}
 		}
 	}
@@ -223,12 +223,12 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	hostFree := host != "" && onHost == 0 && !deployLease && !held["local"] && !branchLocal
 	var id int64
 	var name, payload, stand string
-	for _, it := range waiting {
-		if why := unfixed[it.id]; why != "" {
-			sayHeldForFix(it.id, it.name, why)
+	for _, queued := range waiting {
+		if why := unfixed[queued.id]; why != "" {
+			sayHeldForFix(queued.id, queued.name, why)
 			continue
 		}
-		switch standOf(it.payload) {
+		switch standOf(queued.payload) {
 		case "local":
 			if hostFree {
 				stand = "local"
@@ -245,7 +245,7 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 			}
 		}
 		if stand != "" {
-			id, name, payload = it.id, it.name, it.payload
+			id, name, payload = queued.id, queued.name, queued.payload
 			break
 		}
 	}
@@ -272,8 +272,8 @@ func pumpQueueSkipping(conf Config, held map[string]bool) {
 	asked := payload // the row as queued, without the stand this attempt picks
 	payload = placed(payload, stand)
 	ctx := map[string]string{"name": name, "payload": payload}
-	for k, v := range conf["context"] {
-		ctx[k] = v
+	for field, fieldValue := range conf["context"] {
+		ctx[field] = fieldValue
 	}
 	// A run of the host stand starts on the host's orchestrator.
 	if stand == "local" {
@@ -347,10 +347,10 @@ func standOf(payload string) string {
 	if json.Unmarshal([]byte(payload), &p) != nil {
 		return ""
 	}
-	if s, _ := p["place"].(string); s == "local" || s == "docker" {
-		return s
+	if place, _ := p["place"].(string); place == "local" || place == "docker" {
+		return place
 	}
-	if w, _ := p["where"].(string); w == "local" {
+	if where, _ := p["where"].(string); where == "local" {
 		return "local"
 	}
 	return ""
@@ -369,11 +369,11 @@ func placed(payload, stand string) string {
 	if stand == "local" {
 		p["where"] = "local"
 	}
-	out, err := json.Marshal(p)
+	encoded, err := json.Marshal(p)
 	if err != nil {
 		return payload
 	}
-	return string(out)
+	return string(encoded)
 }
 
 // leaseHeld says whether the named lease is held and not expired. The
@@ -385,30 +385,30 @@ func placed(payload, stand string) string {
 // and a run that never reached its end kept the stand: on 2026-11-04 the host
 // stand stayed ADHOC-20261103-075702's from 13:52 to 23:05. The caller holds mu.
 func releaseEndedStandLeases() {
-	rows, err := db.Query(`SELECT name, holder FROM leases WHERE name ILIKE 'stand-%'`)
+	leaseRows, err := db.Query(`SELECT name, holder FROM leases WHERE name ILIKE 'stand-%'`)
 	if err != nil {
 		return
 	}
 	type lease struct{ name, holder string }
 	var held []lease
-	for rows.Next() {
+	for leaseRows.Next() {
 		var l lease
-		if rows.Scan(&l.name, &l.holder) == nil {
+		if leaseRows.Scan(&l.name, &l.holder) == nil {
 			held = append(held, l)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
-	rows.Close()
-	for _, l := range held {
-		ticket := strings.Fields(l.holder)
+	_ = leaseRows.Err() // a cut-off read is the shorter answer it always was
+	leaseRows.Close()
+	for _, lease := range held {
+		ticket := strings.Fields(lease.holder)
 		if len(ticket) == 0 {
 			continue
 		}
 		var live int
 		db.QueryRow(`SELECT count(*) FROM runs WHERE name=? AND finished IS NULL`, ticket[0]).Scan(&live)
 		if live == 0 {
-			db.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, l.name, l.holder)
-			log.Printf("ammit: %s released - %s has no live run", l.name, ticket[0])
+			db.Exec(`DELETE FROM leases WHERE name=? AND holder=?`, lease.name, lease.holder)
+			log.Printf("ammit: %s released - %s has no live run", lease.name, ticket[0])
 		}
 	}
 }
