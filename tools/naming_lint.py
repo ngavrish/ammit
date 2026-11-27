@@ -4,8 +4,8 @@ import subprocess
 import sys
 
 
-def git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+def git(*git_args: str) -> str:
+    return subprocess.run(["git", *git_args], check=True, capture_output=True, text=True).stdout
 
 
 def base() -> str:
@@ -22,45 +22,52 @@ def at_head(path: str) -> str:
 
 
 def hunks(merge_base: str, path: str) -> tuple[set[int], None]:
-    added, line = set(), 0
-    for row in git("diff", "-U0", merge_base, "HEAD", "--", path).splitlines():
-        if row.startswith("@@"):
-            line = int(row.split()[2][1:].split(",")[0])
-        elif row.startswith("+") and not row.startswith("+++"):
-            added.add(line)
-            line += 1
+    added, line_number = set(), 0
+    for diff_line in git("diff", "-U0", merge_base, "HEAD", "--", path).splitlines():
+        if diff_line.startswith("@@"):
+            line_number = int(diff_line.split()[2][1:].split(",")[0])
+        elif diff_line.startswith("+") and not diff_line.startswith("+++"):
+            added.add(line_number)
+            line_number += 1
     return added, None
 
 OUTPUT_CALLS = {"print", "write", "debug", "info", "warning", "warn", "error", "exception", "critical", "log",
                 "fatal", "fail", "exit", "echo", "Exit", "SystemExit"}
 GO_OUTPUT = ("fmt.Print", "fmt.Fprint", "fmt.Sprint", "fmt.Errorf", "log.", "errors.New", "slog.", "t.Error", "t.Fatal")
-ALLOWED = {"_"}
+MIN_NAME_LENGTH = 3
+ALLOWED = {"_", "ok", "id", "db", "io"}
+VAGUE = {"got", "out", "res", "ret", "rv", "tmp", "temp", "val", "value", "values", "data", "obj", "item", "items",
+         "thing", "things", "stuff", "info", "foo", "bar", "baz", "result", "results", "doc", "raw", "buf", "arr",
+         "lst", "dct", "elem", "entry", "entries", "said", "seen", "hit", "rest", "head", "body", "text", "line",
+         "row", "rows", "found", "bad", "todo", "src", "var", "args", "kwargs", "params", "opts", "cfg",
+         "fh", "ap", "sub", "node", "part", "parts", "key", "name", "acc", "cur", "prev", "nxt"}
 
 
-def cyrillic(text: str) -> bool:
-    return any("Ѐ" <= ch <= "ӿ" for ch in text)
+def cyrillic(code_text: str) -> bool:
+    return any("Ѐ" <= letter <= "ӿ" for letter in code_text)
 
 
-def short(name: str) -> bool:
-    return len(name) == 1 and name not in ALLOWED
+def short(identifier: str) -> bool:
+    bare = identifier.strip("_").lower()
+    return identifier not in ALLOWED and (len(bare) < MIN_NAME_LENGTH or bare in VAGUE)
 
 
-def bound_names(node: ast.AST) -> list:
-    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-        return [(node.id, node.lineno)]
-    if isinstance(node, ast.arg):
-        return [(node.arg, node.lineno)]
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return [(node.name, node.lineno)]
-    if isinstance(node, ast.ExceptHandler) and node.name:
-        return [(node.name, node.lineno)]
-    if isinstance(node, ast.alias):
-        return [((node.asname or node.name).split(".")[0], node.lineno)]
+def bound_names(tree_node: ast.AST) -> list:
+    if isinstance(tree_node, ast.Name) and isinstance(tree_node.ctx, ast.Store) and not tree_node.id.startswith("_"):
+        return [(tree_node.id, tree_node.lineno)]
+    if isinstance(tree_node, ast.arg):
+        return [(tree_node.arg, tree_node.lineno)]
+    if isinstance(tree_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [(tree_node.name, tree_node.lineno)]
+    if isinstance(tree_node, ast.ExceptHandler) and tree_node.name:
+        return [(tree_node.name, tree_node.lineno)]
+    if isinstance(tree_node, ast.alias) and tree_node.asname:
+        return [(tree_node.asname, tree_node.lineno)]
     return []
 
 
-def call_name(node: ast.Call) -> str:
-    func = node.func
+def call_name(tree_node: ast.Call) -> str:
+    func = tree_node.func
     if isinstance(func, ast.Name):
         return func.id
     if isinstance(func, ast.Attribute):
@@ -68,27 +75,27 @@ def call_name(node: ast.Call) -> str:
     return ""
 
 
-def python_findings(src: str, added: set[int]) -> list:
+def python_findings(file_text: str, added: set[int]) -> list:
     try:
-        tree = ast.parse(src)
+        tree = ast.parse(file_text)
     except SyntaxError:
         return []
-    out = []
-    for node in ast.walk(tree):
-        for name, line in bound_names(node):
-            if line in added and short(name):
-                out.append((line, f"one-letter name `{name}`: name it for what it holds"))
-        if isinstance(node, ast.Call) and call_name(node) in OUTPUT_CALLS:
-            for sub in ast.walk(node):
-                if (isinstance(sub, ast.Constant) and isinstance(sub.value, str) and cyrillic(sub.value)
-                        and sub.lineno in added):
-                    out.append((sub.lineno, "output in Russian: what a program prints or logs is in English"))
+    findings = []
+    for tree_node in ast.walk(tree):
+        for identifier, line_number in bound_names(tree_node):
+            if line_number in added and short(identifier):
+                findings.append((line_number, f"`{identifier}` says nothing: name it for what it holds"))
+        if isinstance(tree_node, ast.Call) and call_name(tree_node) in OUTPUT_CALLS:
+            for inner_node in ast.walk(tree_node):
+                if (isinstance(inner_node, ast.Constant) and isinstance(inner_node.value, str) and cyrillic(inner_node.value)
+                        and inner_node.lineno in added):
+                    findings.append((inner_node.lineno, "output in Russian: what a program prints or logs is in English"))
                     break
-    return out
+    return findings
 
 
-def go_short(text: str) -> list:
-    code = text.split("//", 1)[0]
+def go_short(code_text: str) -> list:
+    code = code_text.split("//", 1)[0]
     if ":=" not in code:
         return []
     lhs = code.split(":=", 1)[0].strip()
@@ -96,18 +103,18 @@ def go_short(text: str) -> list:
         lhs = lhs.removeprefix(lead)
     if " range" in lhs:
         lhs = lhs.split(" range", 1)[0]
-    return [name.strip() for name in lhs.split(",") if short(name.strip()) and name.strip().isidentifier()]
+    return [identifier.strip() for identifier in lhs.split(",") if short(identifier.strip()) and identifier.strip().isidentifier()]
 
 
-def go_findings(src: str, added: set[int]) -> list:
-    out = []
-    for number, text in enumerate(src.splitlines(), 1):
+def go_findings(file_text: str, added: set[int]) -> list:
+    findings = []
+    for number, code_text in enumerate(file_text.splitlines(), 1):
         if number not in added:
             continue
-        out += [(number, f"one-letter name `{name}`: name it for what it holds") for name in go_short(text)]
-        if cyrillic(text) and any(call in text for call in GO_OUTPUT):
-            out.append((number, "output in Russian: what a program prints or logs is in English"))
-    return out
+        findings += [(number, f"`{identifier}` says nothing: name it for what it holds") for identifier in go_short(code_text)]
+        if cyrillic(code_text) and any(call in code_text for call in GO_OUTPUT):
+            findings.append((number, "output in Russian: what a program prints or logs is in English"))
+    return findings
 
 
 def main() -> int:
@@ -116,16 +123,16 @@ def main() -> int:
     for path in changed(merge_base):
         if not path.endswith((".py", ".go")):
             continue
-        src = at_head(path)
+        file_text = at_head(path)
         added = hunks(merge_base, path)[0]
-        found = python_findings(src, added) if path.endswith(".py") else go_findings(src, added)
-        for line, why in sorted(found):
+        findings = python_findings(file_text, added) if path.endswith(".py") else go_findings(file_text, added)
+        for line_number, why in sorted(findings):
             red += 1
-            print(f"{path}:{line}: {why}")
+            print(f"{path}:{line_number}: {why}")
     if red:
         print(f"NAMING RED: {red} finding(s) on added lines. A name says what it holds; output is in English.")
         return 1
-    print("NAMING GREEN: no one-letter name and no Russian output on added lines")
+    print("NAMING GREEN: every added name says what it holds and no output is in Russian")
     return 0
 
 
