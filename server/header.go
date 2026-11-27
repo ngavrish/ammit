@@ -14,15 +14,15 @@ package main
 // slate grey for everything that is said quietly.
 func headerHTML(active string) string {
 	tab := func(href, label, name string) string {
-		on := ""
+		activeClass := ""
 		if name == active {
-			on = " on"
+			activeClass = " on"
 		}
 		scope := ""
 		if name != "limits" {
 			scope = ` data-scope=` + name
 		}
-		return `<a class="tab` + on + `"` + scope + ` href="` + href + `" title="` + label + `">` +
+		return `<a class="tab` + activeClass + `"` + scope + ` href="` + href + `" title="` + label + `">` +
 			`<i class=ico>` + icon(name) + `</i><span>` + label + `</span></a>`
 	}
 	return `
@@ -68,7 +68,7 @@ func headerHTML(active string) string {
 // each entry is. Drawn on a 20-grid, no fill: a mark, not a picture.
 func icon(name string) string {
 	const open = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">`
-	body := map[string]string{
+	shapes := map[string]string{
 		"limits":   `<path d="M4 6h12M4 10h12M4 14h12"/><circle cx="8" cy="6" r="1.6" fill="currentColor" stroke="none"/><circle cx="13" cy="10" r="1.6" fill="currentColor" stroke="none"/><circle cx="7" cy="14" r="1.6" fill="currentColor" stroke="none"/>`,
 		"runs":     `<rect x="3.5" y="3.5" width="13" height="13" rx="2.5"/><path d="M8 7.5l4 2.5-4 2.5z" fill="currentColor" stroke="none"/>`,
 		"window":   `<circle cx="10" cy="10" r="6.5"/><path d="M10 6.5V10l2.5 1.8"/>`,
@@ -78,7 +78,7 @@ func icon(name string) string {
 		"back":     `<path d="M11 5l-5 5 5 5M6 10h10"/>`,
 		"fold":     `<path d="M12 5l-5 5 5 5"/>`,
 	}[name]
-	return open + body + `</svg>`
+	return open + shapes + `</svg>`
 }
 
 // The rules for the shell, in the same one place. Both pages inherit them and
@@ -231,9 +231,9 @@ const shell=(()=>{
 
 // pageTabs is one tab per page in the registry, in its order.
 func pageTabs(tab func(path, label, key string) string) string {
-	out := ""
-	for _, p := range pages {
-		out += tab(p.Path, p.Tab, p.Key)
+	tabs := ""
+	for _, page := range pages {
+		tabs += tab(page.Path, page.Tab, page.Key)
 	}
-	return out
+	return tabs
 }

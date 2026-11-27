@@ -25,33 +25,33 @@ func watchdogHistory(out io.Writer, dsn string, days float64, conf Config) error
 		return err
 	}
 	since := float64(time.Now().Add(-time.Duration(days*24) * time.Hour).Unix())
-	rows, err := db.Query(`SELECT run FROM runs WHERE started > ? ORDER BY started`, since)
+	runRows, err := db.Query(`SELECT run FROM runs WHERE started > ? ORDER BY started`, since)
 	if err != nil {
 		return err
 	}
 	var runs []string
-	for rows.Next() {
+	for runRows.Next() {
 		var r string
-		if rows.Scan(&r) == nil {
+		if runRows.Scan(&r) == nil {
 			runs = append(runs, r)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
-	rows.Close()
+	_ = runRows.Err() // a cut-off read is the shorter answer it always was
+	runRows.Close()
 	drops, waits := 0, 0
 	for _, run := range runs {
-		f, err := readRunFacts(run)
+		facts, err := readRunFacts(run)
 		if err != nil {
 			continue
 		}
 		// Read as the live tick would have read it: within two ticks
 		// of the run's end, before anybody started the ticket again.
-		f.seenAt = f.finished + 40
-		when := time.Unix(int64(f.started), 0).UTC().Format("2006-01-02 15:04")
-		d, why := classifyDrop(f, conf)
+		facts.seenAt = facts.finished + 40
+		when := time.Unix(int64(facts.started), 0).UTC().Format("2006-01-02 15:04")
+		drop, why := classifyDrop(facts, conf)
 		// The waiting half, replayed: the longest stretch this run went with
 		// no progress event, against the limit live ticks would have held it to.
-		if gap, phase, ok := longestStall(run, endOf(f)); ok {
+		if gap, phase, ok := longestStall(run, endOf(facts)); ok {
 			limit, has := conf.num("limits", "wait")
 			if own, hasOwn := conf.num("limits", "wait_"+phase); hasOwn {
 				limit, has = own, true
@@ -59,22 +59,22 @@ func watchdogHistory(out io.Writer, dsn string, days float64, conf Config) error
 			if has && gap > limit {
 				waits++
 				_, _ = fmt.Fprintf(out, "%s  %s  %-9s %-8s  WAIT   no progress for %.0fs in %s (limit %.0fs)\n",
-					when, shortRun(run), f.name, orDash(f.verdict), gap, orDash(phase), limit)
+					when, shortRun(run), facts.name, orDash(facts.verdict), gap, orDash(phase), limit)
 			}
 		}
-		if d == nil {
-			_, _ = fmt.Fprintf(out, "%s  %s  %-9s %-8s  skip   %s\n", when, shortRun(run), f.name,
-				orDash(f.verdict), why)
+		if drop == nil {
+			_, _ = fmt.Fprintf(out, "%s  %s  %-9s %-8s  skip   %s\n", when, shortRun(run), facts.name,
+				orDash(facts.verdict), why)
 			continue
 		}
 		drops++
 		_, _ = fmt.Fprintf(out, "%s  %s  %-9s %-8s  DROP   cause=%s  resume_from=%s  mode=%s\n",
-			when, shortRun(run), f.name, orDash(f.verdict), d.cause, orDash(d.phase), orDash(d.mode))
-		for _, line := range d.evidence[1:] {
-			if len(line) > 160 {
-				line = line[:160]
+			when, shortRun(run), facts.name, orDash(facts.verdict), drop.cause, orDash(drop.phase), orDash(drop.mode))
+		for _, evidenceLine := range drop.evidence[1:] {
+			if len(evidenceLine) > 160 {
+				evidenceLine = evidenceLine[:160]
 			}
-			_, _ = fmt.Fprintf(out, "      %s\n", strings.ReplaceAll(line, "\n", " "))
+			_, _ = fmt.Fprintf(out, "      %s\n", strings.ReplaceAll(evidenceLine, "\n", " "))
 		}
 	}
 	_, _ = fmt.Fprintf(out, "%d run(s), %d drop(s), %d wait(s)\n", len(runs), drops, waits)

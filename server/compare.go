@@ -131,14 +131,14 @@ func resolveRun(want string) runRef {
 		return r
 	}
 	r.Found = true
-	if s, ok := name.(string); ok {
-		r.Name = s
+	if runName, ok := name.(string); ok {
+		r.Name = runName
 	}
-	if s, ok := verdict.(string); ok {
-		r.Verdict = s
+	if runVerdict, ok := verdict.(string); ok {
+		r.Verdict = runVerdict
 	}
-	if f, ok := finished.(float64); ok {
-		r.Finished = f
+	if finishedAt, ok := finished.(float64); ok {
+		r.Finished = finishedAt
 	}
 	return r
 }
@@ -154,14 +154,14 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	if by == "agent" {
 		col = "agent"
 	}
-	rows := map[string]*cmpRow{}
-	at := func(key string) *cmpRow {
-		if r, ok := rows[key]; ok {
-			return r
+	byKey := map[string]*cmpRow{}
+	rowFor := func(key string) *cmpRow {
+		if existing, ok := byKey[key]; ok {
+			return existing
 		}
-		r := &cmpRow{}
-		rows[key] = r
-		return r
+		fresh := &cmpRow{}
+		byKey[key] = fresh
+		return fresh
 	}
 	total := &cmpRow{}
 	// What the bills said, for the totals row, under the same rule as a row:
@@ -178,7 +178,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 		var key, kind string
 		var n int64
 		if get(&key, &kind, &n) {
-			at(key).addCall(kind, n)
+			rowFor(key).addCall(kind, n)
 			total.addCall(kind, n)
 		}
 	})
@@ -197,7 +197,7 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 			var key, rule string
 			var n int64
 			if get(&key, &rule, &n) {
-				at(key).refuse(rule, n)
+				rowFor(key).refuse(rule, n)
 				total.refuse(rule, n)
 			}
 		})
@@ -213,8 +213,8 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 		var key string
 		var n, in, out int64
 		if get(&key, &n, &in, &out) {
-			r := at(key)
-			r.Turns, r.TokensIn, r.TokensOut = n, in, out
+			cmp := rowFor(key)
+			cmp.Turns, cmp.TokensIn, cmp.TokensOut = n, in, out
 			total.Turns += n
 			total.TokensIn += in
 			total.TokensOut += out
@@ -234,15 +234,15 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 			var key string
 			var usd, in, out float64
 			if get(&key, &usd, &in, &out) {
-				r := at(key)
-				r.USD += usd
+				cmp := rowFor(key)
+				cmp.USD += usd
 				billedIn += in
 				billedOut += out
-				if r.TokensIn == 0 {
-					r.TokensIn = int64(in)
+				if cmp.TokensIn == 0 {
+					cmp.TokensIn = int64(in)
 				}
-				if r.TokensOut == 0 {
-					r.TokensOut = int64(out)
+				if cmp.TokensOut == 0 {
+					cmp.TokensOut = int64(out)
 				}
 			}
 		})
@@ -271,8 +271,8 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 			// which suppressed the first-to-last fallback below and published
 			// a phase of length zero.
 			if get(&key, &secs) && secs > 0 {
-				r := at(key)
-				r.Wall, r.sawSpan = secs, true
+				cmp := rowFor(key)
+				cmp.Wall, cmp.sawSpan = secs, true
 			}
 		})
 
@@ -288,8 +288,8 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 		var key string
 		var idle, first, last float64
 		if get(&key, &idle, &first, &last) {
-			r := at(key)
-			r.Idle, r.firstAt, r.lastAt = idle, first, last
+			cmp := rowFor(key)
+			cmp.Idle, cmp.firstAt, cmp.lastAt = idle, first, last
 		}
 	})
 
@@ -297,9 +297,9 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	// first word to its last. A run killed mid-phase would otherwise compare
 	// as a phase of length zero, which reads as the fastest run there has
 	// ever been.
-	for _, r := range rows {
-		if !r.sawSpan && r.lastAt > r.firstAt {
-			r.Wall = r.lastAt - r.firstAt
+	for _, cmp := range byKey {
+		if !cmp.sawSpan && cmp.lastAt > cmp.firstAt {
+			cmp.Wall = cmp.lastAt - cmp.firstAt
 		}
 	}
 
@@ -323,24 +323,24 @@ func gather(run, by string) (map[string]*cmpRow, *cmpRow) {
 	             THEN gap ELSE 0 END),0) FROM (
 	               SELECT at - lag(at) OVER (ORDER BY at) AS gap
 	               FROM events WHERE run=?) AS gaps`, run).Scan(&total.Idle)
-	return rows, total
+	return byKey, total
 }
 
 // scan runs a query and hands each row to fn through a getter that scans it.
 // A failed query leaves the numbers it would have filled at zero: half a
 // comparison beats an error page, and a zero row is visible as one.
 func scan(query string, args []any, fn func(get func(...any) bool)) {
-	rows, err := db.Query(query, args...)
+	queried, err := db.Query(query, args...)
 	if err != nil {
 		return
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		fn(func(into ...any) bool { return rows.Scan(into...) == nil })
+	defer func() { _ = queried.Close() }()
+	for queried.Next() {
+		fn(func(into ...any) bool { return queried.Scan(into...) == nil })
 	}
 	// A cut-off read is a shorter table, the same as before; the error is
 	// read so it is a decision and not an accident.
-	_ = rows.Err()
+	_ = queried.Err()
 }
 
 // published is the number this metric is shown as: money to four places,
@@ -359,27 +359,27 @@ func published(m metricDef, r *cmpRow) float64 {
 }
 
 func metricsJSON(r *cmpRow) map[string]any {
-	out := map[string]any{"refused_by_rule": refusedJSON(r)}
-	for _, m := range cmpMetrics {
-		v := published(m, r)
-		if m.unit == "usd" || m.unit == "seconds" {
-			out[m.key] = v
+	metrics := map[string]any{"refused_by_rule": refusedJSON(r)}
+	for _, metric := range cmpMetrics {
+		shown := published(metric, r)
+		if metric.unit == "usd" || metric.unit == "seconds" {
+			metrics[metric.key] = shown
 			continue
 		}
-		out[m.key] = int64(v)
+		metrics[metric.key] = int64(shown)
 	}
-	return out
+	return metrics
 }
 
 // refusedJSON is the refusal counts as an object, always present and empty
 // where nothing was refused. A row that reports null for its refusals is a row
 // a reader has to ask a second question about.
 func refusedJSON(r *cmpRow) map[string]int64 {
-	out := map[string]int64{}
-	for rule, n := range r.Refused {
-		out[rule] = n
+	refused := map[string]int64{}
+	for rule, count := range r.Refused {
+		refused[rule] = count
 	}
-	return out
+	return refused
 }
 
 // refusedLine is the refusals of one side, sorted by count and then by rule,
@@ -399,15 +399,15 @@ func refusedLine(r *cmpRow) string {
 		}
 		return rules[i] < rules[j]
 	})
-	parts := make([]string, 0, len(rules))
+	rulesSaid := make([]string, 0, len(rules))
 	for _, rule := range rules {
-		name := rule
-		if name == "" {
-			name = "(none)"
+		label := rule
+		if label == "" {
+			label = "(none)"
 		}
-		parts = append(parts, fmt.Sprintf("%s=%d", name, r.Refused[rule]))
+		rulesSaid = append(rulesSaid, fmt.Sprintf("%s=%d", label, r.Refused[rule]))
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(rulesSaid, " ")
 }
 
 // deltaJSON is b minus a, and the same as a share of a. A percentage against
@@ -416,25 +416,25 @@ func refusedLine(r *cmpRow) string {
 // Both numbers are the published ones, so the subtraction is the one a reader
 // can do by hand off the same page.
 func deltaJSON(a, b *cmpRow) map[string]any {
-	out := map[string]any{}
-	for _, m := range cmpMetrics {
-		av, bv := published(m, a), published(m, b)
-		abs := round(bv-av, 4)
+	deltas := map[string]any{}
+	for _, metric := range cmpMetrics {
+		aValue, bValue := published(metric, a), published(metric, b)
+		abs := round(bValue-aValue, 4)
 		cell := map[string]any{"abs": abs, "pct": nil}
-		if av != 0 {
-			cell["pct"] = round(abs/av*100, 1)
+		if aValue != 0 {
+			cell["pct"] = round(abs/aValue*100, 1)
 		}
-		out[m.key] = cell
+		deltas[metric.key] = cell
 	}
-	return out
+	return deltas
 }
 
 func round(v float64, places int) float64 {
-	f := 1.0
-	for i := 0; i < places; i++ {
-		f *= 10
+	scale := 1.0
+	for place := 0; place < places; place++ {
+		scale *= 10
 	}
-	return float64(int64(v*f+sign(v)*0.5)) / f
+	return float64(int64(v*scale+sign(v)*0.5)) / scale
 }
 
 func sign(v float64) float64 {
@@ -452,9 +452,9 @@ func serveCompare(mux *http.ServeMux) {
 				map[string]string{"error": "a and b are required: two runs, by id or by name"})
 			return
 		}
-		by := r.URL.Query().Get("by")
-		if by != "agent" {
-			by = "phase"
+		groupBy := r.URL.Query().Get("by")
+		if groupBy != "agent" {
+			groupBy = "phase"
 		}
 		refA, refB := resolveRun(wantA), resolveRun(wantB)
 		for want, ref := range map[string]runRef{wantA: refA, wantB: refB} {
@@ -464,38 +464,38 @@ func serveCompare(mux *http.ServeMux) {
 				return
 			}
 		}
-		rowsA, totalA := gather(refA.Run, by)
-		rowsB, totalB := gather(refB.Run, by)
+		rowsA, totalA := gather(refA.Run, groupBy)
+		rowsB, totalB := gather(refB.Run, groupBy)
 
 		keys := map[string]bool{}
-		for k := range rowsA {
-			keys[k] = true
+		for groupKey := range rowsA {
+			keys[groupKey] = true
 		}
-		for k := range rowsB {
-			keys[k] = true
+		for groupKey := range rowsB {
+			keys[groupKey] = true
 		}
 		ordered := make([]string, 0, len(keys))
-		for k := range keys {
-			ordered = append(ordered, k)
+		for groupKey := range keys {
+			ordered = append(ordered, groupKey)
 		}
 		sort.Strings(ordered)
 
-		out := []map[string]any{}
-		for _, key := range ordered {
-			a, b := rowsA[key], rowsB[key]
-			if a == nil {
-				a = &cmpRow{}
+		groups := []map[string]any{}
+		for _, groupKey := range ordered {
+			rowA, rowB := rowsA[groupKey], rowsB[groupKey]
+			if rowA == nil {
+				rowA = &cmpRow{}
 			}
-			if b == nil {
-				b = &cmpRow{}
+			if rowB == nil {
+				rowB = &cmpRow{}
 			}
-			name := key
-			if name == "" {
-				name = "(none)"
+			label := groupKey
+			if label == "" {
+				label = "(none)"
 			}
-			out = append(out, map[string]any{
-				"key": name, "a": metricsJSON(a), "b": metricsJSON(b),
-				"delta": deltaJSON(a, b),
+			groups = append(groups, map[string]any{
+				"key": label, "a": metricsJSON(rowA), "b": metricsJSON(rowB),
+				"delta": deltaJSON(rowA, rowB),
 			})
 		}
 		totals := map[string]any{
@@ -504,11 +504,11 @@ func serveCompare(mux *http.ServeMux) {
 		}
 		if strings.Contains(r.Header.Get("Accept"), "text/plain") {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			_, _ = fmt.Fprint(w, compareTable(by, refA, refB, ordered, rowsA, rowsB, totalA, totalB))
+			_, _ = fmt.Fprint(w, compareTable(groupBy, refA, refB, ordered, rowsA, rowsB, totalA, totalB))
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"by": by, "a": refA, "b": refB, "rows": out, "totals": totals,
+			"by": groupBy, "a": refA, "b": refB, "rows": groups, "totals": totals,
 			"idle_gap_seconds": idleGap,
 		})
 	})
@@ -528,11 +528,11 @@ func compareTable(by string, a, b runRef, keys []string,
 		"which the JSON reports as a null pct\n\n")
 
 	const label = 18
-	head := strings.Repeat(" ", label) + "   "
-	for _, m := range cmpMetrics {
-		head += fmt.Sprintf("%9s", m.head)
+	header := strings.Repeat(" ", label) + "   "
+	for _, metric := range cmpMetrics {
+		header += fmt.Sprintf("%9s", metric.head)
 	}
-	s.WriteString(head + "\n")
+	s.WriteString(header + "\n")
 
 	block := func(key string, ra, rb *cmpRow) {
 		if ra == nil {
@@ -541,14 +541,14 @@ func compareTable(by string, a, b runRef, keys []string,
 		if rb == nil {
 			rb = &cmpRow{}
 		}
-		name := key
-		if name == "" {
-			name = "(none)"
+		rowLabel := key
+		if rowLabel == "" {
+			rowLabel = "(none)"
 		}
 		// On runes: a phase named in any alphabet but this one is otherwise cut
 		// through the middle of a character and prints as a question mark.
-		if utf8.RuneCountInString(name) > label {
-			name = string([]rune(name)[:label])
+		if utf8.RuneCountInString(rowLabel) > label {
+			rowLabel = string([]rune(rowLabel)[:label])
 		}
 		lines := []struct {
 			tag string
@@ -563,16 +563,16 @@ func compareTable(by string, a, b runRef, keys []string,
 				return pctCell(published(m, ra), published(m, rb))
 			}},
 		}
-		for i, line := range lines {
+		for lineIndex, tableLine := range lines {
 			shown := ""
-			if i == 0 {
-				shown = name
+			if lineIndex == 0 {
+				shown = rowLabel
 			}
-			row := fmt.Sprintf("%-*s %-2s", label, shown, line.tag)
-			for _, m := range cmpMetrics {
-				row += fmt.Sprintf("%9s", line.get(m))
+			tableRow := fmt.Sprintf("%-*s %-2s", label, shown, tableLine.tag)
+			for _, metric := range cmpMetrics {
+				tableRow += fmt.Sprintf("%9s", tableLine.get(metric))
 			}
-			s.WriteString(row + "\n")
+			s.WriteString(tableRow + "\n")
 		}
 		// One line per side that had a call refused, under the numbers it
 		// belongs to. Left out where nothing was refused, so a table of a
@@ -587,8 +587,8 @@ func compareTable(by string, a, b runRef, keys []string,
 			}
 		}
 	}
-	for _, key := range keys {
-		block(key, rowsA[key], rowsB[key])
+	for _, groupKey := range keys {
+		block(groupKey, rowsA[groupKey], rowsB[groupKey])
 	}
 	s.WriteString(strings.Repeat("-", label+3+9*len(cmpMetrics)) + "\n")
 	block("TOTAL", totalA, totalB)
@@ -618,19 +618,19 @@ func cell(m metricDef, v float64) string {
 // rounds away. A column reading "-0.0" is a column that has already cost
 // somebody a minute working out whether it means anything.
 func signed(m metricDef, v float64) string {
-	body := cell(m, v)
-	if allZero(body) {
+	digits := cell(m, v)
+	if allZero(digits) {
 		return "0"
 	}
-	if v > 0 && !strings.HasPrefix(body, "+") {
-		return "+" + body
+	if v > 0 && !strings.HasPrefix(digits, "+") {
+		return "+" + digits
 	}
-	return body
+	return digits
 }
 
 func allZero(s string) bool {
-	for _, r := range s {
-		if r >= '1' && r <= '9' {
+	for _, char := range s {
+		if char >= '1' && char <= '9' {
 			return false
 		}
 	}
@@ -649,11 +649,11 @@ func pctCell(a, b float64) string {
 		}
 		return "new"
 	}
-	p := (b - a) / a * 100
-	if p > 0 {
-		return fmt.Sprintf("+%.1f", p)
+	pct := (b - a) / a * 100
+	if pct > 0 {
+		return fmt.Sprintf("+%.1f", pct)
 	}
-	return fmt.Sprintf("%.1f", p)
+	return fmt.Sprintf("%.1f", pct)
 }
 
 // short keeps a token count inside a column: 1.2M reads, 1234567 does not.

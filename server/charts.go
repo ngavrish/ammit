@@ -99,8 +99,8 @@ var chartsLocalPath = filepath.Join(
 
 func localOf() localSpec {
 	var l localSpec
-	if body, err := os.ReadFile(chartsLocalPath); err == nil {
-		_ = json.Unmarshal(body, &l)
+	if localJSON, err := os.ReadFile(chartsLocalPath); err == nil {
+		_ = json.Unmarshal(localJSON, &l)
 	}
 	if l.Hidden == nil {
 		l.Hidden = []string{}
@@ -116,8 +116,8 @@ func localOf() localSpec {
 // a typo: a query that starts any other way than a SELECT gets refused before
 // it is a file, not discovered as a schema change later.
 func readsOnly(q string) bool {
-	head := strings.ToUpper(strings.TrimSpace(q))
-	return strings.HasPrefix(head, "SELECT") || strings.HasPrefix(head, "WITH")
+	upper := strings.ToUpper(strings.TrimSpace(q))
+	return strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "WITH")
 }
 
 // merged is the one spec both /charts/panels and /charts/data read, so an
@@ -128,24 +128,24 @@ func readsOnly(q string) bool {
 // per run, no window; the heal loop and the model, about every run at once).
 func merged(page string) chartSpec {
 	base := panelsOf()
-	if p := pageOf(page); p != nil && p.AllTime {
-		base = p.spec()
+	if pageSpec := pageOf(page); pageSpec != nil && pageSpec.AllTime {
+		base = pageSpec.spec()
 	}
 	loc := localOf()
 	away := map[string]bool{}
-	for _, t := range loc.Hidden {
-		away[t] = true
+	for _, hidden := range loc.Hidden {
+		away[hidden] = true
 	}
-	for i := range base.Panels {
-		base.Panels[i].Hidden = away[base.Panels[i].Title]
+	for index := range base.Panels {
+		base.Panels[index].Hidden = away[base.Panels[index].Title]
 	}
-	for _, p := range loc.Panels {
-		if p.Scope != page {
+	for _, panel := range loc.Panels {
+		if panel.Scope != page {
 			continue
 		}
-		p.Custom = true
-		p.Hidden = away[p.Title]
-		base.Panels = append(base.Panels, p)
+		panel.Custom = true
+		panel.Hidden = away[panel.Title]
+		base.Panels = append(base.Panels, panel)
 	}
 	return base
 }
@@ -180,7 +180,7 @@ func modelOf() chartSpec {
 // possible range rather than being left in the SQL to fail.
 func specFor(r *http.Request) (chartSpec, string) {
 	page := r.URL.Query().Get("scope")
-	if p := pageOf(page); p == nil || !p.AllTime {
+	if pageSpec := pageOf(page); pageSpec == nil || !pageSpec.AllTime {
 		page = ""
 	}
 	return merged(page), page
@@ -197,14 +197,14 @@ func window(r *http.Request) (from, to int64) {
 	// asking for a run's own window sent 1788377388476.8336, ParseInt refused
 	// it, and every run page was silently drawn on the twelve-hour default -
 	// the run at the far right edge of a chart of nothing.
-	if v := r.URL.Query().Get("from"); v != "" {
-		if n, err := strconv.ParseFloat(v, 64); err == nil {
-			from = int64(n)
+	if fromParam := r.URL.Query().Get("from"); fromParam != "" {
+		if seconds, err := strconv.ParseFloat(fromParam, 64); err == nil {
+			from = int64(seconds)
 		}
 	}
-	if v := r.URL.Query().Get("to"); v != "" {
-		if n, err := strconv.ParseFloat(v, 64); err == nil {
-			to = int64(n)
+	if toParam := r.URL.Query().Get("to"); toParam != "" {
+		if seconds, err := strconv.ParseFloat(toParam, 64); err == nil {
+			to = int64(seconds)
 		}
 	}
 	return from, to
@@ -240,26 +240,26 @@ func scope(sql, run string) string {
 	// resumed run's result stands on the runs before it, so a page about that
 	// result is about all of them. Only run-id characters survive.
 	var ids []string
-	for _, r := range strings.Split(run, ",") {
-		r = strings.TrimSpace(r)
-		if r != "" && runIDChars.MatchString(r) {
-			ids = append(ids, "'"+r+"'")
+	for _, runID := range strings.Split(run, ",") {
+		runID = strings.TrimSpace(runID)
+		if runID != "" && runIDChars.MatchString(runID) {
+			ids = append(ids, "'"+runID+"'")
 		}
 	}
 	if len(ids) == 0 {
 		ids = []string{"''"}
 	}
-	in := strings.Join(ids, ",")
+	idList := strings.Join(ids, ",")
 	var parts []string
-	for _, t := range runScoped {
-		where := fmt.Sprintf("run IN (%s)", in)
-		if t == "events" {
+	for _, table := range runScoped {
+		where := fmt.Sprintf("run IN (%s)", idList)
+		if table == "events" {
 			// What the learning side reports - lessons stored, the hoard, shadow
 			// evals - belongs to a ticket, not a run, and arrives with no run.
 			// A run page keeps its ticket's; the window keeps them to its time.
-			where += fmt.Sprintf(" OR (run = '' AND kind = 'learning' AND payload->>'ticket' IN (SELECT name FROM public.runs WHERE run IN (%s)))", in)
+			where += fmt.Sprintf(" OR (run = '' AND kind = 'learning' AND payload->>'ticket' IN (SELECT name FROM public.runs WHERE run IN (%s)))", idList)
 		}
-		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM public.%s WHERE %s)", t, t, where))
+		parts = append(parts, fmt.Sprintf("%s AS (SELECT * FROM public.%s WHERE %s)", table, table, where))
 	}
 	return "WITH " + strings.Join(parts, ",\n     ") + "\n" + sql
 }
@@ -288,7 +288,7 @@ func rows(query string) map[string]any {
 	// for as long as one slow panel or /query ran - 59 s behind a runaway
 	// recursive CTE.
 	var cols []string
-	out := [][]any{}
+	table := [][]any{}
 	err := readOnly(ctx, query, func(rs *sql.Rows) error {
 		cols, _ = rs.Columns()
 		types := columnTypes(rs)
@@ -297,8 +297,8 @@ func rows(query string) map[string]any {
 			if err != nil {
 				continue
 			}
-			out = append(out, cells)
-			if len(out) >= 20000 {
+			table = append(table, cells)
+			if len(table) >= 20000 {
 				break
 			}
 		}
@@ -308,7 +308,7 @@ func rows(query string) map[string]any {
 	if err != nil {
 		return map[string]any{"error": err.Error()}
 	}
-	return map[string]any{"columns": cols, "rows": out}
+	return map[string]any{"columns": cols, "rows": table}
 }
 
 func serveCharts(mux *http.ServeMux) {
@@ -329,27 +329,27 @@ func serveCharts(mux *http.ServeMux) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		for _, p := range l.Panels {
-			if strings.TrimSpace(p.Title) == "" {
+		for _, panel := range l.Panels {
+			if strings.TrimSpace(panel.Title) == "" {
 				http.Error(w, "a panel needs a title", http.StatusBadRequest)
 				return
 			}
 			// A row is a section heading: it groups the panels under it and
 			// asks the database nothing.
-			if len(p.Queries) == 0 && p.Kind != "row" {
+			if len(panel.Queries) == 0 && panel.Kind != "row" {
 				http.Error(w, "a panel needs a query", http.StatusBadRequest)
 				return
 			}
-			for _, q := range p.Queries {
-				if !readsOnly(q) {
+			for _, query := range panel.Queries {
+				if !readsOnly(query) {
 					http.Error(w, "a chart only reads: the query must start with SELECT or WITH",
 						http.StatusBadRequest)
 					return
 				}
 			}
 		}
-		body, _ := json.MarshalIndent(l, "", " ")
-		if err := os.WriteFile(chartsLocalPath, append(body, '\n'), 0o644); err != nil {
+		layout, _ := json.MarshalIndent(l, "", " ")
+		if err := os.WriteFile(chartsLocalPath, append(layout, '\n'), 0o644); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -363,18 +363,18 @@ func serveCharts(mux *http.ServeMux) {
 			http.Error(w, "no such panel", http.StatusNotFound)
 			return
 		}
-		from, to := window(r)
+		from, until := window(r)
 		if page != "" {
-			from, to = 0, time.Now().UnixMilli()+86400000
+			from, until = 0, time.Now().UnixMilli()+86400000
 		}
 		var series []any
 		run := r.URL.Query().Get("run")
-		for _, q := range spec.Panels[idx].Queries {
-			series = append(series, rows(scope(fill(q, from, to), run)))
+		for _, query := range spec.Panels[idx].Queries {
+			series = append(series, rows(scope(fill(query, from, until), run)))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"panel": spec.Panels[idx], "from": from, "to": to, "series": series,
+			"panel": spec.Panels[idx], "from": from, "to": until, "series": series,
 		})
 	})
 
@@ -388,22 +388,22 @@ func serveCharts(mux *http.ServeMux) {
 	mux.HandleFunc("GET /charts/runs", func(w http.ResponseWriter, r *http.Request) {
 		where := []string{"1=1"}
 		var args []any
-		q := r.URL.Query()
-		if v := strings.TrimSpace(q.Get("name")); v != "" {
+		filters := r.URL.Query()
+		if runName := strings.TrimSpace(filters.Get("name")); runName != "" {
 			where = append(where, "coalesce(name,'') ILIKE ?")
-			args = append(args, "%"+v+"%")
+			args = append(args, "%"+runName+"%")
 		}
-		for _, f := range []struct{ param, col, op string }{
+		for _, filter := range []struct{ param, col, op string }{
 			{"started_from", "started", ">="},
 			{"started_to", "started", "<="},
 			{"finished_from", "finished", ">="},
 			{"finished_to", "finished", "<="},
 		} {
-			v := strings.TrimSpace(q.Get(f.param))
-			if v == "" {
+			param := strings.TrimSpace(filters.Get(filter.param))
+			if param == "" {
 				continue
 			}
-			n, err := strconv.ParseFloat(v, 64)
+			bound, err := strconv.ParseFloat(param, 64)
 			if err != nil {
 				continue
 			}
@@ -411,11 +411,11 @@ func serveCharts(mux *http.ServeMux) {
 			// finish to compare, and treating its absence as zero would put every
 			// run still going into "finished before yesterday".
 			where = append(where, fmt.Sprintf("%s IS NOT NULL AND %s %s ?",
-				f.col, f.col, f.op))
-			args = append(args, n)
+				filter.col, filter.col, filter.op))
+			args = append(args, bound)
 		}
 		mu.Lock()
-		rs, err := db.Query(`SELECT run, coalesce(name,''), started,
+		runRows, err := db.Query(`SELECT run, coalesce(name,''), started,
 		                     coalesce(finished,0), coalesce(verdict,''),
 		                     coalesce(usd,0), coalesce(turns,0)
 		                     FROM runs WHERE `+strings.Join(where, " AND ")+`
@@ -429,21 +429,21 @@ func serveCharts(mux *http.ServeMux) {
 			USD      float64 `json:"usd"`
 			Turns    int     `json:"turns"`
 		}
-		out := []row{}
+		runs := []row{}
 		if err == nil {
-			for rs.Next() {
+			for runRows.Next() {
 				var x row
-				if rs.Scan(&x.Run, &x.Name, &x.Started, &x.Finished, &x.Verdict,
+				if runRows.Scan(&x.Run, &x.Name, &x.Started, &x.Finished, &x.Verdict,
 					&x.USD, &x.Turns) == nil {
-					out = append(out, x)
+					runs = append(runs, x)
 				}
 			}
-			_ = rs.Err() // a cut-off read is the shorter answer it always was
-			rs.Close()
+			_ = runRows.Err() // a cut-off read is the shorter answer it always was
+			runRows.Close()
 		}
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(out)
+		json.NewEncoder(w).Encode(runs)
 	})
 
 	// Every view is a path. /ammit/runs, /ammit/runs/<id>, /ammit/window,
@@ -455,25 +455,25 @@ func serveCharts(mux *http.ServeMux) {
 	// already are.
 	page := func(w http.ResponseWriter, r *http.Request) {
 		active := "runs"
-		for _, p := range pages {
-			if strings.HasPrefix(r.URL.Path, p.Path) {
-				active = p.Key
+		for _, page := range pages {
+			if strings.HasPrefix(r.URL.Path, page.Path) {
+				active = page.Key
 			}
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, chartsPageHTML(active))
 	}
-	for _, p := range pages {
-		mux.HandleFunc("GET "+p.Path, page)
+	for _, chartPage := range pages {
+		mux.HandleFunc("GET "+chartPage.Path, page)
 	}
 	mux.HandleFunc("GET /ammit/runs/{id}", page)
 	mux.HandleFunc("GET /ammit/learning", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ammit/heal", http.StatusFound) })
 
 	// Where the old addresses went, so anything already sent still arrives.
-	for from, to := range map[string]string{
+	for from, target := range map[string]string{
 		"/charts": "/ammit/runs", "/ammit": "/ammit/runs",
 	} {
-		where := to
+		where := target
 		mux.HandleFunc("GET "+from, func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, where, http.StatusFound)
 		})

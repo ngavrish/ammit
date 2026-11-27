@@ -112,23 +112,23 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 	if at > b.last {
 		b.last = at
 	}
-	ak := agentKey{run, branch, agent}
+	agentID := agentKey{run, branch, agent}
 	if kind == "turn" {
-		if model == "" || model <= streamModels[ak] {
+		if model == "" || model <= streamModels[agentID] {
 			return
 		}
-		streamModels[ak] = model
+		streamModels[agentID] = model
 		b.exec(`INSERT INTO model_of (run, branch, agent, model) VALUES (?,?,?,?)
 		        ON CONFLICT(run, branch, agent) DO UPDATE SET model=excluded.model`,
 			run, branch, agent, model)
 		// Every answer of this stream so far moves to the model, and the
 		// buckets it leaves and joins are due again.
-		for _, t := range []string{"model_answers", "model_idle"} {
-			if rs, err := b.x.Query(`SELECT DISTINCT day, phase, coalesce(model,'') FROM `+t+`
+		for _, table := range []string{"model_answers", "model_idle"} {
+			if dayRows, err := b.x.Query(`SELECT DISTINCT day, phase, coalesce(model,'') FROM `+table+`
 			        WHERE run=? AND branch=? AND agent=? AND model IS DISTINCT FROM ?`, run, branch, agent, model); err == nil {
-				for rs.Next() {
+				for dayRows.Next() {
 					var k bucket
-					if rs.Scan(&k.day, &k.phase, &k.model) == nil {
+					if dayRows.Scan(&k.day, &k.phase, &k.model) == nil {
 						if k.model != "" {
 							b.dirty[k] = true
 						}
@@ -136,10 +136,10 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 						b.dirty[k] = true
 					}
 				}
-				_ = rs.Err() // a cut-off read is the shorter answer it always was
-				closeRows(rs)
+				_ = dayRows.Err() // a cut-off read is the shorter answer it always was
+				closeRows(dayRows)
 			}
-			b.exec(`UPDATE `+t+` SET model=? WHERE run=? AND branch=? AND agent=? AND model IS DISTINCT FROM ?`,
+			b.exec(`UPDATE `+table+` SET model=? WHERE run=? AND branch=? AND agent=? AND model IS DISTINCT FROM ?`,
 				model, run, branch, agent, model)
 		}
 		return
@@ -147,17 +147,17 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 	if kind != "request_end" {
 		return
 	}
-	sk := streamKey{run, branch, agent, phase}
-	st := answerStreams[sk]
-	if st == nil {
-		st = &answerAcc{}
-		answerStreams[sk] = st
+	streamID := streamKey{run, branch, agent, phase}
+	stream := answerStreams[streamID]
+	if stream == nil {
+		stream = &answerAcc{}
+		answerStreams[streamID] = stream
 	}
-	b.touched[sk] = true
-	st.at = at
-	m := streamModels[ak]
+	b.touched[streamID] = true
+	stream.at = at
+	streamModel := streamModels[agentID]
 	if wait != "model" {
-		st.seconds, st.retry = 0, 0
+		stream.seconds, stream.retry = 0, 0
 		return
 	}
 	if idle, ok := answerIdle[msg]; ok {
@@ -166,39 +166,39 @@ func (b *answerBatch) add(id int64, at float64, kind, run, branch, phase, agent,
 		}
 		b.exec(`INSERT INTO model_idle (event_id, at, day, run, branch, agent, phase, model, kind, seconds)
 		        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
-			id, at, dayOf(at), run, branch, agent, phase, nullable(m), idle, seconds)
-		if m != "" {
-			b.dirty[bucket{dayOf(at), phase, m}] = true
+			id, at, dayOf(at), run, branch, agent, phase, nullable(streamModel), idle, seconds)
+		if streamModel != "" {
+			b.dirty[bucket{dayOf(at), phase, streamModel}] = true
 		}
 		return
 	}
-	st.seconds += seconds
+	stream.seconds += seconds
 	if retry {
-		st.retry += seconds
+		stream.retry += seconds
 	}
 	if msg != "AssistantMessage" {
 		return
 	}
 	b.exec(`INSERT INTO model_answers (event_id, at, day, run, branch, agent, phase, model, seconds, retry_s)
 	        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
-		id, at, dayOf(at), run, branch, agent, phase, nullable(m), st.seconds, st.retry)
-	if m != "" {
-		b.dirty[bucket{dayOf(at), phase, m}] = true
+		id, at, dayOf(at), run, branch, agent, phase, nullable(streamModel), stream.seconds, stream.retry)
+	if streamModel != "" {
+		b.dirty[bucket{dayOf(at), phase, streamModel}] = true
 	}
-	st.seconds, st.retry = 0, 0
+	stream.seconds, stream.retry = 0, 0
 }
 
 // flush writes the clocks that moved, the day buckets that changed, and how
 // far the replay has read.
 func (b *answerBatch) flush() {
-	for sk := range b.touched {
-		st := answerStreams[sk]
+	for streamID := range b.touched {
+		stream := answerStreams[streamID]
 		b.exec(`INSERT INTO model_streams (run, branch, agent, phase, seconds, retry_s, at)
 		        VALUES (?,?,?,?,?,?,?)
 		        ON CONFLICT (run, branch, agent, phase) DO UPDATE SET seconds=excluded.seconds,
-		          retry_s=excluded.retry_s, at=excluded.at`, sk.run, sk.branch, sk.agent, sk.phase, st.seconds, st.retry, st.at)
+		          retry_s=excluded.retry_s, at=excluded.at`, streamID.run, streamID.branch, streamID.agent, streamID.phase, stream.seconds, stream.retry, stream.at)
 	}
-	for k := range b.dirty {
+	for dirtyKey := range b.dirty {
 		b.exec(`INSERT INTO phase_model_times
 		          (day, phase, model, answers, min_s, sum_s, max_s, over_120, retry_s, background_s)
 		        SELECT ?1::bigint, ?2::text, ?3::text, count(*), min(seconds), coalesce(sum(seconds),0), max(seconds),
@@ -211,7 +211,7 @@ func (b *answerBatch) flush() {
 		        ON CONFLICT (day, phase, model) DO UPDATE SET answers=excluded.answers,
 		          min_s=excluded.min_s, sum_s=excluded.sum_s, max_s=excluded.max_s,
 		          over_120=excluded.over_120, retry_s=excluded.retry_s,
-		          background_s=excluded.background_s`, k.day, k.phase, k.model)
+		          background_s=excluded.background_s`, dirtyKey.day, dirtyKey.phase, dirtyKey.model)
 	}
 	if b.last > 0 {
 		b.exec(`INSERT INTO lift_marks (name, at) VALUES ('answers', ?)
@@ -229,10 +229,10 @@ func liftAnswer(id int64, at float64, e event) {
 	if kind != "turn" && kind != "request_end" {
 		return
 	}
-	b := newAnswerBatch(db)
-	b.add(id, at, kind, e.s("run"), e.s("branch"), e.s("phase"), e.s("agent"), e.s("wait"),
+	batch := newAnswerBatch(db)
+	batch.add(id, at, kind, e.s("run"), e.s("branch"), e.s("phase"), e.s("agent"), e.s("wait"),
 		e.s("msg"), e.f("seconds"), strings.Contains(e.s("detail"), "api_retry"), e.s("model"))
-	b.flush()
+	batch.flush()
 }
 
 // backfillAnswers replays the events the tables have not seen, six hours of
@@ -250,30 +250,30 @@ func backfillAnswers() {
 	loadAnswerState()
 	mu.Unlock()
 	const slice = 6 * 3600.0
-	n := 0
+	lifted := 0
 	for {
 		mu.Lock()
 		now := float64(time.Now().Unix())
-		to := mark + slice
-		last := to >= now
+		until := mark + slice
+		last := until >= now
 		if last {
-			to = 1e12
+			until = 1e12
 		}
-		tx, err := db.BeginTx(bg, nil)
+		txn, err := db.BeginTx(bg, nil)
 		if err != nil {
 			mu.Unlock()
 			log.Printf("ammit: answers backfill: %v", err)
 			return
 		}
-		b := newAnswerBatch(tx)
-		rs, err := tx.QueryContext(bg, `SELECT id, at, kind, coalesce(run,''), coalesce(branch,''), coalesce(phase,''),
+		batch := newAnswerBatch(txn)
+		eventRows, err := txn.QueryContext(bg, `SELECT id, at, kind, coalesce(run,''), coalesce(branch,''), coalesce(phase,''),
 		        coalesce(agent,''), coalesce(payload->>'wait',''),
 		        coalesce(payload->>'msg',''), coalesce(jnum(payload->'seconds'),0),
 		        strpos(coalesce(payload->>'detail',''),'api_retry')>0,
 		        coalesce(payload->>'model','')
-		        FROM events WHERE kind IN ('request_end','turn') AND at > ? AND at <= ? ORDER BY at, id`, mark, to)
+		        FROM events WHERE kind IN ('request_end','turn') AND at > ? AND at <= ? ORDER BY at, id`, mark, until)
 		if err != nil {
-			_ = tx.Rollback()
+			_ = txn.Rollback()
 			mu.Unlock()
 			log.Printf("ammit: answers backfill: %v", err)
 			return
@@ -285,24 +285,24 @@ func backfillAnswers() {
 			retry                                         bool
 		}
 		var evs []ev
-		for rs.Next() {
+		for eventRows.Next() {
 			var e ev
-			if rs.Scan(&e.id, &e.at, &e.kind, &e.run, &e.branch, &e.phase, &e.agent, &e.wait, &e.msg,
+			if eventRows.Scan(&e.id, &e.at, &e.kind, &e.run, &e.branch, &e.phase, &e.agent, &e.wait, &e.msg,
 				&e.s, &e.retry, &e.m) == nil {
 				evs = append(evs, e)
 			}
 		}
-		_ = rs.Err() // a cut-off read is the shorter answer it always was
-		closeRows(rs)
-		for _, e := range evs {
-			b.add(e.id, e.at, e.kind, e.run, e.branch, e.phase, e.agent, e.wait, e.msg, e.s, e.retry, e.m)
+		_ = eventRows.Err() // a cut-off read is the shorter answer it always was
+		closeRows(eventRows)
+		for _, pendingEvent := range evs {
+			batch.add(pendingEvent.id, pendingEvent.at, pendingEvent.kind, pendingEvent.run, pendingEvent.branch, pendingEvent.phase, pendingEvent.agent, pendingEvent.wait, pendingEvent.msg, pendingEvent.s, pendingEvent.retry, pendingEvent.m)
 		}
-		n += len(evs)
-		if b.last == 0 && !last {
-			b.last = to
+		lifted += len(evs)
+		if batch.last == 0 && !last {
+			batch.last = until
 		}
-		b.flush()
-		if err := tx.Commit(); err != nil {
+		batch.flush()
+		if err := txn.Commit(); err != nil {
 			log.Printf("ammit: answers backfill: %v", err)
 		}
 		if last {
@@ -316,34 +316,34 @@ func backfillAnswers() {
 			break
 		}
 		mu.Unlock()
-		mark = to
+		mark = until
 		time.Sleep(20 * time.Millisecond)
 	}
-	log.Printf("ammit: answers: replayed %d events in %s; live", n, time.Since(started).Round(time.Millisecond))
+	log.Printf("ammit: answers: replayed %d events in %s; live", lifted, time.Since(started).Round(time.Millisecond))
 }
 
 func loadAnswerState() {
-	if rs, err := db.QueryContext(bg, `SELECT run, branch, agent, phase, seconds, retry_s, at FROM model_streams`); err == nil {
-		for rs.Next() {
+	if streamRows, err := db.QueryContext(bg, `SELECT run, branch, agent, phase, seconds, retry_s, at FROM model_streams`); err == nil {
+		for streamRows.Next() {
 			var k streamKey
-			st := &answerAcc{}
-			if rs.Scan(&k.run, &k.branch, &k.agent, &k.phase, &st.seconds, &st.retry, &st.at) == nil {
-				answerStreams[k] = st
+			stream := &answerAcc{}
+			if streamRows.Scan(&k.run, &k.branch, &k.agent, &k.phase, &stream.seconds, &stream.retry, &stream.at) == nil {
+				answerStreams[k] = stream
 			}
 		}
-		_ = rs.Err() // a cut-off read is the shorter answer it always was
-		closeRows(rs)
+		_ = streamRows.Err() // a cut-off read is the shorter answer it always was
+		closeRows(streamRows)
 	}
-	if rs, err := db.QueryContext(bg, `SELECT run, branch, agent, model FROM model_of`); err == nil {
-		for rs.Next() {
+	if modelRows, err := db.QueryContext(bg, `SELECT run, branch, agent, model FROM model_of`); err == nil {
+		for modelRows.Next() {
 			var k agentKey
 			var m string
-			if rs.Scan(&k.run, &k.branch, &k.agent, &m) == nil {
+			if modelRows.Scan(&k.run, &k.branch, &k.agent, &m) == nil {
 				streamModels[k] = m
 			}
 		}
-		_ = rs.Err() // a cut-off read is the shorter answer it always was
-		closeRows(rs)
+		_ = modelRows.Err() // a cut-off read is the shorter answer it always was
+		closeRows(modelRows)
 	}
 }
 

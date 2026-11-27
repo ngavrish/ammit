@@ -172,24 +172,24 @@ func (p *phaseRecord) verdict() string {
 	if p == nil || len(p.verdicts) == 0 {
 		return ""
 	}
-	out := "green"
-	for _, v := range p.verdicts {
-		switch v {
+	overall := "green"
+	for _, judged := range p.verdicts {
+		switch judged {
 		case "red":
 			return "red"
 		case "blocked":
-			out = "blocked"
+			overall = "blocked"
 		}
 	}
-	return out
+	return overall
 }
 
 func (p *phaseRecord) succeeded() bool {
 	if p == nil || p.starts == 0 {
 		return false
 	}
-	if v := p.verdict(); v != "" {
-		return v == "green"
+	if phaseVerdict := p.verdict(); phaseVerdict != "" {
+		return phaseVerdict == "green"
 	}
 	return p.ends >= p.starts && !p.failed
 }
@@ -225,7 +225,7 @@ type judgementFact struct {
 }
 
 func readRunFacts(run string) (*runFacts, error) {
-	f := &runFacts{run: run, rec: map[string]*phaseRecord{}}
+	facts := &runFacts{run: run, rec: map[string]*phaseRecord{}}
 	mu.Lock()
 	defer mu.Unlock()
 	var name, verdict, summary sql.NullString
@@ -235,34 +235,34 @@ func readRunFacts(run string) (*runFacts, error) {
 	if err != nil {
 		return nil, err
 	}
-	f.name, f.verdict, f.summary = name.String, strings.ToUpper(verdict.String), summary.String
-	f.started, f.finished, f.open = started.Float64, finished.Float64, !finished.Valid
-	f.newer = laterStarts(f.name, run, f.started)
+	facts.name, facts.verdict, facts.summary = name.String, strings.ToUpper(verdict.String), summary.String
+	facts.started, facts.finished, facts.open = started.Float64, finished.Float64, !finished.Valid
+	facts.newer = laterStarts(facts.name, run, facts.started)
 	var starts int
 	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='run_start'`, run).Scan(&starts)
-	f.runStart = starts > 0
+	facts.runStart = starts > 0
 	db.QueryRow(`SELECT coalesce((payload->'tags'->>'mode'),'') FROM events
 	             WHERE run=? AND kind IN ('run_start','note')
 	               AND coalesce((payload->'tags'->>'mode'),'') <> ''
-	             ORDER BY id LIMIT 1`, run).Scan(&f.mode)
+	             ORDER BY id LIMIT 1`, run).Scan(&facts.mode)
 	var flowMode, phases string
 	if db.QueryRow(`SELECT coalesce(mode,''), coalesce(phases,'') FROM flows WHERE run=?`,
 		run).Scan(&flowMode, &phases) == nil {
 		if flowMode != "" {
-			f.mode = flowMode
+			facts.mode = flowMode
 		}
-		_ = json.Unmarshal([]byte(phases), &f.phases)
+		_ = json.Unmarshal([]byte(phases), &facts.phases)
 	}
 	var from sql.NullString
 	if db.QueryRow(`SELECT (payload->>'from_phase') FROM events
 	                WHERE run=? AND kind='replay' ORDER BY id DESC LIMIT 1`, run).Scan(&from) == nil {
-		f.replayKnown, f.replayFrom = true, from.String
+		facts.replayKnown, facts.replayFrom = true, from.String
 	}
-	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='heartbeat'`, run).Scan(&f.heartbeats)
+	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='heartbeat'`, run).Scan(&facts.heartbeats)
 	var ends int
 	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='run_end'`, run).Scan(&ends)
-	f.runEnd = ends > 0
-	rows, err := db.Query(`SELECT coalesce(phase,''), coalesce(branch,''), kind,
+	facts.runEnd = ends > 0
+	eventRows, err := db.Query(`SELECT coalesce(phase,''), coalesce(branch,''), kind,
 	                         coalesce((payload->>'verdict'),''),
 	                         coalesce(jnum(payload->'failed'), 0),
 	                         coalesce(jnum(payload->'ok'), 1),
@@ -271,95 +271,95 @@ func readRunFacts(run string) (*runFacts, error) {
 	                       FROM events WHERE run=? AND kind IN ('phase_start','phase_end','gate')
 	                       ORDER BY at, id`, run)
 	if err == nil {
-		for rows.Next() {
+		for eventRows.Next() {
 			var phase, branch, kind, verdict, errText, text string
 			var failed, ok any
-			if rows.Scan(&phase, &branch, &kind, &verdict, &failed, &ok, &errText, &text) != nil || phase == "" {
+			if eventRows.Scan(&phase, &branch, &kind, &verdict, &failed, &ok, &errText, &text) != nil || phase == "" {
 				continue
 			}
-			p := f.rec[phase]
-			if p == nil {
-				p = &phaseRecord{verdicts: map[string]string{}}
-				f.rec[phase] = p
+			record := facts.rec[phase]
+			if record == nil {
+				record = &phaseRecord{verdicts: map[string]string{}}
+				facts.rec[phase] = record
 			}
 			switch kind {
 			case "phase_start":
-				p.starts++
+				record.starts++
 			case "phase_end":
-				p.ends++
-				p.failed = truthy(failed) || falsy(ok) || errText != ""
-				p.lastError, p.lastText = errText, text
+				record.ends++
+				record.failed = truthy(failed) || falsy(ok) || errText != ""
+				record.lastError, record.lastText = errText, text
 			case "gate":
-				p.verdicts[branch] = strings.ToLower(verdict)
+				record.verdicts[branch] = strings.ToLower(verdict)
 			}
 		}
-		_ = rows.Err() // a cut-off read is the shorter answer it always was
-		rows.Close()
+		_ = eventRows.Err() // a cut-off read is the shorter answer it always was
+		eventRows.Close()
 	}
-	f.judgements = judgementsOf(run)
-	return f, nil
+	facts.judgements = judgementsOf(run)
+	return facts, nil
 }
 
 // laterStarts is when every later run of the ticket started. Under mu.
 func laterStarts(name, run string, after float64) []float64 {
-	rows, err := db.Query(`SELECT started FROM runs WHERE name=? AND run<>? AND started > ?`,
+	startRows, err := db.Query(`SELECT started FROM runs WHERE name=? AND run<>? AND started > ?`,
 		name, run, after)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer startRows.Close()
 	var out []float64
-	for rows.Next() {
+	for startRows.Next() {
 		var at float64
-		if rows.Scan(&at) == nil {
+		if startRows.Scan(&at) == nil {
 			out = append(out, at)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
+	_ = startRows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
 // judgementsOf is every judgement written about a run. Under mu.
 func judgementsOf(run string) []judgementFact {
-	rows, err := db.Query(`SELECT scope, rule, action, coalesce(subject,''),
+	judgementRows, err := db.Query(`SELECT scope, rule, action, coalesce(subject,''),
 	                         coalesce(threshold,0), coalesce(observed,0)
 	                       FROM judgements WHERE run=? ORDER BY id`, run)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer judgementRows.Close()
 	var out []judgementFact
-	for rows.Next() {
+	for judgementRows.Next() {
 		var j judgementFact
-		if rows.Scan(&j.scope, &j.rule, &j.action, &j.subject, &j.threshold, &j.observed) == nil {
+		if judgementRows.Scan(&j.scope, &j.rule, &j.action, &j.subject, &j.threshold, &j.observed) == nil {
 			out = append(out, j)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
+	_ = judgementRows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
 // truthy and falsy read a JSON boolean or number the way the runner sends it.
 func truthy(v any) bool {
-	switch x := v.(type) {
+	switch typed := v.(type) {
 	case bool:
-		return x
+		return typed
 	case int64:
-		return x != 0
+		return typed != 0
 	case float64:
-		return x != 0
+		return typed != 0
 	}
 	return false
 }
 
 func falsy(v any) bool {
-	switch x := v.(type) {
+	switch typed := v.(type) {
 	case bool:
-		return !x
+		return !typed
 	case int64:
-		return x == 0
+		return typed == 0
 	case float64:
-		return x == 0
+		return typed == 0
 	}
 	return false
 }
@@ -367,9 +367,9 @@ func falsy(v any) bool {
 // runnablePhases are the phases the runner executes: the ones with an agent.
 func runnablePhases(phases []flowPhase) []flowPhase {
 	var out []flowPhase
-	for _, p := range phases {
-		if len(p.Agents) > 0 {
-			out = append(out, p)
+	for _, phase := range phases {
+		if len(phase.Agents) > 0 {
+			out = append(out, phase)
 		}
 	}
 	return out
@@ -385,8 +385,8 @@ func forwardPhase(phases []flowPhase, i int) bool {
 			return false
 		}
 	}
-	for j, p := range phases {
-		if p.ID == phases[i].LoopsTo && j < i {
+	for earlier, phase := range phases {
+		if phase.ID == phases[i].LoopsTo && earlier < i {
 			return false
 		}
 	}
@@ -407,9 +407,9 @@ func forwardPhase(phases []flowPhase, i int) bool {
 // 1's resume was refused at the start, and the cycle waited out
 // timeouts.watchdog_start for a run that could never come.
 func resumeFrom(f *runFacts) string {
-	at := frontierFrom(f)
-	if at == "" {
-		at = redoFrom(f)
+	frontier := frontierFrom(f)
+	if frontier == "" {
+		frontier = redoFrom(f)
 	}
 	// A fan-out carries a branch whose repairs ran out and goes on without
 	// it, so the frontier can be the last phase of a run whose real drop is a
@@ -420,11 +420,11 @@ func resumeFrom(f *runFacts) string {
 	// went past red was answered by its own repair (env blocked, envd green)
 	// and is the orchestrator's frontier to judge, not this.
 	phases := runnablePhases(f.phases)
-	for i, p := range phases {
-		if p.ID == at {
+	for index, phase := range phases {
+		if phase.ID == frontier {
 			break
 		}
-		if !forwardPhase(phases, i) {
+		if !forwardPhase(phases, index) {
 			continue
 		}
 		// A branch red the run carried on past - a phase of the whole run
@@ -434,18 +434,18 @@ func resumeFrom(f *runFacts) string {
 		// cannot verify, run 6020504d went on through redgate and reporting
 		// and dropped at the fold, and this sent the ticket back to branchrun
 		// to be red on the same rows again - every drop after branchrun would.
-		if carriedPast(f, phases, i, at) {
+		if carriedPast(f, phases, index, frontier) {
 			continue
 		}
-		if r := f.rec[p.ID]; r != nil {
-			for branch, v := range r.verdicts {
-				if branch != "" && (v == "red" || v == "blocked") {
-					return p.ID
+		if record := f.rec[phase.ID]; record != nil {
+			for branch, verdict := range record.verdicts {
+				if branch != "" && (verdict == "red" || verdict == "blocked") {
+					return phase.ID
 				}
 			}
 		}
 	}
-	return at
+	return frontier
 }
 
 // carriedPast says the run started a phase of the whole run (no fan-out)
@@ -454,11 +454,11 @@ func carriedPast(f *runFacts, phases []flowPhase, i int, at string) bool {
 	if phases[i].FanoutOver == "" {
 		return false
 	}
-	for j := i + 1; j < len(phases) && phases[j].ID != at; j++ {
-		if phases[j].FanoutOver != "" || !forwardPhase(phases, j) {
+	for later := i + 1; later < len(phases) && phases[later].ID != at; later++ {
+		if phases[later].FanoutOver != "" || !forwardPhase(phases, later) {
 			continue
 		}
-		if r := f.rec[phases[j].ID]; r != nil && r.starts > 0 {
+		if record := f.rec[phases[later].ID]; record != nil && record.starts > 0 {
 			return true
 		}
 	}
@@ -473,9 +473,9 @@ func frontierFrom(f *runFacts) string {
 		return ""
 	}
 	frontier := -1
-	for i, p := range phases {
-		if r := f.rec[p.ID]; r != nil && r.starts > 0 && forwardPhase(phases, i) {
-			frontier = i
+	for index, phase := range phases {
+		if record := f.rec[phase.ID]; record != nil && record.starts > 0 && forwardPhase(phases, index) {
+			frontier = index
 		}
 	}
 	if frontier < 0 {
@@ -489,38 +489,38 @@ func frontierFrom(f *runFacts) string {
 	inherited := frontier
 	if f.replayKnown && f.replayFrom != "" {
 		inherited = 0
-		for i, p := range phases {
-			if p.ID == f.replayFrom {
-				inherited = i
+		for index, phase := range phases {
+			if phase.ID == f.replayFrom {
+				inherited = index
 				break
 			}
 		}
 	}
-	for i := 0; i < frontier; i++ {
-		p := phases[i]
-		r := f.rec[p.ID]
-		if r == nil || r.starts == 0 {
-			if p.OnlyIf == "" && i >= inherited {
-				return p.ID
+	for index := 0; index < frontier; index++ {
+		phase := phases[index]
+		record := f.rec[phase.ID]
+		if record == nil || record.starts == 0 {
+			if phase.OnlyIf == "" && index >= inherited {
+				return phase.ID
 			}
 			continue
 		}
-		if r.ends < r.starts {
+		if record.ends < record.starts {
 			// A repair cut off mid-lap resumes at the gate it answers: the
 			// gate decides whether another lap is wanted, and starting the
 			// repair cold would repair what nobody has judged red yet.
-			if !forwardPhase(phases, i) && p.LoopsTo != "" {
-				return p.LoopsTo
+			if !forwardPhase(phases, index) && phase.LoopsTo != "" {
+				return phase.LoopsTo
 			}
-			return p.ID
+			return phase.ID
 		}
 	}
 	if !f.rec[phases[frontier].ID].succeeded() {
 		return phases[frontier].ID
 	}
-	for i := frontier + 1; i < len(phases); i++ {
-		if forwardPhase(phases, i) {
-			return phases[i].ID
+	for index := frontier + 1; index < len(phases); index++ {
+		if forwardPhase(phases, index) {
+			return phases[index].ID
 		}
 	}
 	return ""
@@ -538,16 +538,16 @@ func redoFrom(f *runFacts) string {
 	}
 	start := 0
 	if f.replayKnown && f.replayFrom != "" {
-		for i, p := range phases {
-			if p.ID == f.replayFrom {
-				start = i
+		for index, phase := range phases {
+			if phase.ID == f.replayFrom {
+				start = index
 				break
 			}
 		}
 	}
-	for i := start; i < len(phases); i++ {
-		if r := f.rec[phases[i].ID]; r != nil && r.starts > 0 && r.failed && forwardPhase(phases, i) {
-			return phases[i].ID
+	for index := start; index < len(phases); index++ {
+		if record := f.rec[phases[index].ID]; record != nil && record.starts > 0 && record.failed && forwardPhase(phases, index) {
+			return phases[index].ID
 		}
 	}
 	return phases[start].ID
@@ -555,9 +555,9 @@ func redoFrom(f *runFacts) string {
 
 // repairOf is the repair phase that loops back to a gate, "" if none does.
 func repairOf(phases []flowPhase, gate string) string {
-	for i, p := range phases {
-		if p.LoopsTo == gate && !forwardPhase(phases, i) {
-			return p.ID
+	for index, phase := range phases {
+		if phase.LoopsTo == gate && !forwardPhase(phases, index) {
+			return phase.ID
 		}
 	}
 	return ""
@@ -594,7 +594,7 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 	if fix := conf.str("watchdog", "fix_mode", "watchdogfix"); f.mode == fix {
 		return nil, "a watchdog fix run"
 	}
-	if how, by := stoppedByHand(f); by {
+	if how, byHand := stoppedByHand(f); byHand {
 		return nil, "stopped by a person (" + how + ")"
 	}
 	// A run on the host is not the stack's to fix: a fix run, a deploy and a
@@ -610,19 +610,19 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 	if !f.runStart && f.name == f.run {
 		return nil, "no run_start: a row made by a stray event, not a run"
 	}
-	for _, at := range f.newer {
-		if f.seenAt == 0 || at <= f.seenAt {
+	for _, newerStart := range f.newer {
+		if f.seenAt == 0 || newerStart <= f.seenAt {
 			return nil, "superseded by a later run of " + f.name
 		}
 	}
-	d := &dropFact{run: f.run, name: f.name, mode: f.mode, verdict: f.verdict,
+	drop := &dropFact{run: f.run, name: f.name, mode: f.mode, verdict: f.verdict,
 		phase: resumeFrom(f)}
-	d.evidence = append(d.evidence, fmt.Sprintf("run %s (%s, mode %s) ended %s: %s",
+	drop.evidence = append(drop.evidence, fmt.Sprintf("run %s (%s, mode %s) ended %s: %s",
 		f.run, f.name, orDash(f.mode), orDash(f.verdict), f.summary))
-	if d.phase != "" {
-		d.evidence = append(d.evidence, "dropped at phase "+d.phase)
+	if drop.phase != "" {
+		drop.evidence = append(drop.evidence, "dropped at phase "+drop.phase)
 	}
-	d.cause = causeOf(f, conf, d)
+	drop.cause = causeOf(f, conf, drop)
 	// BLOCKED with nothing red behind it - no limit, no gate, no crash - and
 	// every scenario that did not pass unverified for want of data on the
 	// stand: the flow did its job and the stand did not have the rows. No
@@ -630,10 +630,10 @@ func classifyDrop(f *runFacts, conf Config) (*dropFact, string) {
 	// "62/73 scenarios passed, 11 unverified; no bug drafts" at foldgate and
 	// the watchdog spent 43 fix cycles on it, every one ending with no PR.
 	// The verdict's own ALERT (on_run_verdict) is what a person reads.
-	if d.cause == "verdict:blocked" && dataGapsOnly(f.summary) {
+	if drop.cause == "verdict:blocked" && dataGapsOnly(f.summary) {
 		return nil, "verdict BLOCKED on data gaps only (" + f.summary + "): no flow defect to fix"
 	}
-	return d, ""
+	return drop, ""
 }
 
 // dataGapsSummary is the runner's ending for a run whose only shortfall is
@@ -655,16 +655,16 @@ func causeOf(f *runFacts, conf Config, d *dropFact) string {
 	// earliest give-up is a branch's, not the run's ending - 75061e39 stopped
 	// on bugsfix and was recorded as limit:loops.laps_implrulefix, claim-1's
 	// give-up two hours before, and its fix run was briefed on that.
-	for i := len(f.judgements) - 1; i >= 0; i-- {
-		j := f.judgements[i]
-		if j.scope == "hand" {
+	for index := len(f.judgements) - 1; index >= 0; index-- {
+		judgement := f.judgements[index]
+		if judgement.scope == "hand" {
 			continue
 		}
-		if stops(j.action) || endsRun(conf, j.action) || j.action == "stop_branch" ||
-			j.action == "stopped" || j.action == "gave_up" {
+		if stops(judgement.action) || endsRun(conf, judgement.action) || judgement.action == "stop_branch" ||
+			judgement.action == "stopped" || judgement.action == "gave_up" {
 			d.evidence = append(d.evidence, fmt.Sprintf("judgement %s on %s: %.0f against %.0f -> %s",
-				j.rule, orDash(j.subject), j.observed, j.threshold, j.action))
-			return "limit:" + j.rule
+				judgement.rule, orDash(judgement.subject), judgement.observed, judgement.threshold, judgement.action))
+			return "limit:" + judgement.rule
 		}
 	}
 	// Stillborn is a run nobody ended: no pulse, no phase, and no run_end from
@@ -691,25 +691,25 @@ func causeOf(f *runFacts, conf Config, d *dropFact) string {
 		}
 		return "crash"
 	}
-	if r := f.rec[d.phase]; r != nil {
-		switch r.verdict() {
+	if record := f.rec[d.phase]; record != nil {
+		switch record.verdict() {
 		case "red", "blocked":
-			for branch, v := range r.verdicts {
-				if v == "red" || v == "blocked" {
+			for branch, verdict := range record.verdicts {
+				if verdict == "red" || verdict == "blocked" {
 					d.evidence = append(d.evidence, fmt.Sprintf("gate %s %s",
-						phaseKey(d.phase, branch), v))
+						phaseKey(d.phase, branch), verdict))
 				}
 			}
-			if r.lastText != "" {
-				d.evidence = append(d.evidence, "last words of "+d.phase+": "+r.lastText)
+			if record.lastText != "" {
+				d.evidence = append(d.evidence, "last words of "+d.phase+": "+record.lastText)
 			}
-			if r.verdict() == "blocked" {
+			if record.verdict() == "blocked" {
 				return "gate_blocked"
 			}
 			if repair := repairOf(f.phases, d.phase); repair != "" {
 				laps := 0
-				if rr := f.rec[repair]; rr != nil {
-					laps = rr.starts
+				if repairRecord := f.rec[repair]; repairRecord != nil {
+					laps = repairRecord.starts
 				}
 				d.evidence = append(d.evidence, fmt.Sprintf("repair %s started %d time(s)",
 					repair, laps))
@@ -721,12 +721,12 @@ func causeOf(f *runFacts, conf Config, d *dropFact) string {
 			}
 			return "gate_red"
 		}
-		if r.failed || r.ends < r.starts {
-			if r.lastError != "" {
-				d.evidence = append(d.evidence, "phase "+d.phase+" error: "+r.lastError)
+		if record.failed || record.ends < record.starts {
+			if record.lastError != "" {
+				d.evidence = append(d.evidence, "phase "+d.phase+" error: "+record.lastError)
 			}
-			if r.lastText != "" {
-				d.evidence = append(d.evidence, "last words of "+d.phase+": "+r.lastText)
+			if record.lastText != "" {
+				d.evidence = append(d.evidence, "last words of "+d.phase+": "+record.lastText)
 			}
 			return "phase_failed"
 		}
@@ -767,8 +767,8 @@ func waitingOn(run string, conf Config) (quiet, limit float64, rule, phase strin
 		since = last.Float64
 	}
 	quiet = wdNow() - since
-	if up := wdNow() - upSince(); up < quiet {
-		quiet = up
+	if uptime := wdNow() - upSince(); uptime < quiet {
+		quiet = uptime
 	}
 	return quiet, limit, rule, phase, quiet > limit
 }
@@ -784,16 +784,16 @@ func treeHolderOf(text string) string {
 	if !strings.HasPrefix(text, treeQueueNote) {
 		return ""
 	}
-	_, rest, ok := strings.Cut(text, " — ")
+	_, afterDash, ok := strings.Cut(text, " — ")
 	if !ok {
 		return ""
 	}
-	name, ok := strings.CutSuffix(strings.TrimSpace(rest), " has it")
-	name = strings.TrimSpace(name)
-	if !ok || name == "" || name == "another ticket" || strings.ContainsAny(name, " \n") {
+	holder, ok := strings.CutSuffix(strings.TrimSpace(afterDash), " has it")
+	holder = strings.TrimSpace(holder)
+	if !ok || holder == "" || holder == "another ticket" || strings.ContainsAny(holder, " \n") {
 		return ""
 	}
-	return name
+	return holder
 }
 
 // queuedBehind says whether a quiet run is quiet because it is queued for the
@@ -835,16 +835,16 @@ func queuedBehind(run string, conf Config) (string, bool) {
 	if !ok || limit <= 0 || wdNow()-at > limit {
 		return "", false
 	}
-	name := treeHolderOf(text)
-	if name == "" {
+	holder := treeHolderOf(text)
+	if holder == "" {
 		return "", false
 	}
-	for _, o := range openRuns() {
-		if o.run == run || o.name != name {
+	for _, open := range openRuns() {
+		if open.run == run || open.name != holder {
 			continue
 		}
-		if _, _, _, _, stuck := waitingOn(o.run, conf); !stuck {
-			return o.name + " (run " + o.run + ")", true
+		if _, _, _, _, stuck := waitingOn(open.run, conf); !stuck {
+			return open.name + " (run " + open.run + ")", true
 		}
 	}
 	return "", false
@@ -884,37 +884,37 @@ func wdSetMeta(name string, v float64) {
 // every other one.
 func wdSay(run, phase, state, cause string, cycle int, limit float64, prs []string,
 	text string) {
-	e := event{"kind": "watchdog", "run": run, "phase": phase, "state": state,
+	sayEvent := event{"kind": "watchdog", "run": run, "phase": phase, "state": state,
 		"cause": cause, "cycle": float64(cycle), "cap": limit, "text": text}
 	if len(prs) > 0 {
-		e["pr"] = strings.Join(prs, " ")
+		sayEvent["pr"] = strings.Join(prs, " ")
 	}
-	store(e)
+	store(sayEvent)
 	log.Printf("ammit: watchdog %s %s cycle %d/%.0f %s: %s", run, state, cycle, limit,
 		cause, firstLine(text))
 }
 
 func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return line
+	first, _, _ := strings.Cut(s, "\n")
+	return first
 }
 
 // recordDrop writes the drop down once. false when it was already there: a
 // restart, or a second tick, must not answer one drop twice.
 func recordDrop(d *dropFact, root string) bool {
-	ev, _ := json.Marshal(d.evidence)
+	evidenceJSON, _ := json.Marshal(d.evidence)
 	mu.Lock()
-	res, err := db.Exec(`INSERT INTO watchdog_drops
+	insert, err := db.Exec(`INSERT INTO watchdog_drops
 	         (run, root, name, mode, phase, cause, verdict, evidence, at)
 	         VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
-		d.run, root, d.name, d.mode, d.phase, d.cause, d.verdict, string(ev), wdNow())
+		d.run, root, d.name, d.mode, d.phase, d.cause, d.verdict, string(evidenceJSON), wdNow())
 	mu.Unlock()
 	if err != nil {
 		log.Printf("ammit: watchdog could not record the drop of %s: %v", d.run, err)
 		return false
 	}
-	n, _ := res.RowsAffected()
-	return n > 0
+	inserted, _ := insert.RowsAffected()
+	return inserted > 0
 }
 
 // rootOf is the chain a drop belongs to: the root of the cycle whose resume
@@ -936,28 +936,28 @@ func rootOf(run string) (string, int64) {
 	mu.Lock()
 	defer mu.Unlock()
 	root, id := cycleRootLocked(run)
-	seen := map[string]bool{run: true, root: true}
-	at := root
+	visited := map[string]bool{run: true, root: true}
+	cursor := root
 	for hop := 0; hop < 64; hop++ {
 		var src string
 		_ = db.QueryRow(`SELECT coalesce((payload->'tags'->'resolved'->>'source_run'),'')
 		             FROM events WHERE run=? AND kind='run_start' ORDER BY id ASC LIMIT 1`,
-			at).Scan(&src)
-		if src == "" || seen[src] {
+			cursor).Scan(&src)
+		if src == "" || visited[src] {
 			break
 		}
-		seen[src] = true
-		at = src
+		visited[src] = true
+		cursor = src
 		var chain string
 		if db.QueryRow(`SELECT root FROM watchdog_drops WHERE run=?`, src).Scan(&chain) != nil ||
 			chain == "" {
-			if r, cid := cycleRootLocked(src); cid != 0 {
-				chain = r
+			if cycleRoot, cid := cycleRootLocked(src); cid != 0 {
+				chain = cycleRoot
 			}
 		}
 		if chain != "" && chain != root {
-			root, at = chain, chain
-			seen[chain] = true
+			root, cursor = chain, chain
+			visited[chain] = true
 		}
 	}
 	return root, id
@@ -992,7 +992,7 @@ type wdCycle struct {
 func wdCycles(where string, args ...any) []wdCycle {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`SELECT id, root, run, cycle, state, branch, fix_queue,
+	cycleRows, err := db.Query(`SELECT id, root, run, cycle, state, branch, fix_queue,
 	                         coalesce(prs,'[]'), merged_at, deployed_at, resume_queue,
 	                         coalesce(resumed_run,''), coalesce(why,''), started,
 	                         coalesce(entered, started)
@@ -1000,19 +1000,19 @@ func wdCycles(where string, args ...any) []wdCycle {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer cycleRows.Close()
 	var out []wdCycle
-	for rows.Next() {
+	for cycleRows.Next() {
 		var c wdCycle
 		var prs string
-		if rows.Scan(&c.id, &c.root, &c.run, &c.cycle, &c.state, &c.branch, &c.fixQueue,
+		if cycleRows.Scan(&c.id, &c.root, &c.run, &c.cycle, &c.state, &c.branch, &c.fixQueue,
 			&prs, &c.mergedAt, &c.deployedAt, &c.resumeQueue, &c.resumedRun, &c.why,
 			&c.started, &c.entered) == nil {
 			_ = json.Unmarshal([]byte(prs), &c.prs)
 			out = append(out, c)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
+	_ = cycleRows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
@@ -1052,17 +1052,17 @@ func spentCycles(root string) int {
 func dropOfRun(run string) (*dropFact, bool) {
 	mu.Lock()
 	defer mu.Unlock()
-	d := &dropFact{run: run}
+	drop := &dropFact{run: run}
 	var ev string
 	err := db.QueryRow(`SELECT coalesce(name,''), coalesce(mode,''), coalesce(phase,''),
 	                      cause, coalesce(verdict,''), coalesce(evidence,'[]')
 	                    FROM watchdog_drops WHERE run=?`, run).
-		Scan(&d.name, &d.mode, &d.phase, &d.cause, &d.verdict, &ev)
+		Scan(&drop.name, &drop.mode, &drop.phase, &drop.cause, &drop.verdict, &ev)
 	if err != nil {
 		return nil, false
 	}
-	_ = json.Unmarshal([]byte(ev), &d.evidence)
-	return d, true
+	_ = json.Unmarshal([]byte(ev), &drop.evidence)
+	return drop, true
 }
 
 // ---- the loop ------------------------------------------------------------
@@ -1084,12 +1084,12 @@ func watchdogTick(conf Config) {
 	}
 	watchWaiting(conf, limit)
 	for _, run := range finishedSince(since) {
-		f, err := readRunFacts(run)
+		facts, err := readRunFacts(run)
 		if err != nil {
 			continue
 		}
-		d, _ := classifyDrop(f, conf)
-		if d == nil {
+		drop, _ := classifyDrop(facts, conf)
+		if drop == nil {
 			// Not a drop, and never will be: the row is finished. A marker so
 			// it is not read again every tick.
 			mu.Lock()
@@ -1098,13 +1098,13 @@ func watchdogTick(conf Config) {
 			mu.Unlock()
 			continue
 		}
-		answerDrop(d, conf, limit)
+		answerDrop(drop, conf, limit)
 	}
 	if handsOff(conf) {
 		return
 	}
-	for _, c := range wdCycles(`state IN ('` + strings.Join(wdMoving, "','") + `')`) {
-		stepCycle(c, conf, limit)
+	for _, cycle := range wdCycles(`state IN ('` + strings.Join(wdMoving, "','") + `')`) {
+		stepCycle(cycle, conf, limit)
 	}
 }
 
@@ -1113,22 +1113,22 @@ func watchdogTick(conf Config) {
 func finishedSince(since float64) []string {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`SELECT run FROM runs WHERE finished IS NOT NULL AND finished >= ?
+	runRows, err := db.Query(`SELECT run FROM runs WHERE finished IS NOT NULL AND finished >= ?
 	                       AND run NOT IN (SELECT run FROM watchdog_drops)
 	                       AND 'seen:' || run NOT IN (SELECT name FROM watchdog_meta)
 	                       ORDER BY finished`, since)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer runRows.Close()
 	var out []string
-	for rows.Next() {
+	for runRows.Next() {
 		var r string
-		if rows.Scan(&r) == nil {
+		if runRows.Scan(&r) == nil {
 			out = append(out, r)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
+	_ = runRows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
@@ -1138,49 +1138,49 @@ func finishedSince(since float64) []string {
 // written otherwise), so the resume that follows does not run beside it.
 func watchWaiting(conf Config, limit float64) {
 	fix := conf.str("watchdog", "fix_mode", "watchdogfix")
-	for _, r := range openRuns() {
-		if runMode(r.run) == fix {
+	for _, open := range openRuns() {
+		if runMode(open.run) == fix {
 			continue
 		}
-		if _, known := dropOfRun(r.run); known {
+		if _, known := dropOfRun(open.run); known {
 			continue
 		}
-		quiet, against, rule, phase, waiting := waitingOn(r.run, conf)
+		quiet, against, rule, phase, waiting := waitingOn(open.run, conf)
 		if !waiting {
 			continue
 		}
-		if holder, ok := queuedBehind(r.run, conf); ok {
+		if holder, ok := queuedBehind(open.run, conf); ok {
 			log.Printf("ammit: watchdog %s quiet %.0fs, queued for the working tree behind %s, "+
-				"which is getting on with it: the holder is judged, not the queue", r.run, quiet, holder)
+				"which is getting on with it: the holder is judged, not the queue", open.run, quiet, holder)
 			continue
 		}
-		f, err := readRunFacts(r.run)
+		facts, err := readRunFacts(open.run)
 		if err != nil {
 			continue
 		}
-		d := &dropFact{run: r.run, name: f.name, mode: f.mode, verdict: "WAITING",
-			cause: "waiting", phase: resumeFrom(f)}
-		if d.phase == "" {
-			d.phase = phase
+		drop := &dropFact{run: open.run, name: facts.name, mode: facts.mode, verdict: "WAITING",
+			cause: "waiting", phase: resumeFrom(facts)}
+		if drop.phase == "" {
+			drop.phase = phase
 		}
-		d.evidence = []string{
-			fmt.Sprintf("run %s (%s, mode %s) open and waiting in phase %s", r.run, f.name,
-				orDash(f.mode), orDash(phase)),
+		drop.evidence = []string{
+			fmt.Sprintf("run %s (%s, mode %s) open and waiting in phase %s", open.run, facts.name,
+				orDash(facts.mode), orDash(phase)),
 			fmt.Sprintf("no progress event (%s) for %.0fs against %s = %.0f",
 				strings.Join(wdProgress, ","), quiet, rule, against),
 		}
 		action := conf.str("actions", "on_watchdog_wait", "stop_run")
-		ctx := map[string]string{"run": r.run, "name": r.name, "phase": phase}
-		for k, v := range conf["context"] {
-			ctx[k] = v
+		ctx := map[string]string{"run": open.run, "name": open.name, "phase": phase}
+		for field, fieldValue := range conf["context"] {
+			ctx[field] = fieldValue
 		}
-		judge("run", r.run, r.name, rule, against, quiet, action, act(action, conf, ctx))
+		judge("run", open.run, open.name, rule, against, quiet, action, act(action, conf, ctx))
 		if endsRun(conf, action) {
-			finish(r.run, "BLOCKED", fmt.Sprintf(
+			finish(open.run, "BLOCKED", fmt.Sprintf(
 				"ammit watchdog: no progress for %.0fs in %s, past %s", quiet,
 				orDash(phase), rule))
 		}
-		answerDrop(d, conf, limit)
+		answerDrop(drop, conf, limit)
 	}
 }
 
@@ -1221,7 +1221,7 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 	// its start, and this only recorded it. 2026-11-12: renewals have no cap -
 	// the person's rule: watchdogs are unlimited.
 	if d.cause == "limit:"+TicketBudgetRule {
-		q, holder := queueFreshResume(d)
+		queueID, holder := queueFreshResume(d)
 		if holder != nil {
 			wdSay(d.run, d.phase, "recorded", d.cause, spentCycles(root), limit, nil,
 				"the ticket is over timeouts.ticket and is held by "+holder.String()+
@@ -1230,7 +1230,7 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 		}
 		wdSay(d.run, d.phase, "resumed", d.cause, spentCycles(root), limit, nil,
 			fmt.Sprintf("the ticket is over timeouts.ticket; resumed from %s on a fresh budget "+
-				"(renewal %d today, queue %d)", orDash(d.phase), budgetRenewals(d.name), q))
+				"(renewal %d today, queue %d)", orDash(d.phase), budgetRenewals(d.name), queueID))
 		return
 	}
 	if parent != 0 {
@@ -1239,10 +1239,10 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 	// A drop no code change answers is resumed, not fixed (transientDrop),
 	// unless it is the resume of one such drop come back at the same phase.
 	if transientDrop(d) && !handsOff(conf) {
-		if src := sourceOf(d.run); resumedTransient(src, d) {
+		if source := sourceOf(d.run); resumedTransient(source, d) {
 			d.evidence = append(d.evidence, fmt.Sprintf(
 				"the run is the resume of %s, which dropped the same way at %s and was resumed "+
-					"without a fix; twice at the same place is not a passing moment", src, orDash(d.phase)))
+					"without a fix; twice at the same place is not a passing moment", source, orDash(d.phase)))
 		} else {
 			wdSetMeta("transient:"+d.run, wdNow())
 			why := d.cause + " at " + orDash(d.phase) + ": the run stopped for the stand's moment " +
@@ -1252,10 +1252,10 @@ func answerDrop(d *dropFact, conf Config, limit float64) {
 			}
 		}
 	}
-	text := strings.Join(d.evidence, "\n")
+	evidenceText := strings.Join(d.evidence, "\n")
 	judge("run", d.run, d.name, "watchdog.drop", limit, float64(spentCycles(root)),
 		"watchdog", d.cause+" at "+orDash(d.phase))
-	wdSay(d.run, d.phase, "detected", d.cause, spentCycles(root), limit, nil, text)
+	wdSay(d.run, d.phase, "detected", d.cause, spentCycles(root), limit, nil, evidenceText)
 	// watchdog.fix_mode "off": the drop is recorded and said, and no repair
 	// of the engine is queued. A client install runs the engine from images
 	// and has neither its source nor our repositories - a repair run there
@@ -1273,12 +1273,12 @@ func handStopped(run string) bool {
 	if run == "" {
 		return false
 	}
-	f, err := readRunFacts(run)
+	facts, err := readRunFacts(run)
 	if err != nil {
 		return false
 	}
-	_, by := stoppedByHand(f)
-	return by
+	_, byHand := stoppedByHand(facts)
+	return byHand
 }
 
 // stoppedByHand says whether a person put the run down, and how the record
@@ -1296,12 +1296,12 @@ func handStopped(run string) bool {
 // judgement, and the watchdog answered with WD-e4420a99-2 as phase_failed.
 func stoppedByHand(f *runFacts) (string, bool) {
 	ours := false
-	for _, j := range f.judgements {
-		if !stops(j.action) {
+	for _, judgement := range f.judgements {
+		if !stops(judgement.action) {
 			continue
 		}
-		if j.scope == "hand" {
-			return j.rule, true
+		if judgement.scope == "hand" {
+			return judgement.rule, true
 		}
 		ours = true
 	}
@@ -1317,23 +1317,23 @@ func stoppedByHand(f *runFacts) (string, bool) {
 const TicketBudgetRule = "timeouts.ticket"
 
 func startCycle(d *dropFact, root string, conf Config, limit float64) {
-	for _, c := range wdCycles(`root=? AND state IN ('`+strings.Join(wdMoving, "','")+`')`, root) {
+	for _, cycle := range wdCycles(`root=? AND state IN ('`+strings.Join(wdMoving, "','")+`')`, root) {
 		// One cycle per chain at a time. A drop that arrives while one is
 		// moving is the moving one's business: it is recorded, not answered.
-		log.Printf("ammit: watchdog %s: cycle %d of %s is still %s", d.run, c.cycle, root, c.state)
+		log.Printf("ammit: watchdog %s: cycle %d of %s is still %s", d.run, cycle.cycle, root, cycle.state)
 		return
 	}
-	n := spentCycles(root) + 1
+	cycleNumber := spentCycles(root) + 1
 	now := wdNow()
 	if handsOff(conf) {
 		// Recorded, not answered, and no cycle spent on it: the switch says
 		// hands off, and a cycle is a hand.
-		wdSay(d.run, d.phase, "recorded", d.cause, n-1, limit, nil,
+		wdSay(d.run, d.phase, "recorded", d.cause, cycleNumber-1, limit, nil,
 			"[hands off] the drop is recorded and no fix was queued: actions.enforce is off")
 		return
 	}
-	if prev, ok := mergedAwaitingDeploy(root, d.run); ok {
-		awaitDeploy(d, root, prev, n, now, limit)
+	if merged, ok := mergedAwaitingDeploy(root, d.run); ok {
+		awaitDeploy(d, root, merged, cycleNumber, now, limit)
 		return
 	}
 	// Only new evidence opens a cycle (sameAsFixless). The last cycle made no
@@ -1362,10 +1362,10 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 		haltChain(last, d, conf, limit)
 		return
 	}
-	branch := fmt.Sprintf("watchdog/%s-%d", shortRun(root), n)
-	id, holder, err := openCycle(d, root, n, wdFixing, branch, sql.NullString{}, sql.NullFloat64{}, now)
+	branch := fmt.Sprintf("watchdog/%s-%d", shortRun(root), cycleNumber)
+	id, holder, err := openCycle(d, root, cycleNumber, wdFixing, branch, sql.NullString{}, sql.NullFloat64{}, now)
 	if holder != nil {
-		wdSay(d.run, d.phase, "recorded", d.cause, n-1, limit, nil,
+		wdSay(d.run, d.phase, "recorded", d.cause, cycleNumber-1, limit, nil,
 			"the ticket is held by "+holder.String()+"; no fix cycle is opened - the holder answers it")
 		return
 	}
@@ -1373,7 +1373,7 @@ func startCycle(d *dropFact, root string, conf Config, limit float64) {
 		log.Printf("ammit: watchdog could not open a cycle for %s: %v", d.run, err)
 		return
 	}
-	queueFix(id, d, root, n, branch, conf, limit)
+	queueFix(id, d, root, cycleNumber, branch, conf, limit)
 }
 
 // deterministicDrop is a drop that recurs on the same code: a red gate, or a
@@ -1395,20 +1395,20 @@ func openCycle(d *dropFact, root string, n int, state, branch string, prs sql.Nu
 	defer mu.Unlock()
 	var id int64
 	var holder *ticketAction
-	tx, err := db.BeginTx(context.Background(), nil)
+	txn, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return 0, nil, err
 	}
-	err = tx.QueryRowContext(context.Background(), `INSERT INTO watchdog_cycles (root, run, cycle, state, branch, prs,
+	err = txn.QueryRowContext(context.Background(), `INSERT INTO watchdog_cycles (root, run, cycle, state, branch, prs,
 	                       merged_at, started, entered, updated) VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id`,
 		root, d.run, n, state, branch, prs, mergedAt, now, now, now).Scan(&id)
 	if err == nil {
-		holder, err = openCycleAction(tx, d.name, d.run, id)
+		holder, err = openCycleAction(txn, d.name, d.run, id)
 	}
 	if err == nil {
-		err = tx.Commit()
+		err = txn.Commit()
 	} else {
-		_ = tx.Rollback()
+		_ = txn.Rollback()
 	}
 	return id, holder, err
 }
@@ -1420,9 +1420,9 @@ func openCycle(d *dropFact, root string, n int, state, branch string, prs sql.Nu
 // ticket started over, a fix stopped by hand - is not failed and is not this.
 func mergedAwaitingDeploy(root, run string) (wdCycle, bool) {
 	cycles := wdCycles(`root=? AND run=? AND state=? AND merged_at IS NOT NULL`, root, run, wdFailed)
-	for i := len(cycles) - 1; i >= 0; i-- {
-		if len(cycles[i].prs) > 0 && cycles[i].mergedAt.Valid {
-			return cycles[i], true
+	for index := len(cycles) - 1; index >= 0; index-- {
+		if len(cycles[index].prs) > 0 && cycles[index].mergedAt.Valid {
+			return cycles[index], true
 		}
 	}
 	return wdCycle{}, false
@@ -1447,9 +1447,9 @@ func mergedAwaitingDeploy(root, run string) (wdCycle, bool) {
 // and 3 of the same chain had gone the same way after cycle 1's merge.
 func awaitDeploy(d *dropFact, root string, prev wdCycle, n int, now, limit float64) {
 	merged := prev.mergedAt.Float64
-	said := "no deploy has reported success since"
+	deployNote := "no deploy has reported success since"
 	if _, ok := deployedAfter(merged); ok {
-		said = "a deploy has reported success since, and the next tick resumes the run on it"
+		deployNote = "a deploy has reported success since, and the next tick resumes the run on it"
 	} else {
 		merged = now
 	}
@@ -1467,7 +1467,7 @@ func awaitDeploy(d *dropFact, root string, prev wdCycle, n int, now, limit float
 	}
 	wdSay(d.run, d.phase, wdDeploying, d.cause, n, limit, prev.prs, fmt.Sprintf(
 		"the fix for this drop is merged already (%s, cycle %d) and %s; no fix run is queued - cycle %d waits timeouts.watchdog_deploy for the deploy that carries it",
-		strings.Join(prev.prs, " "), prev.cycle, said, n))
+		strings.Join(prev.prs, " "), prev.cycle, deployNote, n))
 }
 
 // A fix cycle is opened on evidence, and only on new evidence.
@@ -1500,12 +1500,12 @@ var evidenceNoise = regexp.MustCompile(
 
 func dropKey(d *dropFact) string {
 	lines := make([]string, 0, len(d.evidence))
-	for _, l := range d.evidence {
-		if strings.HasPrefix(l, "the keeper saw the same BLOCKED") {
+	for _, evidenceLine := range d.evidence {
+		if strings.HasPrefix(evidenceLine, "the keeper saw the same BLOCKED") {
 			continue
 		}
-		l = evidenceNoise.ReplaceAllString(strings.ToLower(l), "#")
-		lines = append(lines, strings.Join(strings.Fields(l), " "))
+		evidenceLine = evidenceNoise.ReplaceAllString(strings.ToLower(evidenceLine), "#")
+		lines = append(lines, strings.Join(strings.Fields(evidenceLine), " "))
 	}
 	sort.Strings(lines)
 	return d.cause + " @ " + orDash(d.phase) + "\n" + strings.Join(lines, "\n")
@@ -1524,11 +1524,11 @@ func sameAsFixless(root string, d *dropFact) (wdCycle, bool) {
 	if len(last.prs) > 0 || last.mergedAt.Valid || (last.state != wdFailed && last.state != wdAgain) {
 		return last, false
 	}
-	prev, ok := dropOfRun(last.run)
+	previous, ok := dropOfRun(last.run)
 	if !ok {
 		return last, false
 	}
-	return last, dropKey(prev) == dropKey(d)
+	return last, dropKey(previous) == dropKey(d)
 }
 
 // resumeWithoutFix queues the dropped run to continue from where it stopped,
@@ -1537,24 +1537,24 @@ func sameAsFixless(root string, d *dropFact) (wdCycle, bool) {
 // when the resume is queued or the ticket's holder has it.
 func resumeWithoutFix(d *dropFact, root string, limit float64, why string) bool {
 	if d.phase == "" {
-		if f, err := readRunFacts(d.run); err == nil {
-			d.phase = resumeFrom(f)
+		if facts, err := readRunFacts(d.run); err == nil {
+			d.phase = resumeFrom(facts)
 		}
 	}
-	n := spentCycles(root)
-	q, holder := queueUnderAction(d.name, "watchdog", d.run, resumePayload(d.run, d, false))
+	spent := spentCycles(root)
+	queueID, holder := queueUnderAction(d.name, "watchdog", d.run, resumePayload(d.run, d, false))
 	if holder != nil {
-		wdSay(d.run, d.phase, "recorded", d.cause, n, limit, nil,
+		wdSay(d.run, d.phase, "recorded", d.cause, spent, limit, nil,
 			why+"; the ticket is held by "+holder.String()+" - the holder answers it, no resume is queued beside it")
 		return true
 	}
-	if q == 0 {
+	if queueID == 0 {
 		return false
 	}
-	text := fmt.Sprintf("%s; %s queued to resume from %s with no fix cycle (source run %s, queue %d)",
-		why, d.name, orDash(d.phase), d.run, q)
-	wdSay(d.run, d.phase, wdResumed, d.cause, n, limit, nil, text)
-	judge("run", d.run, d.name, "watchdog.drop", limit, float64(n), "resume", firstLine(text))
+	note := fmt.Sprintf("%s; %s queued to resume from %s with no fix cycle (source run %s, queue %d)",
+		why, d.name, orDash(d.phase), d.run, queueID)
+	wdSay(d.run, d.phase, wdResumed, d.cause, spent, limit, nil, note)
+	judge("run", d.run, d.name, "watchdog.drop", limit, float64(spent), "resume", firstLine(note))
 	return true
 }
 
@@ -1563,21 +1563,21 @@ func resumeWithoutFix(d *dropFact, root string, limit float64, why string) bool 
 // notify and a "halted" watchdog event where the dashboard reads it. The
 // ticket is free; a drop with new evidence, or a person's rerun, goes on.
 func haltChain(last wdCycle, d *dropFact, conf Config, limit float64) {
-	if _, said := wdMeta("halted:" + d.run); said {
+	if _, halted := wdMeta("halted:" + d.run); halted {
 		return
 	}
 	wdSetMeta("halted:"+d.run, wdNow())
-	text := fmt.Sprintf("no new evidence: cycle %d of %s made no fix (%s), its drop was resumed, and "+
+	note := fmt.Sprintf("no new evidence: cycle %d of %s made no fix (%s), its drop was resumed, and "+
 		"%s dropped the same way again (%s at %s); no fix cycle is opened on the same evidence - "+
 		"a drop with a different phase, cause or evidence opens one. %s is left for a person",
 		last.cycle, shortRun(last.root), firstLine(orDash(last.why)), shortRun(d.run), d.cause,
 		orDash(d.phase), d.name)
-	wdSay(d.run, d.phase, "halted", d.cause, last.cycle, limit, nil, text)
+	wdSay(d.run, d.phase, "halted", d.cause, last.cycle, limit, nil, note)
 	ctx := map[string]string{"run": d.run, "name": d.name, "verdict": "WATCHDOG-HALTED",
-		"summary": text}
-	for k, v := range conf["context"] {
-		if ctx[k] == "" {
-			ctx[k] = v
+		"summary": note}
+	for field, fieldValue := range conf["context"] {
+		if ctx[field] == "" {
+			ctx[field] = fieldValue
 		}
 	}
 	judge("run", d.run, d.name, "watchdog.no_progress", limit, float64(last.cycle), "notify",
@@ -1633,8 +1633,8 @@ func resumedTransient(src string, d *dropFact) bool {
 	if _, ok := wdMeta("transient:" + src); !ok {
 		return false
 	}
-	prev, ok := dropOfRun(src)
-	return ok && prev.phase == d.phase
+	previous, ok := dropOfRun(src)
+	return ok && previous.phase == d.phase
 }
 
 func shortRun(run string) string {
@@ -1649,24 +1649,24 @@ func shortRun(run string) string {
 // queue.parallel. Its task names the branch its PR must be on - that branch
 // is the only thing about it this service will look for afterwards.
 func queueFix(id int64, d *dropFact, root string, n int, branch string, conf Config, limit float64) {
-	key := fmt.Sprintf("WD-%s-%d", shortRun(root), n)
+	fixKey := fmt.Sprintf("WD-%s-%d", shortRun(root), n)
 	task := fixTask(d, root, n, branch, conf)
 	payload, _ := json.Marshal(map[string]string{
-		"key": key, "mode": conf.str("watchdog", "fix_mode", "watchdogfix"), "task": task})
+		"key": fixKey, "mode": conf.str("watchdog", "fix_mode", "watchdogfix"), "task": task})
 	mu.Lock()
-	tx, err := db.BeginTx(context.Background(), nil)
+	txn, err := db.BeginTx(context.Background(), nil)
 	if err == nil {
 		var q int64
-		err = tx.QueryRowContext(context.Background(), `INSERT INTO queue (name, payload, requested) VALUES (?,?,?)
-		                         RETURNING id`, key, string(payload), wdNow()).Scan(&q)
+		err = txn.QueryRowContext(context.Background(), `INSERT INTO queue (name, payload, requested) VALUES (?,?,?)
+		                         RETURNING id`, fixKey, string(payload), wdNow()).Scan(&q)
 		if err == nil {
-			_, err = tx.ExecContext(context.Background(), `UPDATE watchdog_cycles SET fix_queue=?, updated=? WHERE id=?`,
+			_, err = txn.ExecContext(context.Background(), `UPDATE watchdog_cycles SET fix_queue=?, updated=? WHERE id=?`,
 				q, wdNow(), id)
 		}
 		if err == nil {
-			err = tx.Commit()
+			err = txn.Commit()
 		} else {
-			_ = tx.Rollback()
+			_ = txn.Rollback()
 		}
 	}
 	mu.Unlock()
@@ -1675,7 +1675,7 @@ func queueFix(id int64, d *dropFact, root string, n int, branch string, conf Con
 		return
 	}
 	wdSay(d.run, d.phase, wdFixing, d.cause, n, limit, nil,
-		fmt.Sprintf("fix run %s queued; its PR goes on branch %s", key, branch))
+		fmt.Sprintf("fix run %s queued; its PR goes on branch %s", fixKey, branch))
 }
 
 // fixTask is what the fix run is told. No quote and no brace reaches it from
@@ -1687,15 +1687,15 @@ func fixTask(d *dropFact, root string, n int, branch string, conf Config) string
 	fmt.Fprintf(&b, "Run %s of %s (mode %s) dropped at phase %s. Cause: %s.\n",
 		d.run, d.name, orDash(d.mode), orDash(d.phase), d.cause)
 	b.WriteString("Evidence from the record:\n")
-	for _, line := range d.evidence {
-		if len(line) > 600 {
-			line = line[:600]
+	for _, evidenceLine := range d.evidence {
+		if len(evidenceLine) > 600 {
+			evidenceLine = evidenceLine[:600]
 		}
-		b.WriteString("- " + line + "\n")
+		b.WriteString("- " + evidenceLine + "\n")
 	}
-	for _, c := range wdCycles(`root=? AND cycle < ?`, root, n) {
-		fmt.Fprintf(&b, "Earlier cycle %d (%s): %s %s\n", c.cycle, c.state, c.why,
-			strings.Join(c.prs, " "))
+	for _, earlier := range wdCycles(`root=? AND cycle < ?`, root, n) {
+		fmt.Fprintf(&b, "Earlier cycle %d (%s): %s %s\n", earlier.cycle, earlier.state, earlier.why,
+			strings.Join(earlier.prs, " "))
 	}
 	b.WriteString(earlierFixes(d, root))
 	if url := conf.str("context", "ammit", ""); url != "" {
@@ -1721,19 +1721,19 @@ func earlierFixes(d *dropFact, root string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Earlier fixes of %s at %s in other chains - each was merged or tried and the "+
 		"drop came back; find what they missed, do not repeat them:\n", d.name, orDash(d.phase))
-	for _, c := range cycles {
+	for _, cycle := range cycles {
 		cause, first := "", ""
-		if dr, ok := dropOfRun(c.run); ok {
-			cause = dr.cause
-			if len(dr.evidence) > 0 {
-				first = dr.evidence[len(dr.evidence)-1]
+		if drop, ok := dropOfRun(cycle.run); ok {
+			cause = drop.cause
+			if len(drop.evidence) > 0 {
+				first = drop.evidence[len(drop.evidence)-1]
 				if len(first) > 300 {
 					first = first[:300]
 				}
 			}
 		}
-		fmt.Fprintf(&b, "- run %s (%s): %s %s %s | last evidence: %s\n", shortRun(c.run), c.state,
-			cause, c.why, strings.Join(c.prs, " "), first)
+		fmt.Fprintf(&b, "- run %s (%s): %s %s %s | last evidence: %s\n", shortRun(cycle.run), cycle.state,
+			cause, cycle.why, strings.Join(cycle.prs, " "), first)
 	}
 	return b.String()
 }
@@ -1781,15 +1781,15 @@ func liveOnly(prs []prView, conf Config) bool {
 			live[repo] = append(live[repo], prefix)
 		}
 	}
-	for _, p := range prs {
-		repo := repoOfPR(p.URL)
-		if len(p.Files) == 0 || len(live[repo]) == 0 {
+	for _, pullRequest := range prs {
+		repo := repoOfPR(pullRequest.URL)
+		if len(pullRequest.Files) == 0 || len(live[repo]) == 0 {
 			return false
 		}
-		for _, f := range p.Files {
+		for _, file := range pullRequest.Files {
 			ok := false
 			for _, prefix := range live[repo] {
-				if strings.HasPrefix(f.Path, prefix) {
+				if strings.HasPrefix(file.Path, prefix) {
 					ok = true
 					break
 				}
@@ -1805,10 +1805,10 @@ func liveOnly(prs []prView, conf Config) bool {
 // repoOfPR is the repository's name in a PR url:
 // https://github.com/ngavrish/agentic-v-model/pull/1273 -> agentic-v-model.
 func repoOfPR(url string) string {
-	parts := strings.Split(strings.TrimSuffix(url, "/"), "/")
-	for i := len(parts) - 1; i > 0; i-- {
-		if parts[i] == "pull" {
-			return parts[i-1]
+	segments := strings.Split(strings.TrimSuffix(url, "/"), "/")
+	for index := len(segments) - 1; index > 0; index-- {
+		if segments[index] == "pull" {
+			return segments[index-1]
 		}
 	}
 	return ""
@@ -1817,10 +1817,10 @@ func repoOfPR(url string) string {
 // ownerRepoOfPR is "owner/name" in a PR url:
 // https://github.com/ngavrish/agentic-v-model/pull/1273 -> ngavrish/agentic-v-model.
 func ownerRepoOfPR(url string) string {
-	parts := strings.Split(strings.TrimSuffix(url, "/"), "/")
-	for i := len(parts) - 1; i > 1; i-- {
-		if parts[i] == "pull" {
-			return parts[i-2] + "/" + parts[i-1]
+	segments := strings.Split(strings.TrimSuffix(url, "/"), "/")
+	for index := len(segments) - 1; index > 1; index-- {
+		if segments[index] == "pull" {
+			return segments[index-2] + "/" + segments[index-1]
 		}
 	}
 	return ""
@@ -1860,15 +1860,15 @@ func liveCarries(prs []prView, conf Config) string {
 		}
 	}
 	tmpl := conf.str("commands", "watchdog_live", defaultLiveCheck)
-	for _, p := range prs {
-		if p.MergeCommit == nil || p.MergeCommit.Oid == "" {
-			return p.URL + " names no merge commit"
+	for _, pullRequest := range prs {
+		if pullRequest.MergeCommit == nil || pullRequest.MergeCommit.Oid == "" {
+			return pullRequest.URL + " names no merge commit"
 		}
 		var files []string
-		for _, f := range p.Files {
-			for _, prefix := range live[repoOfPR(p.URL)] {
-				if strings.HasPrefix(f.Path, prefix) {
-					files = append(files, f.Path)
+		for _, file := range pullRequest.Files {
+			for _, prefix := range live[repoOfPR(pullRequest.URL)] {
+				if strings.HasPrefix(file.Path, prefix) {
+					files = append(files, file.Path)
 					break
 				}
 			}
@@ -1876,14 +1876,14 @@ func liveCarries(prs []prView, conf Config) string {
 		if len(files) == 0 {
 			continue
 		}
-		out, err := commandFrom("watchdog_live", tmpl, conf, map[string]string{
-			"repo": ownerRepoOfPR(p.URL), "merge": p.MergeCommit.Oid, "files": strings.Join(files, " ")})
+		liveOutput, err := commandFrom("watchdog_live", tmpl, conf, map[string]string{
+			"repo": ownerRepoOfPR(pullRequest.URL), "merge": pullRequest.MergeCommit.Oid, "files": strings.Join(files, " ")})
 		if err != nil {
-			said := strings.TrimSpace(out)
-			if said == "" {
-				said = err.Error()
+			liveSaid := strings.TrimSpace(liveOutput)
+			if liveSaid == "" {
+				liveSaid = err.Error()
 			}
-			return p.URL + " at " + p.MergeCommit.Oid + ": " + said
+			return pullRequest.URL + " at " + pullRequest.MergeCommit.Oid + ": " + liveSaid
 		}
 	}
 	return ""
@@ -1902,9 +1902,9 @@ const ciRequired = false
 // either way; the branch already passed the repository's pre-push checks
 // (the same lint CI runs) before it could be pushed.
 func neverRan(started, completed string) bool {
-	a, errA := time.Parse(time.RFC3339, started)
-	b, errB := time.Parse(time.RFC3339, completed)
-	return errA == nil && errB == nil && b.Sub(a) < 2*time.Second
+	startedAt, errA := time.Parse(time.RFC3339, started)
+	completedAt, errB := time.Parse(time.RFC3339, completed)
+	return errA == nil && errB == nil && completedAt.Sub(startedAt) < 2*time.Second
 }
 
 func (p prView) ci() string {
@@ -1918,9 +1918,9 @@ func (p prView) ci() string {
 		return "pending"
 	}
 	pending := false
-	for _, c := range p.Checks {
-		if c.State != "" { // a commit status, not a check run
-			switch strings.ToUpper(c.State) {
+	for _, check := range p.Checks {
+		if check.State != "" { // a commit status, not a check run
+			switch strings.ToUpper(check.State) {
 			case "SUCCESS":
 			case "PENDING", "EXPECTED":
 				pending = true
@@ -1929,14 +1929,14 @@ func (p prView) ci() string {
 			}
 			continue
 		}
-		if strings.ToUpper(c.Status) != "COMPLETED" {
+		if strings.ToUpper(check.Status) != "COMPLETED" {
 			pending = true
 			continue
 		}
-		switch strings.ToUpper(c.Conclusion) {
+		switch strings.ToUpper(check.Conclusion) {
 		case "SUCCESS", "NEUTRAL", "SKIPPED":
 		default:
-			if !neverRan(c.StartedAt, c.CompletedAt) {
+			if !neverRan(check.StartedAt, check.CompletedAt) {
 				return "red"
 			}
 		}
@@ -1967,8 +1967,8 @@ func commandFrom(name, tmpl string, conf Config, ctx map[string]string) (string,
 	if dryRun {
 		return "", errors.New("[dry run] " + tmpl)
 	}
-	out, err := exec.CommandContext(context.Background(), "sh", "-c", tmpl).Output() //nolint:gosec // a command limits.yml names, run as act() runs one
-	return string(out), err
+	stdout, err := exec.CommandContext(context.Background(), "sh", "-c", tmpl).Output() //nolint:gosec // a command limits.yml names, run as act() runs one
+	return string(stdout), err
 }
 
 // prsOn asks GitHub, through commands.watchdog_pr, for every PR on a branch.
@@ -1976,14 +1976,14 @@ func commandFrom(name, tmpl string, conf Config, ctx map[string]string) (string,
 // after another.
 func prsOn(branch string, conf Config) ([]prView, error) {
 	ctx := map[string]string{"branch": branch}
-	for k, v := range conf["context"] {
-		ctx[k] = v
+	for field, fieldValue := range conf["context"] {
+		ctx[field] = fieldValue
 	}
-	out, err := command("watchdog_pr", conf, ctx)
+	prJSON, err := command("watchdog_pr", conf, ctx)
 	if err != nil {
 		return nil, err
 	}
-	dec := json.NewDecoder(strings.NewReader(out))
+	dec := json.NewDecoder(strings.NewReader(prJSON))
 	var all []prView
 	for {
 		var page []prView
@@ -1999,11 +1999,11 @@ func prsOn(branch string, conf Config) ([]prView, error) {
 }
 
 func urlsOf(prs []prView) []string {
-	out := make([]string, 0, len(prs))
-	for _, p := range prs {
-		out = append(out, p.URL)
+	urls := make([]string, 0, len(prs))
+	for _, pullRequest := range prs {
+		urls = append(urls, pullRequest.URL)
 	}
-	return out
+	return urls
 }
 
 // over says whether a cycle has spent longer in its state than the named
@@ -2028,16 +2028,16 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			return
 		}
 	}
-	d, ok := dropOfRun(c.run)
+	drop, ok := dropOfRun(c.run)
 	if !ok {
 		return
 	}
 	// A moving cycle holds its ticket (ticket_actions): one opened before the
 	// table existed, or one whose action a stop took over, takes it back here
 	// once the ticket is free.
-	own, holder := holdCycle(c, d.name)
+	own, holder := holdCycle(c, drop.name)
 	if own == nil {
-		sayHeldOnce(fmt.Sprintf("watchdog cycle %d", c.id), d.name, holder)
+		sayHeldOnce(fmt.Sprintf("watchdog cycle %d", c.id), drop.name, holder)
 	}
 	// The rule classifyDrop applies to a new drop holds for a chain already
 	// moving: a run on the host is not the stack's to fix, and a cycle of it
@@ -2058,27 +2058,27 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 	// A replay of the dropped run is not this: the cycle follows it below.
 	switch c.state {
 	case wdFixing, wdCI, wdMerging, wdDeploying:
-		if replayOf(d.name, c.run, c.started) == "" {
-			if later := supersededBy(d.name, c.run, droppedAt(c.run, c.started)); later != "" {
-				why := "superseded by a later run " + later + " of " + d.name +
+		if replayOf(drop.name, c.run, c.started) == "" {
+			if later := supersededBy(drop.name, c.run, droppedAt(c.run, c.started)); later != "" {
+				why := "superseded by a later run " + later + " of " + drop.name +
 					": the ticket was started over, so the dropped run is not resumed"
 				withdraw(c.fixQueue)
 				wdMove(c.id, wdLeft, "why=?", why)
-				wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, c.prs, why)
+				wdSay(c.run, drop.phase, wdLeft, drop.cause, c.cycle, limit, c.prs, why)
 				return
 			}
 		}
 	}
 	fail := func(why string) {
 		wdMove(c.id, wdFailed, "why=?", why)
-		wdSay(c.run, d.phase, wdFailed, d.cause, c.cycle, limit, c.prs, why)
-		judge("run", c.run, d.name, "watchdog.cycle", limit, float64(c.cycle), "failed", why)
+		wdSay(c.run, drop.phase, wdFailed, drop.cause, c.cycle, limit, c.prs, why)
+		judge("run", c.run, drop.name, "watchdog.cycle", limit, float64(c.cycle), "failed", why)
 		// A cycle that did not reach a resume is spent; the drop is still
 		// there. A cycle that made a fix (a PR) and failed on its way to the
 		// stand opens the next cycle on the same drop. One that made no fix
 		// has its drop resumed instead (startCycle, sameAsFixless): another
 		// fix run on the same evidence makes nothing either.
-		startCycle(d, c.root, conf, limit)
+		startCycle(drop, c.root, conf, limit)
 	}
 	since := c.entered
 	switch c.state {
@@ -2091,10 +2091,10 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		// cycle 1 was fixing. Not seeing it, the chain spent cycles 1 to 3
 		// fixing a drop that was already past, and 0dd68e70's own drop at
 		// reportrules opened a second chain beside this one.
-		if run := replayOf(d.name, c.run, c.started); run != "" {
+		if run := replayOf(drop.name, c.run, c.started); run != "" {
 			withdraw(c.fixQueue)
 			wdMove(c.id, wdResumed, "resumed_run=?", run)
-			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, nil,
+			wdSay(c.run, drop.phase, wdResumed, drop.cause, c.cycle, limit, nil,
 				"the dropped run was resumed outside this cycle as "+run+"; the cycle follows it")
 			return
 		}
@@ -2104,7 +2104,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		}
 		if len(prs) > 0 {
 			wdMove(c.id, wdCI, "prs=?", jsonList(urlsOf(prs)))
-			wdSay(c.run, d.phase, wdCI, d.cause, c.cycle, limit, urlsOf(prs),
+			wdSay(c.run, drop.phase, wdCI, drop.cause, c.cycle, limit, urlsOf(prs),
 				"fix opened "+strings.Join(urlsOf(prs), " "))
 			return
 		}
@@ -2117,10 +2117,10 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		// the whole of timeouts.watchdog_fix to fail into cycle 2 at 19:54:49,
 		// a fix run for a cause already fixed. Cycles 243, 249 and 383 spent
 		// their two hours the same way.
-		if withdrawn, key := fixWithdrawn(c); withdrawn {
-			why := "the fix " + key + " was withdrawn from the queue before it started; the chain is closed"
+		if withdrawn, withdrawKey := fixWithdrawn(c); withdrawn {
+			why := "the fix " + withdrawKey + " was withdrawn from the queue before it started; the chain is closed"
 			wdMove(c.id, wdLeft, "why=?", why)
-			wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, nil, why)
+			wdSay(c.run, drop.phase, wdLeft, drop.cause, c.cycle, limit, nil, why)
 			return
 		}
 		if ended, run := fixEnded(c); ended {
@@ -2131,7 +2131,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			if handStopped(run) {
 				why := "the fix run " + orDash(run) + " was stopped by a person; the chain is closed"
 				wdMove(c.id, wdLeft, "why=?", why)
-				wdSay(c.run, d.phase, wdLeft, d.cause, c.cycle, limit, nil, why)
+				wdSay(c.run, drop.phase, wdLeft, drop.cause, c.cycle, limit, nil, why)
 				return
 			}
 			fail(fmt.Sprintf("the fix run %s ended without a PR on %s", orDash(run), c.branch))
@@ -2148,16 +2148,16 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		// was refused by the flow lock (no loops.laps_contractsfind) and failed
 		// fifteen minutes later as "no run came of it", the reason nowhere.
 		if why := queueRefusal(c.fixQueue); why != "" {
-			text := "the fix run was refused by the orchestrator: " + why
-			ctx := map[string]string{"run": c.run, "name": d.name, "verdict": "FIX-REFUSED",
-				"summary": "watchdog: " + d.name + " cycle " + fmt.Sprint(c.cycle) + ": " + text}
-			for k, v := range conf["context"] {
-				if ctx[k] == "" {
-					ctx[k] = v
+			note := "the fix run was refused by the orchestrator: " + why
+			ctx := map[string]string{"run": c.run, "name": drop.name, "verdict": "FIX-REFUSED",
+				"summary": "watchdog: " + drop.name + " cycle " + fmt.Sprint(c.cycle) + ": " + note}
+			for field, fieldValue := range conf["context"] {
+				if ctx[field] == "" {
+					ctx[field] = fieldValue
 				}
 			}
-			judge("run", c.run, d.name, "watchdog.refused", 1, 1, "notify", act("notify", conf, ctx))
-			fail(text)
+			judge("run", c.run, drop.name, "watchdog.refused", 1, 1, "notify", act("notify", conf, ctx))
+			fail(note)
 			return
 		}
 		if run, _, _, started := queueOutcome(c.fixQueue); run == "" && started > 0 &&
@@ -2177,18 +2177,18 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			return
 		}
 		urls := urlsOf(prs)
-		for _, p := range prs {
-			if strings.ToUpper(p.State) == "CLOSED" {
-				fail("PR " + p.URL + " was closed without merging")
+		for _, pullRequest := range prs {
+			if strings.ToUpper(pullRequest.State) == "CLOSED" {
+				fail("PR " + pullRequest.URL + " was closed without merging")
 				return
 			}
 		}
 		green := true
-		for _, p := range prs {
-			if strings.ToUpper(p.State) == "MERGED" {
+		for _, pullRequest := range prs {
+			if strings.ToUpper(pullRequest.State) == "MERGED" {
 				continue
 			}
-			switch p.ci() {
+			switch pullRequest.ci() {
 			case "red":
 				// The fix run opens its PR and goes on working: on APF-3296
 				// both WD-2ca50154-1 and -2 pushed a lint fix after their
@@ -2200,7 +2200,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 					green = false
 					continue
 				}
-				fail("CI is red on " + p.URL)
+				fail("CI is red on " + pullRequest.URL)
 				return
 			case "pending":
 				green = false
@@ -2212,23 +2212,23 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			}
 			return
 		}
-		said := []string{}
-		for _, p := range prs {
-			if strings.ToUpper(p.State) == "MERGED" {
+		mergeReplies := []string{}
+		for _, pullRequest := range prs {
+			if strings.ToUpper(pullRequest.State) == "MERGED" {
 				continue
 			}
-			wdMergeAsked[p.URL] = wdNow()
-			out := act("watchdog_merge", conf, map[string]string{"pr": p.URL, "run": c.run,
-				"name": d.name})
-			if mergeConflict(out) {
-				answerConflict(c, d, conf, limit, p.URL, out, urls, fail)
+			wdMergeAsked[pullRequest.URL] = wdNow()
+			mergeOutput := act("watchdog_merge", conf, map[string]string{"pr": pullRequest.URL, "run": c.run,
+				"name": drop.name})
+			if mergeConflict(mergeOutput) {
+				answerConflict(c, drop, conf, limit, pullRequest.URL, mergeOutput, urls, fail)
 				return
 			}
-			said = append(said, p.URL+": "+out)
+			mergeReplies = append(mergeReplies, pullRequest.URL+": "+mergeOutput)
 		}
 		wdMove(c.id, wdMerging, "prs=?", jsonList(urls))
-		wdSay(c.run, d.phase, wdMerging, d.cause, c.cycle, limit, urls,
-			"CI green; merge asked: "+strings.Join(said, "; "))
+		wdSay(c.run, drop.phase, wdMerging, drop.cause, c.cycle, limit, urls,
+			"CI green; merge asked: "+strings.Join(mergeReplies, "; "))
 	case wdMerging:
 		prs, err := prsOn(c.branch, conf)
 		if err != nil || len(prs) == 0 {
@@ -2238,14 +2238,14 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			return
 		}
 		latest := 0.0
-		for _, p := range prs {
-			if strings.ToUpper(p.State) != "MERGED" {
-				if strings.ToUpper(p.State) == "CLOSED" {
-					fail("PR " + p.URL + " was closed without merging")
+		for _, pullRequest := range prs {
+			if strings.ToUpper(pullRequest.State) != "MERGED" {
+				if strings.ToUpper(pullRequest.State) == "CLOSED" {
+					fail("PR " + pullRequest.URL + " was closed without merging")
 					return
 				}
 				if over(c, conf, "watchdog_ci", since) {
-					fail("PR " + p.URL + " is still not merged")
+					fail("PR " + pullRequest.URL + " is still not merged")
 					return
 				}
 				// The merge is asked once on entering this state, and an ask
@@ -2257,22 +2257,22 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 				// its fix never deployed. An open PR whose checks are green is
 				// asked again, no more often than wdMergeEvery, until it merges
 				// or the same timeout ends the cycle.
-				if p.ci() == "green" && wdNow()-wdMergeAsked[p.URL] >= wdMergeEvery {
-					wdMergeAsked[p.URL] = wdNow()
-					out := act("watchdog_merge", conf, map[string]string{"pr": p.URL,
-						"run": c.run, "name": d.name})
-					if mergeConflict(out) {
-						answerConflict(c, d, conf, limit, p.URL, out, urlsOf(prs), fail)
+				if pullRequest.ci() == "green" && wdNow()-wdMergeAsked[pullRequest.URL] >= wdMergeEvery {
+					wdMergeAsked[pullRequest.URL] = wdNow()
+					mergeOutput := act("watchdog_merge", conf, map[string]string{"pr": pullRequest.URL,
+						"run": c.run, "name": drop.name})
+					if mergeConflict(mergeOutput) {
+						answerConflict(c, drop, conf, limit, pullRequest.URL, mergeOutput, urlsOf(prs), fail)
 						return
 					}
-					wdSay(c.run, d.phase, wdMerging, d.cause, c.cycle, limit, c.prs,
-						"still open and green; merge asked again: "+p.URL+": "+out)
+					wdSay(c.run, drop.phase, wdMerging, drop.cause, c.cycle, limit, c.prs,
+						"still open and green; merge asked again: "+pullRequest.URL+": "+mergeOutput)
 				}
 				return
 			}
-			if at, err := time.Parse(time.RFC3339, p.MergedAt); err == nil {
-				if v := float64(at.UnixNano()) / 1e9; v > latest {
-					latest = v
+			if mergedAt, err := time.Parse(time.RFC3339, pullRequest.MergedAt); err == nil {
+				if mergedEpoch := float64(mergedAt.UnixNano()) / 1e9; mergedEpoch > latest {
+					latest = mergedEpoch
 				}
 			}
 		}
@@ -2285,19 +2285,19 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			latest = c.started
 		}
 		wdMove(c.id, wdDeploying, "merged_at=?", latest)
-		said := ""
+		deployNote := ""
 		if conf.str("commands", "watchdog_deploy", "") != "" {
-			said = "; deploy asked: " + act("watchdog_deploy", conf, map[string]string{
-				"pr": strings.Join(urlsOf(prs), " "), "run": c.run, "name": d.name})
+			deployNote = "; deploy asked: " + act("watchdog_deploy", conf, map[string]string{
+				"pr": strings.Join(urlsOf(prs), " "), "run": c.run, "name": drop.name})
 		}
-		wdSay(c.run, d.phase, wdDeploying, d.cause, c.cycle, limit, urlsOf(prs),
-			"merged "+strings.Join(urlsOf(prs), " ")+said)
+		wdSay(c.run, drop.phase, wdDeploying, drop.cause, c.cycle, limit, urlsOf(prs),
+			"merged "+strings.Join(urlsOf(prs), " ")+deployNote)
 	case wdDeploying:
-		at, ok := deployedAfter(c.mergedAt.Float64)
+		deployedAt, ok := deployedAfter(c.mergedAt.Float64)
 		if ok && conf.str("commands", "watchdog_deployed", "") != "" {
-			ctx := map[string]string{"pr": strings.Join(c.prs, " "), "run": c.run, "name": d.name}
-			for k, v := range conf["context"] {
-				ctx[k] = v
+			ctx := map[string]string{"pr": strings.Join(c.prs, " "), "run": c.run, "name": drop.name}
+			for field, fieldValue := range conf["context"] {
+				ctx[field] = fieldValue
 			}
 			if _, err := command("watchdog_deployed", conf, ctx); err != nil {
 				ok = false
@@ -2306,9 +2306,9 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		if !ok {
 			// A resume started while the cycle waits (a person's, after a
 			// pull by hand) is the cycle's resume.
-			if run := replayOf(d.name, c.run, c.started); run != "" {
+			if run := replayOf(drop.name, c.run, c.started); run != "" {
 				wdMove(c.id, wdResumed, "resumed_run=?", run)
-				wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs,
+				wdSay(c.run, drop.phase, wdResumed, drop.cause, c.cycle, limit, c.prs,
 					"no deploy yet; the dropped run was resumed outside this cycle as "+run+"; the cycle follows it")
 				return
 			}
@@ -2326,7 +2326,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			// run - a person's resume or a fresh run of the ticket is followed
 			// or supersedes it as on every other step.
 			waited := fmt.Sprintf("deploy_wait:%d", c.id)
-			if _, said := wdMeta(waited); said {
+			if _, waitNoted := wdMeta(waited); waitNoted {
 				return
 			}
 			prs, err := prsOn(c.branch, conf)
@@ -2340,34 +2340,34 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 				// onto an /engine still without agentic-v-model#1284, which it
 				// dropped on again exactly as before.
 				if why := liveCarries(prs, conf); why != "" {
-					key := fmt.Sprintf("live_wait:%d", c.id)
-					if _, said := wdMeta(key); !said {
-						wdSetMeta(key, wdNow())
-						text := "no deploy reported success within timeouts.watchdog_deploy" +
+					waitKey := fmt.Sprintf("live_wait:%d", c.id)
+					if _, waitNoted := wdMeta(waitKey); !waitNoted {
+						wdSetMeta(waitKey, wdNow())
+						note := "no deploy reported success within timeouts.watchdog_deploy" +
 							deploysSaid(c.mergedAt.Float64) + "; the fix changes only paths the stack " +
 							"reads live (watchdog.live_paths), but the live tree does not carry it yet (" +
 							why + "), so this cycle waits for it - no resume onto a tree without the fix, " +
 							"no next cycle and no fix run meanwhile"
-						wdSay(c.run, d.phase, wdDeploying, d.cause, c.cycle, limit, c.prs, text)
-						judge("run", c.run, d.name, "watchdog.live_wait", limit, float64(c.cycle), "wait", text)
+						wdSay(c.run, drop.phase, wdDeploying, drop.cause, c.cycle, limit, c.prs, note)
+						judge("run", c.run, drop.name, "watchdog.live_wait", limit, float64(c.cycle), "wait", note)
 					}
 					return
 				}
-				if d.phase == "" {
-					if f, err := readRunFacts(c.run); err == nil {
-						d.phase = resumeFrom(f)
+				if drop.phase == "" {
+					if facts, err := readRunFacts(c.run); err == nil {
+						drop.phase = resumeFrom(facts)
 					}
 				}
-				q := queueResume(own, c, d)
-				if q == 0 {
+				queueID := queueResume(own, c, drop)
+				if queueID == 0 {
 					return
 				}
-				wdMove(c.id, wdResumed, "resume_queue=?", q)
-				wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs, fmt.Sprintf(
+				wdMove(c.id, wdResumed, "resume_queue=?", queueID)
+				wdSay(c.run, drop.phase, wdResumed, drop.cause, c.cycle, limit, c.prs, fmt.Sprintf(
 					"no deploy reported success within timeouts.watchdog_deploy%s; the fix changes only "+
 						"paths the stack reads live (watchdog.live_paths), so %s is queued to resume from %s "+
-						"without one (source run %s, queue %d)", deploysSaid(c.mergedAt.Float64), d.name,
-					orDash(d.phase), c.run, q))
+						"without one (source run %s, queue %d)", deploysSaid(c.mergedAt.Float64), drop.name,
+					orDash(drop.phase), c.run, queueID))
 				return
 			}
 			if err != nil {
@@ -2375,29 +2375,29 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 				return
 			}
 			wdSetMeta(waited, wdNow())
-			text := "no deploy reported success within timeouts.watchdog_deploy" +
+			note := "no deploy reported success within timeouts.watchdog_deploy" +
 				deploysSaid(c.mergedAt.Float64) + "; the fix changes what an image is built from " +
 				"(or its files are not listed), so this cycle goes on waiting for the deploy that " +
 				"carries it - no next cycle and no fix run meanwhile"
-			wdSay(c.run, d.phase, wdDeploying, d.cause, c.cycle, limit, c.prs, text)
-			judge("run", c.run, d.name, "watchdog.deploy_wait", limit, float64(c.cycle), "wait", text)
+			wdSay(c.run, drop.phase, wdDeploying, drop.cause, c.cycle, limit, c.prs, note)
+			judge("run", c.run, drop.name, "watchdog.deploy_wait", limit, float64(c.cycle), "wait", note)
 			return
 		}
 		// The resume may already be going: a person, or the fix run itself,
 		// started it while this cycle waited on the deploy. A second one in the
 		// queue would replay the same run again behind it.
-		if run := replayOf(d.name, c.run, c.started); run != "" {
-			wdMove(c.id, wdResumed, "deployed_at=?, resumed_run=?", at, run)
-			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs,
+		if run := replayOf(drop.name, c.run, c.started); run != "" {
+			wdMove(c.id, wdResumed, "deployed_at=?, resumed_run=?", deployedAt, run)
+			wdSay(c.run, drop.phase, wdResumed, drop.cause, c.cycle, limit, c.prs,
 				"deployed; the resume is already running as "+run+", not queued again")
 			return
 		}
-		if d.phase == "" {
+		if drop.phase == "" {
 			// Recorded before the record could name one: read it again off
 			// the dropped run, which nobody edits, so the resume says where
 			// to go again from rather than asking for a resume of nothing.
-			if f, err := readRunFacts(c.run); err == nil {
-				d.phase = resumeFrom(f)
+			if facts, err := readRunFacts(c.run); err == nil {
+				drop.phase = resumeFrom(facts)
 			}
 		}
 		// The resume is queued under the cycle's action, never beside
@@ -2411,26 +2411,26 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		taken := pendingRow(db, own.queue)
 		mu.Unlock()
 		if taken {
-			wdMove(c.id, wdResumed, "deployed_at=?, resume_queue=?", at, own.queue.Int64)
-			wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs, fmt.Sprintf(
+			wdMove(c.id, wdResumed, "deployed_at=?, resume_queue=?", deployedAt, own.queue.Int64)
+			wdSay(c.run, drop.phase, wdResumed, drop.cause, c.cycle, limit, c.prs, fmt.Sprintf(
 				"deployed; a person's resume (queue %d) is already queued and is the cycle's resume",
 				own.queue.Int64))
 			return
 		}
-		q := queueResume(own, c, d)
-		if q == 0 {
+		queueID := queueResume(own, c, drop)
+		if queueID == 0 {
 			return
 		}
-		wdMove(c.id, wdResumed, "deployed_at=?, resume_queue=?", at, q)
-		wdSay(c.run, d.phase, wdResumed, d.cause, c.cycle, limit, c.prs, fmt.Sprintf(
+		wdMove(c.id, wdResumed, "deployed_at=?, resume_queue=?", deployedAt, queueID)
+		wdSay(c.run, drop.phase, wdResumed, drop.cause, c.cycle, limit, c.prs, fmt.Sprintf(
 			"deployed at %s; %s queued to resume from %s (source run %s)",
-			time.Unix(int64(at), 0).UTC().Format(time.RFC3339), d.name, orDash(d.phase), c.run))
+			time.Unix(int64(deployedAt), 0).UTC().Format(time.RFC3339), drop.name, orDash(drop.phase), c.run))
 	case wdResumed:
 		run, finished, verdict, started := resumeOutcome(c)
 		if run == "" {
 			// A resume of this run that began outside the queue is the resume:
 			// the queued one is withdrawn rather than started on top of it.
-			if other := replayOf(d.name, c.run, c.started); other != "" {
+			if other := replayOf(drop.name, c.run, c.started); other != "" {
 				withdraw(c.resumeQueue)
 				if c.resumedRun == "" {
 					wdUpdate(c.id, "resumed_run=?", other)
@@ -2442,7 +2442,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		if run == "" {
 			if started > 0 && over(c, conf, "watchdog_start", started) {
 				fail("the resume was started and no run came of it within timeouts.watchdog_start" +
-					startAnswer(d.name, started))
+					startAnswer(drop.name, started))
 			}
 			return
 		}
@@ -2454,7 +2454,7 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 		}
 		if wdGreen[strings.ToUpper(verdict)] {
 			wdMove(c.id, wdDone, "why=?", "the resumed run "+run+" ended "+verdict)
-			wdSay(run, d.phase, wdDone, d.cause, c.cycle, limit, c.prs,
+			wdSay(run, drop.phase, wdDone, drop.cause, c.cycle, limit, c.prs,
 				"the resumed run ended "+verdict)
 			return
 		}
@@ -2462,13 +2462,13 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 			// Read next tick by the drop detector; only a run it will not
 			// call a drop (a person stopped it, a later run superseded it)
 			// ends the chain here.
-			f, err := readRunFacts(run)
+			facts, err := readRunFacts(run)
 			if err != nil {
 				return
 			}
-			if again, why := classifyDrop(f, conf); again == nil {
+			if again, why := classifyDrop(facts, conf); again == nil {
 				wdMove(c.id, wdLeft, "why=?", "the resumed run "+run+": "+why)
-				wdSay(run, d.phase, wdLeft, d.cause, c.cycle, limit, c.prs,
+				wdSay(run, drop.phase, wdLeft, drop.cause, c.cycle, limit, c.prs,
 					"the resumed run is not a drop: "+why)
 			}
 		}
@@ -2476,8 +2476,8 @@ func stepCycle(c wdCycle, conf Config, limit float64) {
 }
 
 func jsonList(v []string) string {
-	b, _ := json.Marshal(v)
-	return string(b)
+	encoded, _ := json.Marshal(v)
+	return string(encoded)
 }
 
 // fixEnded says whether the fix run this cycle queued has finished.
@@ -2536,19 +2536,19 @@ func deployedAfter(merged float64) (float64, bool) {
 func deploysSaid(merged float64) string {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`SELECT coalesce(run,''), status, coalesce(detail,'') FROM deploys
+	deployRows, err := db.Query(`SELECT coalesce(run,''), status, coalesce(detail,'') FROM deploys
 	                       WHERE at > ? AND status <> 'success' AND status <> 'running'
 	                       ORDER BY at`, merged)
 	if err != nil {
 		return ""
 	}
-	defer rows.Close()
+	defer deployRows.Close()
 	counts := map[string]int{}
 	var order []string
 	var lastRun, lastStatus, lastDetail string
-	for rows.Next() {
+	for deployRows.Next() {
 		var run, status, detail string
-		if rows.Scan(&run, &status, &detail) != nil {
+		if deployRows.Scan(&run, &status, &detail) != nil {
 			continue
 		}
 		if counts[status] == 0 {
@@ -2559,19 +2559,19 @@ func deploysSaid(merged float64) string {
 			lastRun, lastStatus, lastDetail = run, status, detail
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
+	_ = deployRows.Err() // a cut-off read is the shorter answer it always was
 	if len(order) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(order))
-	for _, s := range order {
-		parts = append(parts, fmt.Sprintf("%d %s", counts[s], s))
+	deploySaid := make([]string, 0, len(order))
+	for _, status := range order {
+		deploySaid = append(deploySaid, fmt.Sprintf("%d %s", counts[status], status))
 	}
-	said := "; the deploys after it: " + strings.Join(parts, ", ")
+	deployNote := "; the deploys after it: " + strings.Join(deploySaid, ", ")
 	if lastDetail != "" {
-		said += fmt.Sprintf("; the last to say why (%s, run %s): %s", lastStatus, lastRun, lastDetail)
+		deployNote += fmt.Sprintf("; the last to say why (%s, run %s): %s", lastStatus, lastRun, lastDetail)
 	}
-	return said
+	return deployNote
 }
 
 // runParams is what the run was started with (run_start tags.params), less
@@ -2583,16 +2583,16 @@ func deploysSaid(merged float64) string {
 // for the same reason the other way round (2026-11-03). A remote product is
 // not a stand and is kept.
 func runParams(run string) map[string]any {
-	out := startParams(run)
-	if out == nil {
+	startArgs := startParams(run)
+	if startArgs == nil {
 		return nil
 	}
-	if w, _ := out["where"].(string); w != "remote" {
-		delete(out, "where")
-		delete(out, "stand")
-		delete(out, "endpoints")
+	if where, _ := startArgs["where"].(string); where != "remote" {
+		delete(startArgs, "where")
+		delete(startArgs, "stand")
+		delete(startArgs, "endpoints")
 	}
-	return out
+	return startArgs
 }
 
 func startParams(run string) map[string]any {
@@ -2637,24 +2637,24 @@ func budgetRenewals(name string) int {
 
 // resumePayload is the queue row of a resume of the dropped ticket from run.
 func resumePayload(run string, d *dropFact, fresh bool) string {
-	body := map[string]any{"key": d.name, "rerun": "resume", "source_run": run}
+	resumeRequest := map[string]any{"key": d.name, "rerun": "resume", "source_run": run}
 	if fresh {
-		body["fresh_budget"] = true
+		resumeRequest["fresh_budget"] = true
 	}
-	// A host run's own params (gates, environment) go with it; its stand does
+	// A host run's own startArgs (gates, environment) go with it; its stand does
 	// not (runParams): the queue sends it to the first free stand.
-	if params := runParams(run); hostRun(run) && params != nil {
-		for k, v := range params {
-			body[k] = v
+	if startArgs := runParams(run); hostRun(run) && startArgs != nil {
+		for field, fieldValue := range startArgs {
+			resumeRequest[field] = fieldValue
 		}
 	}
 	if d.mode != "" {
-		body["mode"] = d.mode
+		resumeRequest["mode"] = d.mode
 	}
 	if d.phase != "" {
-		body["from_phase"] = d.phase
+		resumeRequest["from_phase"] = d.phase
 	}
-	payload, _ := json.Marshal(body)
+	payload, _ := json.Marshal(resumeRequest)
 	return string(payload)
 }
 
@@ -2806,28 +2806,28 @@ func watchdogState(run string) map[string]any {
 		db.QueryRow(`SELECT root FROM watchdog_drops WHERE run=?`, run).Scan(&root)
 		mu.Unlock()
 	}
-	where, args := "1=1", []any{}
+	where, whereArgs := "1=1", []any{}
 	if root != "" {
-		where, args = "root=?", []any{root}
+		where, whereArgs = "root=?", []any{root}
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	return map[string]any{"drops": wdDropRows(where, args), "cycles": wdCycleRows(where, args)}
+	return map[string]any{"drops": wdDropRows(where, whereArgs), "cycles": wdCycleRows(where, whereArgs)}
 }
 
 func wdDropRows(where string, args []any) []map[string]any {
 	drops := []map[string]any{}
-	rows, err := db.Query(`SELECT run, root, name, mode, phase, cause, verdict, evidence, at
+	dropRows, err := db.Query(`SELECT run, root, name, mode, phase, cause, verdict, evidence, at
 	                    FROM watchdog_drops WHERE `+where+` ORDER BY at DESC LIMIT 200`, args...)
 	if err != nil {
 		return drops
 	}
-	defer rows.Close()
+	defer dropRows.Close()
 	{
-		for rows.Next() {
+		for dropRows.Next() {
 			var run, root, name, mode, phase, cause, verdict, ev sql.NullString
 			var at float64
-			if rows.Scan(&run, &root, &name, &mode, &phase, &cause, &verdict, &ev, &at) == nil {
+			if dropRows.Scan(&run, &root, &name, &mode, &phase, &cause, &verdict, &ev, &at) == nil {
 				var lines []string
 				_ = json.Unmarshal([]byte(ev.String), &lines)
 				drops = append(drops, map[string]any{"run": run.String, "root": root.String,
@@ -2835,45 +2835,45 @@ func wdDropRows(where string, args []any) []map[string]any {
 					"cause": cause.String, "verdict": verdict.String, "evidence": lines, "at": at})
 			}
 		}
-		_ = rows.Err() // a cut-off read is the shorter answer it always was
+		_ = dropRows.Err() // a cut-off read is the shorter answer it always was
 	}
 	return drops
 }
 
 func wdCycleRows(where string, args []any) []map[string]any {
 	cycles := []map[string]any{}
-	rows, err := db.Query(`SELECT id, root, run, cycle, state, branch, coalesce(prs,'[]'),
+	cycleRows, err := db.Query(`SELECT id, root, run, cycle, state, branch, coalesce(prs,'[]'),
 	                      merged_at, deployed_at, coalesce(resumed_run,''), coalesce(why,''),
 	                      started, updated
 	                    FROM watchdog_cycles WHERE `+where+` ORDER BY id DESC LIMIT 200`, args...)
 	if err != nil {
 		return cycles
 	}
-	defer rows.Close()
+	defer cycleRows.Close()
 	{
-		for rows.Next() {
+		for cycleRows.Next() {
 			var id int64
 			var cycle int
 			var root, run, state, branch, prs, resumed, why string
 			var merged, deployed sql.NullFloat64
 			var started, updated float64
-			if rows.Scan(&id, &root, &run, &cycle, &state, &branch, &prs, &merged, &deployed,
+			if cycleRows.Scan(&id, &root, &run, &cycle, &state, &branch, &prs, &merged, &deployed,
 				&resumed, &why, &started, &updated) == nil {
 				var list []string
 				_ = json.Unmarshal([]byte(prs), &list)
-				c := map[string]any{"id": id, "root": root, "run": run, "cycle": cycle,
+				cycleRow := map[string]any{"id": id, "root": root, "run": run, "cycle": cycle,
 					"state": state, "branch": branch, "prs": list, "resumed_run": resumed,
 					"why": why, "started": started, "updated": updated}
 				if merged.Valid {
-					c["merged_at"] = merged.Float64
+					cycleRow["merged_at"] = merged.Float64
 				}
 				if deployed.Valid {
-					c["deployed_at"] = deployed.Float64
+					cycleRow["deployed_at"] = deployed.Float64
 				}
-				cycles = append(cycles, c)
+				cycles = append(cycles, cycleRow)
 			}
 		}
-		_ = rows.Err() // a cut-off read is the shorter answer it always was
+		_ = cycleRows.Err() // a cut-off read is the shorter answer it always was
 	}
 	return cycles
 }
@@ -2918,8 +2918,8 @@ func networkRefused(d *dropFact) bool {
 // longer merges into main - asking again cannot change that.
 func mergeConflict(out string) bool {
 	low := strings.ToLower(out)
-	for _, w := range []string{"not mergeable", "cannot be cleanly created", "merge conflict", "conflicting"} {
-		if strings.Contains(low, w) {
+	for _, conflictWord := range []string{"not mergeable", "cannot be cleanly created", "merge conflict", "conflicting"} {
+		if strings.Contains(low, conflictWord) {
 			return true
 		}
 	}
@@ -2955,8 +2955,8 @@ func answerConflict(c wdCycle, d *dropFact, conf Config, limit float64, pr, out 
 
 // commandWent says whether act ran its command and the command succeeded.
 func commandWent(out string) bool {
-	for _, p := range []string{"failed", "no command named", "refused", "[hands off]", "[dry run]", "closed: "} {
-		if strings.HasPrefix(out, p) {
+	for _, refusalPhrase := range []string{"failed", "no command named", "refused", "[hands off]", "[dry run]", "closed: "} {
+		if strings.HasPrefix(out, refusalPhrase) {
 			return false
 		}
 	}

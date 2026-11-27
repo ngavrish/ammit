@@ -27,8 +27,8 @@ func TestStoreWaitRearmsAbsence(t *testing.T) {
 	old := nowWall() - 1000
 	_upSinceBits.Store(math.Float64bits(old))
 	store(event{"kind": "note", "run": "absence-test", "text": "no wait"})
-	if got := upSince(); got != old {
-		t.Fatalf("a record that did not wait moved the absence clock: %v -> %v", old, got)
+	if since := upSince(); since != old {
+		t.Fatalf("a record that did not wait moved the absence clock: %v -> %v", old, since)
 	}
 
 	mu.Lock()
@@ -37,7 +37,7 @@ func TestStoreWaitRearmsAbsence(t *testing.T) {
 		mu.Unlock()
 	}()
 	store(event{"kind": "heartbeat", "run": "absence-test"})
-	if up := nowWall() - upSince(); up > 5 {
-		t.Fatalf("a record that waited for the writer left the absence clock %.0fs old", up)
+	if awake := nowWall() - upSince(); awake > 5 {
+		t.Fatalf("a record that waited for the writer left the absence clock %.0fs old", awake)
 	}
 }

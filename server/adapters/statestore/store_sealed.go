@@ -54,23 +54,23 @@ func Open(dataDir string) (*sql.DB, *sql.DB, error) {
 	path := filepath.Join(dataDir, "ammit.db")
 	label = "sqlite:" + path
 	common := "&_pragma=busy_timeout(60000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
-	w, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_txlock=immediate"+common)
+	writer, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_txlock=immediate"+common)
 	if err != nil {
 		return nil, nil, err
 	}
-	w.SetMaxOpenConns(8)
-	w.SetConnMaxIdleTime(5 * time.Minute)
-	if err := w.Ping(); err != nil { //nolint:noctx // once, at start
+	writer.SetMaxOpenConns(8)
+	writer.SetConnMaxIdleTime(5 * time.Minute)
+	if err := writer.Ping(); err != nil { //nolint:noctx // once, at start
 		return nil, nil, fmt.Errorf("no database at %s: %w", path, err)
 	}
-	r, err := sql.Open("sqlite", "file:"+path+"?mode=ro"+common)
+	reader, err := sql.Open("sqlite", "file:"+path+"?mode=ro"+common)
 	if err != nil {
 		return nil, nil, err
 	}
-	r.SetMaxOpenConns(4)
-	r.SetConnMaxIdleTime(5 * time.Minute)
+	reader.SetMaxOpenConns(4)
+	reader.SetConnMaxIdleTime(5 * time.Minute)
 	_ = os.Chmod(path, 0o600)
-	return w, r, nil
+	return writer, reader, nil
 }
 
 // Migrate makes the tables from ammit's own DDL, statement by statement. A
@@ -79,16 +79,16 @@ func Open(dataDir string) (*sql.DB, *sql.DB, error) {
 func Migrate(db *sql.DB, ddl ...string) error {
 	for _, block := range ddl {
 		for _, stmt := range splitStatements(block) {
-			q := translateDDL(stmt)
-			if strings.TrimSpace(q) == "" {
+			translated := translateDDL(stmt)
+			if strings.TrimSpace(translated) == "" {
 				continue
 			}
-			if _, err := db.Exec(q); err != nil { //nolint:noctx // once, at start
+			if _, err := db.Exec(translated); err != nil { //nolint:noctx // once, at start
 				msg := err.Error()
 				if strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists") {
 					continue
 				}
-				return fmt.Errorf("%s: %w", firstLine(q), err)
+				return fmt.Errorf("%s: %w", firstLine(translated), err)
 			}
 		}
 	}
@@ -106,8 +106,8 @@ func UniqueViolation(err error) bool {
 
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i > 0 {
-		return s[:i]
+	if newline := strings.IndexByte(s, '\n'); newline > 0 {
+		return s[:newline]
 	}
 	return s
 }
@@ -126,47 +126,47 @@ var (
 )
 
 func translateDDL(stmt string) string {
-	s := stripComments(stmt)
-	t := strings.ToUpper(strings.Join(strings.Fields(s), " "))
+	bare := stripComments(stmt)
+	upper := strings.ToUpper(strings.Join(strings.Fields(bare), " "))
 	switch {
-	case strings.HasPrefix(t, "CREATE OR REPLACE FUNCTION"),
-		strings.HasPrefix(t, "CREATE SCHEMA"),
-		strings.Contains(t, " PARTITION OF "),
-		strings.Contains(t, " USING GIN"),
-		strings.HasPrefix(t, "SELECT PG_"):
+	case strings.HasPrefix(upper, "CREATE OR REPLACE FUNCTION"),
+		strings.HasPrefix(upper, "CREATE SCHEMA"),
+		strings.Contains(upper, " PARTITION OF "),
+		strings.Contains(upper, " USING GIN"),
+		strings.HasPrefix(upper, "SELECT PG_"):
 		return ""
 	}
-	if reIdentity.MatchString(s) && rePKIdAt.MatchString(s) {
-		s = reIdentity.ReplaceAllString(s, "INTEGER PRIMARY KEY AUTOINCREMENT")
-		s = rePKIdAt.ReplaceAllString(s, "")
+	if reIdentity.MatchString(bare) && rePKIdAt.MatchString(bare) {
+		bare = reIdentity.ReplaceAllString(bare, "INTEGER PRIMARY KEY AUTOINCREMENT")
+		bare = rePKIdAt.ReplaceAllString(bare, "")
 	}
-	s = reIdentityPK.ReplaceAllString(s, "INTEGER PRIMARY KEY AUTOINCREMENT")
-	s = reIdentity.ReplaceAllString(s, "INTEGER")
-	s = rePartition.ReplaceAllString(strings.TrimSpace(s), ")")
-	s = reTSVector.ReplaceAllString(s, "")
-	s = reAddIfNot.ReplaceAllString(s, "ADD COLUMN")
-	s = reBytea.ReplaceAllString(s, "BLOB")
-	s = reJSONBType.ReplaceAllString(s, "TEXT")
-	return Translate(s)
+	bare = reIdentityPK.ReplaceAllString(bare, "INTEGER PRIMARY KEY AUTOINCREMENT")
+	bare = reIdentity.ReplaceAllString(bare, "INTEGER")
+	bare = rePartition.ReplaceAllString(strings.TrimSpace(bare), ")")
+	bare = reTSVector.ReplaceAllString(bare, "")
+	bare = reAddIfNot.ReplaceAllString(bare, "ADD COLUMN")
+	bare = reBytea.ReplaceAllString(bare, "BLOB")
+	bare = reJSONBType.ReplaceAllString(bare, "TEXT")
+	return Translate(bare)
 }
 
 // stripComments drops -- comments outside quotes.
 func stripComments(q string) string {
 	var b strings.Builder
-	for i := 0; i < len(q); i++ {
-		c := q[i]
+	for pos := 0; pos < len(q); pos++ {
+		char := q[pos]
 		switch {
-		case c == '\'' || c == '"':
-			j := skipQuoted(q, i)
-			b.WriteString(q[i:j])
-			i = j - 1
-		case c == '-' && i+1 < len(q) && q[i+1] == '-':
-			for i < len(q) && q[i] != '\n' {
-				i++
+		case char == '\'' || char == '"':
+			quoteEnd := skipQuoted(q, pos)
+			b.WriteString(q[pos:quoteEnd])
+			pos = quoteEnd - 1
+		case char == '-' && pos+1 < len(q) && q[pos+1] == '-':
+			for pos < len(q) && q[pos] != '\n' {
+				pos++
 			}
 			b.WriteByte('\n')
 		default:
-			b.WriteByte(c)
+			b.WriteByte(char)
 		}
 	}
 	return b.String()
@@ -177,25 +177,25 @@ func stripComments(q string) string {
 func splitStatements(block string) []string {
 	var out []string
 	start := 0
-	for i := 0; i < len(block); i++ {
-		c := block[i]
+	for pos := 0; pos < len(block); pos++ {
+		char := block[pos]
 		switch {
-		case c == '\'' || c == '"':
-			i = skipQuoted(block, i) - 1
-		case c == '-' && i+1 < len(block) && block[i+1] == '-':
-			for i < len(block) && block[i] != '\n' {
-				i++
+		case char == '\'' || char == '"':
+			pos = skipQuoted(block, pos) - 1
+		case char == '-' && pos+1 < len(block) && block[pos+1] == '-':
+			for pos < len(block) && block[pos] != '\n' {
+				pos++
 			}
-		case c == '$' && i+1 < len(block) && block[i+1] == '$':
-			j := strings.Index(block[i+2:], "$$")
-			if j < 0 {
-				i = len(block)
+		case char == '$' && pos+1 < len(block) && block[pos+1] == '$':
+			dollarEnd := strings.Index(block[pos+2:], "$$")
+			if dollarEnd < 0 {
+				pos = len(block)
 			} else {
-				i += j + 3
+				pos += dollarEnd + 3
 			}
-		case c == ';':
-			out = append(out, block[start:i])
-			start = i + 1
+		case char == ';':
+			out = append(out, block[start:pos])
+			start = pos + 1
 		}
 	}
 	if strings.TrimSpace(block[start:]) != "" {
@@ -206,17 +206,17 @@ func splitStatements(block string) []string {
 
 // skipQuoted is the index just past the quoted string or identifier at i.
 func skipQuoted(q string, i int) int {
-	c := q[i]
-	j := i + 1
-	for j < len(q) {
-		if q[j] == c {
-			if j+1 < len(q) && q[j+1] == c {
-				j += 2
+	quote := q[i]
+	pos := i + 1
+	for pos < len(q) {
+		if q[pos] == quote {
+			if pos+1 < len(q) && q[pos+1] == quote {
+				pos += 2
 				continue
 			}
-			return j + 1
+			return pos + 1
 		}
-		j++
+		pos++
 	}
 	return len(q)
 }
@@ -232,19 +232,19 @@ var (
 // placeholders stay SQLite's own (? and ?N, as the queries are written).
 func Translate(q string) string {
 	cacheMu.RLock()
-	t, ok := cache[q]
+	translated, ok := cache[q]
 	cacheMu.RUnlock()
 	if ok {
-		return t
+		return translated
 	}
-	t = translate(q)
+	translated = translate(q)
 	cacheMu.Lock()
 	if len(cache) > 4096 {
 		cache = map[string]string{}
 	}
-	cache[q] = t
+	cache[q] = translated
 	cacheMu.Unlock()
-	return t
+	return translated
 }
 
 var (
@@ -278,17 +278,17 @@ func translate(q string) string {
 	if reAdvisory.MatchString(q) {
 		return "SELECT 1"
 	}
-	s := q
+	rewritten := q
 	// jsonb_array_elements(x) WITH ORDINALITY AS r(v, ord): json_each's
 	// value is v, its key (from 0) is ord - 1.
-	if m := reArrayElems.FindStringSubmatch(s); m != nil {
-		alias, v, ord := m[2], m[3], m[4]
-		s = strings.Replace(s, m[0], "json_each("+m[1]+") AS "+alias, 1)
-		s = strings.ReplaceAll(s, alias+"."+v+"-", alias+".value-")
-		s = strings.ReplaceAll(s, alias+"."+ord, "("+alias+".key+1)")
+	if match := reArrayElems.FindStringSubmatch(rewritten); match != nil {
+		alias, elems, ord := match[2], match[3], match[4]
+		rewritten = strings.Replace(rewritten, match[0], "json_each("+match[1]+") AS "+alias, 1)
+		rewritten = strings.ReplaceAll(rewritten, alias+"."+elems+"-", alias+".value-")
+		rewritten = strings.ReplaceAll(rewritten, alias+"."+ord, "("+alias+".key+1)")
 	}
-	s = arrows(casts(s))
-	s = codeOnly(s, func(c string) string {
+	rewritten = arrows(casts(rewritten))
+	rewritten = codeOnly(rewritten, func(c string) string {
 		c = reILike.ReplaceAllString(c, "LIKE")
 		c = reNotDistinct.ReplaceAllString(c, "IS")
 		c = reDistinct.ReplaceAllString(c, "IS NOT")
@@ -302,41 +302,41 @@ func translate(q string) string {
 		return c
 	})
 	// UPDATE t a SET / DELETE FROM t a WHERE: SQLite names an alias with AS.
-	if m := reUpdateAlias.FindStringSubmatch(s); m != nil {
-		s = reUpdateAlias.ReplaceAllString(s, "$1 AS $2 SET")
+	if match := reUpdateAlias.FindStringSubmatch(rewritten); match != nil {
+		rewritten = reUpdateAlias.ReplaceAllString(rewritten, "$1 AS $2 SET")
 		// RETURNING names the modified table's columns bare.
-		if i := strings.LastIndex(strings.ToUpper(s), "RETURNING "); i > 0 {
-			s = s[:i] + strings.ReplaceAll(s[i:], m[2]+".", "")
+		if returning := strings.LastIndex(strings.ToUpper(rewritten), "RETURNING "); returning > 0 {
+			rewritten = rewritten[:returning] + strings.ReplaceAll(rewritten[returning:], match[2]+".", "")
 		}
 	}
-	s = reDeleteAlias.ReplaceAllString(s, "$1 AS $2 WHERE")
-	s = reStringAggD.ReplaceAllString(s, "group_concat(DISTINCT $1)")
-	s = reStringAgg.ReplaceAllString(s, "group_concat(")
-	s = reToChar.ReplaceAllString(s, "strftime('%Y-%m-%d', $1, 'unixepoch')")
+	rewritten = reDeleteAlias.ReplaceAllString(rewritten, "$1 AS $2 WHERE")
+	rewritten = reStringAggD.ReplaceAllString(rewritten, "group_concat(DISTINCT $1)")
+	rewritten = reStringAgg.ReplaceAllString(rewritten, "group_concat(")
+	rewritten = reToChar.ReplaceAllString(rewritten, "strftime('%Y-%m-%d', $1, 'unixepoch')")
 	// DISTINCT ON (k) cols FROM t WHERE w ORDER BY k, o DESC) - the last row of
 	// each k by o: SQLite's bare columns beside max(o) are that row's.
-	s = reDistinctOn.ReplaceAllString(s, "SELECT $2, max($6) FROM $3 WHERE $4 GROUP BY $1)")
+	rewritten = reDistinctOn.ReplaceAllString(rewritten, "SELECT $2, max($6) FROM $3 WHERE $4 GROUP BY $1)")
 	// INSERT ... SELECT ... ON CONFLICT DO NOTHING: SQLite cannot parse the
 	// clause after a SELECT with no WHERE; OR IGNORE says the same.
-	if reInsertInto.MatchString(s) && reConflictNil.MatchString(s) {
-		s = reConflictNil.ReplaceAllString(s, "")
-		s = reInsertInto.ReplaceAllString(s, "INSERT OR IGNORE INTO")
+	if reInsertInto.MatchString(rewritten) && reConflictNil.MatchString(rewritten) {
+		rewritten = reConflictNil.ReplaceAllString(rewritten, "")
+		rewritten = reInsertInto.ReplaceAllString(rewritten, "INSERT OR IGNORE INTO")
 	}
-	return s
+	return rewritten
 }
 
 // codeOnly applies f to the parts of q outside quoted strings and identifiers.
 func codeOnly(q string, f func(string) string) string {
 	var b strings.Builder
 	start := 0
-	for i := 0; i < len(q); i++ {
-		c := q[i]
-		if c == '\'' || c == '"' {
-			b.WriteString(f(q[start:i]))
-			j := skipQuoted(q, i)
-			b.WriteString(q[i:j])
-			start = j
-			i = j - 1
+	for pos := 0; pos < len(q); pos++ {
+		char := q[pos]
+		if char == '\'' || char == '"' {
+			b.WriteString(f(q[start:pos]))
+			quoteEnd := skipQuoted(q, pos)
+			b.WriteString(q[pos:quoteEnd])
+			start = quoteEnd
+			pos = quoteEnd - 1
 		}
 	}
 	b.WriteString(f(q[start:]))
@@ -348,30 +348,30 @@ func casts(q string) string {
 	if !strings.Contains(q, "::") {
 		return q
 	}
-	out := []byte{}
-	for i := 0; i < len(q); i++ {
-		c := q[i]
-		if c == '\'' || c == '"' {
-			j := skipQuoted(q, i)
-			out = append(out, q[i:j]...)
-			i = j - 1
+	rewritten := []byte{}
+	for pos := 0; pos < len(q); pos++ {
+		char := q[pos]
+		if char == '\'' || char == '"' {
+			quoteEnd := skipQuoted(q, pos)
+			rewritten = append(rewritten, q[pos:quoteEnd]...)
+			pos = quoteEnd - 1
 			continue
 		}
-		if c == ':' && i+1 < len(q) && q[i+1] == ':' {
-			typ, n := castType(q[i+2:])
+		if char == ':' && pos+1 < len(q) && q[pos+1] == ':' {
+			typ, castLen := castType(q[pos+2:])
 			if typ == "" {
-				out = append(out, c)
+				rewritten = append(rewritten, char)
 				continue
 			}
-			st := operandStart(out)
-			operand := string(out[st:])
-			out = append(out[:st], []byte("CAST("+operand+" AS "+typ+")")...)
-			i += 1 + n
+			operandAt := operandStart(rewritten)
+			operand := string(rewritten[operandAt:])
+			rewritten = append(rewritten[:operandAt], []byte("CAST("+operand+" AS "+typ+")")...)
+			pos += 1 + castLen
 			continue
 		}
-		out = append(out, c)
+		rewritten = append(rewritten, char)
 	}
-	return string(out)
+	return string(rewritten)
 }
 
 // arrows turns every x->'key' (not ->>) into json_extract(x, '$."key"'):
@@ -382,28 +382,28 @@ func arrows(q string) string {
 	if !strings.Contains(q, "->'") {
 		return q
 	}
-	out := []byte{}
-	for i := 0; i < len(q); i++ {
-		c := q[i]
-		if c == '\'' || c == '"' {
-			j := skipQuoted(q, i)
-			out = append(out, q[i:j]...)
-			i = j - 1
+	rewritten := []byte{}
+	for pos := 0; pos < len(q); pos++ {
+		char := q[pos]
+		if char == '\'' || char == '"' {
+			quoteEnd := skipQuoted(q, pos)
+			rewritten = append(rewritten, q[pos:quoteEnd]...)
+			pos = quoteEnd - 1
 			continue
 		}
-		if c == '-' && i+2 < len(q) && q[i+1] == '>' && q[i+2] == '\'' {
-			j := skipQuoted(q, i+2)
-			key := strings.ReplaceAll(q[i+3:j-1], "''", "'")
-			st := operandStart(out)
-			operand := strings.TrimRight(string(out[st:]), " ")
-			path := "$.\"" + strings.ReplaceAll(key, "'", "''") + "\""
-			out = append(out[:st], []byte("json_extract("+operand+", '"+path+"')")...)
-			i = j - 1
+		if char == '-' && pos+2 < len(q) && q[pos+1] == '>' && q[pos+2] == '\'' {
+			quoteEnd := skipQuoted(q, pos+2)
+			jsonKey := strings.ReplaceAll(q[pos+3:quoteEnd-1], "''", "'")
+			operandAt := operandStart(rewritten)
+			operand := strings.TrimRight(string(rewritten[operandAt:]), " ")
+			path := "$.\"" + strings.ReplaceAll(jsonKey, "'", "''") + "\""
+			rewritten = append(rewritten[:operandAt], []byte("json_extract("+operand+", '"+path+"')")...)
+			pos = quoteEnd - 1
 			continue
 		}
-		out = append(out, c)
+		rewritten = append(rewritten, char)
 	}
-	return string(out)
+	return string(rewritten)
 }
 
 var castTypes = []struct{ pg, lite string }{
@@ -417,13 +417,13 @@ var castTypes = []struct{ pg, lite string }{
 // castType reads the type after ::, and how many bytes it took.
 func castType(s string) (string, int) {
 	low := strings.ToLower(s)
-	for _, t := range castTypes {
-		if strings.HasPrefix(low, t.pg) {
-			n := len(t.pg)
-			if n < len(low) && (isWord(low[n])) {
+	for _, cast := range castTypes {
+		if strings.HasPrefix(low, cast.pg) {
+			pgLen := len(cast.pg)
+			if pgLen < len(low) && (isWord(low[pgLen])) {
 				continue
 			}
-			return t.lite, n
+			return cast.lite, pgLen
 		}
 	}
 	return "", 0
@@ -437,19 +437,19 @@ func isWord(c byte) bool {
 // group with the function name before it, a quoted literal, or a run of name
 // characters (identifier, number, placeholder, a.b).
 func operandStart(out []byte) int {
-	i := len(out) - 1
-	for i >= 0 && out[i] == ' ' {
-		i--
+	pos := len(out) - 1
+	for pos >= 0 && out[pos] == ' ' {
+		pos--
 	}
-	if i < 0 {
+	if pos < 0 {
 		return 0
 	}
-	switch out[i] {
+	switch out[pos] {
 	case ')':
 		depth := 0
 	scan:
-		for ; i >= 0; i-- {
-			switch out[i] {
+		for ; pos >= 0; pos-- {
+			switch out[pos] {
 			case ')':
 				depth++
 			case '(':
@@ -459,28 +459,28 @@ func operandStart(out []byte) int {
 				}
 			}
 		}
-		for i > 0 && (isWord(out[i-1]) || out[i-1] == '.') {
-			i--
+		for pos > 0 && (isWord(out[pos-1]) || out[pos-1] == '.') {
+			pos--
 		}
-		return max(i, 0)
+		return max(pos, 0)
 	case '\'':
-		j := i - 1
-		for j >= 0 {
-			if out[j] == '\'' {
-				if j > 0 && out[j-1] == '\'' {
-					j -= 2
+		quotePos := pos - 1
+		for quotePos >= 0 {
+			if out[quotePos] == '\'' {
+				if quotePos > 0 && out[quotePos-1] == '\'' {
+					quotePos -= 2
 					continue
 				}
-				return j
+				return quotePos
 			}
-			j--
+			quotePos--
 		}
 		return 0
 	}
-	for i >= 0 && (isWord(out[i]) || out[i] == '.' || out[i] == '?' || out[i] == '$') {
-		i--
+	for pos >= 0 && (isWord(out[pos]) || out[pos] == '.' || out[pos] == '?' || out[pos] == '$') {
+		pos--
 	}
-	return i + 1
+	return pos + 1
 }
 
 // ---- functions SQLite has no word for -----------------------------------
@@ -490,46 +490,46 @@ func registerFunctions() {
 		return jnum(a[0]), nil
 	})
 	sqlite.MustRegisterDeterministicScalarFunction("trunc", 1, func(_ *sqlite.FunctionContext, a []driver.Value) (driver.Value, error) {
-		f, ok := num(a[0])
+		number, ok := num(a[0])
 		if !ok {
 			return nil, nil
 		}
-		return math.Trunc(f), nil
+		return math.Trunc(number), nil
 	})
 	sqlite.MustRegisterDeterministicScalarFunction("lead_int", 1, func(_ *sqlite.FunctionContext, a []driver.Value) (driver.Value, error) {
-		s, ok := text(a[0])
+		str, ok := text(a[0])
 		if !ok {
 			return nil, nil
 		}
-		m := leadInt.FindStringSubmatch(s)
-		if m == nil {
+		match := leadInt.FindStringSubmatch(str)
+		if match == nil {
 			return int64(0), nil
 		}
-		n, _ := strconv.ParseInt(m[1], 10, 64)
-		return n, nil
+		lead, _ := strconv.ParseInt(match[1], 10, 64)
+		return lead, nil
 	})
 	sqlite.MustRegisterDeterministicScalarFunction("regexp", 2, func(_ *sqlite.FunctionContext, a []driver.Value) (driver.Value, error) {
 		pat, _ := text(a[0])
-		s, ok := text(a[1])
+		subject, ok := text(a[1])
 		if !ok {
 			return nil, nil
 		}
-		re, err := compiled(pat)
+		pattern, err := compiled(pat)
 		if err != nil {
 			return nil, err
 		}
-		if re.MatchString(s) {
+		if pattern.MatchString(subject) {
 			return int64(1), nil
 		}
 		return int64(0), nil
 	})
 	sqlite.MustRegisterDeterministicScalarFunction("jsonb_typeof", 1, func(_ *sqlite.FunctionContext, a []driver.Value) (driver.Value, error) {
-		s, ok := text(a[0])
+		jsonText, ok := text(a[0])
 		if !ok {
 			return nil, nil
 		}
 		var x any
-		if json.Unmarshal([]byte(s), &x) != nil {
+		if json.Unmarshal([]byte(jsonText), &x) != nil {
 			return nil, nil
 		}
 		switch x.(type) {
@@ -558,43 +558,43 @@ var (
 func compiled(p string) (*regexp.Regexp, error) {
 	reMu.Lock()
 	defer reMu.Unlock()
-	if re, ok := reCached[p]; ok {
-		return re, nil
+	if cachedPattern, ok := reCached[p]; ok {
+		return cachedPattern, nil
 	}
-	re, err := regexp.Compile(p)
+	pattern, err := regexp.Compile(p)
 	if err != nil {
 		return nil, err
 	}
-	reCached[p] = re
-	return re, nil
+	reCached[p] = pattern
+	return pattern, nil
 }
 
 func text(v driver.Value) (string, bool) {
-	switch x := v.(type) {
+	switch typed := v.(type) {
 	case string:
-		return x, true
+		return typed, true
 	case []byte:
-		return string(x), true
+		return string(typed), true
 	case int64:
-		return strconv.FormatInt(x, 10), true
+		return strconv.FormatInt(typed, 10), true
 	case float64:
-		return strconv.FormatFloat(x, 'g', -1, 64), true
+		return strconv.FormatFloat(typed, 'g', -1, 64), true
 	}
 	return "", false
 }
 
 func num(v driver.Value) (float64, bool) {
-	switch x := v.(type) {
+	switch typed := v.(type) {
 	case int64:
-		return float64(x), true
+		return float64(typed), true
 	case float64:
-		return x, true
+		return typed, true
 	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(x), 64)
-		return f, err == nil
+		number, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return number, err == nil
 	case []byte:
-		f, err := strconv.ParseFloat(strings.TrimSpace(string(x)), 64)
-		return f, err == nil
+		number, err := strconv.ParseFloat(strings.TrimSpace(string(typed)), 64)
+		return number, err == nil
 	}
 	return 0, false
 }
@@ -603,32 +603,32 @@ func num(v driver.Value) (float64, bool) {
 // JSON text), or on a plain SQL value: a number is itself, a boolean 1 or 0,
 // a string that reads as a number that number, anything else NULL.
 func jnum(v driver.Value) driver.Value {
-	switch x := v.(type) {
+	switch typed := v.(type) {
 	case nil:
 		return nil
 	case int64:
-		return float64(x)
+		return float64(typed)
 	case float64:
-		return x
+		return typed
 	}
-	s, _ := text(v)
+	jsonText, _ := text(v)
 	var j any
-	if json.Unmarshal([]byte(s), &j) != nil {
+	if json.Unmarshal([]byte(jsonText), &j) != nil {
 		return nil
 	}
-	switch t := j.(type) {
+	switch decoded := j.(type) {
 	case float64:
-		return t
+		return decoded
 	case bool:
-		if t {
+		if decoded {
 			return float64(1)
 		}
 		return float64(0)
 	case string:
-		if numText.MatchString(t) {
-			f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		if numText.MatchString(decoded) {
+			number, err := strconv.ParseFloat(strings.TrimSpace(decoded), 64)
 			if err == nil {
-				return f
+				return number
 			}
 		}
 	}

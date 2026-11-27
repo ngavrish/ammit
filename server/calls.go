@@ -55,37 +55,37 @@ var (
 // different tools.
 func classify(tool string, input map[string]any) (kind, target, signature string) {
 	str := func(k string) string {
-		if v, ok := input[k].(string); ok {
-			return strings.TrimSpace(v)
+		if inputText, ok := input[k].(string); ok {
+			return strings.TrimSpace(inputText)
 		}
 		return ""
 	}
 	switch {
 	case tool == "Read":
-		p := str("file_path")
+		filePath := str("file_path")
 		window := ""
-		if o, ok := input["offset"]; ok {
-			b, _ := json.Marshal(o)
-			window = "@" + string(b)
+		if offset, ok := input["offset"]; ok {
+			offsetJSON, _ := json.Marshal(offset)
+			window = "@" + string(offsetJSON)
 		}
-		return "read", p, "Read " + p + window
+		return "read", filePath, "Read " + filePath + window
 	case tool == "Write" || tool == "Edit" || tool == "NotebookEdit":
-		p := str("file_path")
-		return "write", p, tool + " " + p
+		filePath := str("file_path")
+		return "write", filePath, tool + " " + filePath
 	case tool == "Grep":
-		p := str("pattern")
-		return "search", p, "Grep " + p + " " + str("path")
+		pattern := str("pattern")
+		return "search", pattern, "Grep " + pattern + " " + str("path")
 	case tool == "Glob":
 		return "search", str("pattern"), "Glob " + str("pattern")
 	case strings.HasPrefix(tool, "mcp__"):
-		b, _ := json.Marshal(input)
-		return "map", tool, tool + " " + string(b)
+		inputJSON, _ := json.Marshal(input)
+		return "map", tool, tool + " " + string(inputJSON)
 	case tool == "Bash":
 		cmd := spaces.ReplaceAllString(cdPrefix.ReplaceAllString(str("command"), ""), " ")
 		return bashKind(cmd)
 	}
-	b, _ := json.Marshal(input)
-	return "other", tool, tool + " " + string(b)
+	inputJSON, _ := json.Marshal(input)
+	return "other", tool, tool + " " + string(inputJSON)
 }
 
 // bashKind reads a shell command for what it is doing, in the order that
@@ -95,17 +95,17 @@ func bashKind(cmd string) (kind, target, signature string) {
 	if len(sig) > 400 {
 		sig = sig[:400]
 	}
-	if m := intoPath.FindStringSubmatch(cmd); m != nil && ourTool.MatchString(cmd) {
-		return "write", m[1], sig
+	if match := intoPath.FindStringSubmatch(cmd); match != nil && ourTool.MatchString(cmd) {
+		return "write", match[1], sig
 	}
-	if m := ourTool.FindStringSubmatch(cmd); m != nil {
-		return "cli", m[1], sig
+	if match := ourTool.FindStringSubmatch(cmd); match != nil {
+		return "cli", match[1], sig
 	}
-	if m := redirect.FindStringSubmatch(cmd); m != nil && !devNull.MatchString(m[1]) {
-		return "write", m[1], sig
+	if match := redirect.FindStringSubmatch(cmd); match != nil && !devNull.MatchString(match[1]) {
+		return "write", match[1], sig
 	}
-	if m := teePath.FindStringSubmatch(cmd); m != nil && !devNull.MatchString(m[1]) {
-		return "write", m[1], sig
+	if match := teePath.FindStringSubmatch(cmd); match != nil && !devNull.MatchString(match[1]) {
+		return "write", match[1], sig
 	}
 	if strings.Contains(cmd, "where-are-we") {
 		return "map", "where-are-we", sig
@@ -119,20 +119,20 @@ func bashKind(cmd string) (kind, target, signature string) {
 	if readCmd.MatchString(cmd) {
 		return "read", firstOf(cmd, ""), sig
 	}
-	if m := inlineOpen.FindStringSubmatch(cmd); m != nil {
-		return "read", m[1], sig
+	if match := inlineOpen.FindStringSubmatch(cmd); match != nil {
+		return "read", match[1], sig
 	}
-	head := cmd
-	if i := strings.IndexAny(head, " \t"); i > 0 {
-		head = head[:i]
+	program := cmd
+	if space := strings.IndexAny(program, " \t"); space > 0 {
+		program = program[:space]
 	}
-	return "other", path.Base(head), sig
+	return "other", path.Base(program), sig
 }
 
 func firstOf(cmd, fallback string) string {
-	for _, m := range firstPath.FindAllStringSubmatch(cmd, 8) {
-		if !devNull.MatchString(m[1]) {
-			return m[1]
+	for _, match := range firstPath.FindAllStringSubmatch(cmd, 8) {
+		if !devNull.MatchString(match[1]) {
+			return match[1]
 		}
 	}
 	return fallback

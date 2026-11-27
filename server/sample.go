@@ -41,7 +41,7 @@ type sample struct {
 func sampleMachine(match string) []sample {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format",
+	stats, err := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format",
 		"{{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.CPUPerc}}\t{{.PIDs}}").Output()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -50,19 +50,19 @@ func sampleMachine(match string) []sample {
 		return nil
 	}
 	var taken []sample
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		cols := strings.Split(line, "\t")
+	for _, statsLine := range strings.Split(strings.TrimSpace(string(stats)), "\n") {
+		cols := strings.Split(statsLine, "\t")
 		if len(cols) < 5 {
 			continue
 		}
-		name := strings.TrimSpace(cols[0])
-		if match != "" && !strings.Contains(name, match) {
+		container := strings.TrimSpace(cols[0])
+		if match != "" && !strings.Contains(container, match) {
 			continue
 		}
 		used, _, _ := strings.Cut(cols[1], "/")
 		pids, _ := strconv.Atoi(strings.TrimSpace(cols[4]))
 		taken = append(taken, sample{
-			container: name,
+			container: container,
 			memoryMB:  megabytes(used),
 			memoryPct: percent(cols[2]),
 			cpuPct:    percent(cols[3]),
@@ -101,11 +101,11 @@ func megabytes(text string) float64 {
 }
 
 func percent(text string) float64 {
-	value, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(text), "%"), 64)
+	parsed, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(text), "%"), 64)
 	if err != nil {
 		return 0
 	}
-	return value
+	return parsed
 }
 
 // netProbe is one TLS handshake to the API host, timed. The evening of 28
@@ -125,12 +125,12 @@ func netProbe(host string) (float64, bool) {
 	started := time.Now()
 	conn, err := tls.DialWithDialer(&dialer, "tcp", host,
 		&tls.Config{ServerName: strings.Split(host, ":")[0]})
-	ms := float64(time.Since(started).Microseconds()) / 1000
+	elapsedMs := float64(time.Since(started).Microseconds()) / 1000
 	if err != nil {
-		return ms, false
+		return elapsedMs, false
 	}
 	conn.Close()
-	return ms, true
+	return elapsedMs, true
 }
 
 var lastSample float64
@@ -166,42 +166,42 @@ func keepSamples(conf Config) {
 		inRun = open[0].run
 	}
 	if host := conf.str("sample", "net_probe", "api.anthropic.com:443"); host != "" && host != "off" {
-		ms, up := netProbe(host)
+		latencyMs, reachable := netProbe(host)
 		store(event{
 			"kind": "netprobe", "at": now, "host": host,
-			"latency_ms": ms, "ok": up, "run": inRun,
+			"latency_ms": latencyMs, "ok": reachable, "run": inRun,
 		})
 		if limit, has := conf.num("limits", "net_probe_ms"); has && limit > 0 &&
-			(!up || ms > limit) && !recently("limits.net_probe_ms", host, 300) {
+			(!reachable || latencyMs > limit) && !recently("limits.net_probe_ms", host, 300) {
 			action := conf.str("actions", "on_net_probe", "warn")
 			ctx := map[string]string{"host": host}
-			for key, value := range conf["context"] {
-				if _, taken := ctx[key]; !taken {
-					ctx[key] = value
+			for field, fieldValue := range conf["context"] {
+				if _, taken := ctx[field]; !taken {
+					ctx[field] = fieldValue
 				}
 			}
-			judge("net", inRun, host, "limits.net_probe_ms", limit, ms,
+			judge("net", inRun, host, "limits.net_probe_ms", limit, latencyMs,
 				action, act(action, conf, ctx))
 		}
 	}
-	for _, s := range sampleMachine(conf.str("sample", "containers", "")) {
+	for _, machine := range sampleMachine(conf.str("sample", "containers", "")) {
 		store(event{
-			"kind": "sample", "at": now, "container": s.container,
-			"memory_mb": s.memoryMB, "memory_pct": s.memoryPct,
-			"cpu_pct": s.cpuPct, "pids": s.pids, "run": inRun,
+			"kind": "sample", "at": now, "container": machine.container,
+			"memory_mb": machine.memoryMB, "memory_pct": machine.memoryPct,
+			"cpu_pct": machine.cpuPct, "pids": machine.pids, "run": inRun,
 		})
-		if !hasLimit || s.memoryMB <= limit ||
-			recently("limits.memory_mb", s.container, 600) {
+		if !hasLimit || machine.memoryMB <= limit ||
+			recently("limits.memory_mb", machine.container, 600) {
 			continue
 		}
 		action := conf.str("actions", "on_memory", "warn")
-		ctx := map[string]string{"container": s.container, "worker": s.container}
-		for key, value := range conf["context"] {
-			if _, taken := ctx[key]; !taken {
-				ctx[key] = value
+		ctx := map[string]string{"container": machine.container, "worker": machine.container}
+		for field, fieldValue := range conf["context"] {
+			if _, taken := ctx[field]; !taken {
+				ctx[field] = fieldValue
 			}
 		}
-		judge("container", "", s.container, "limits.memory_mb", limit, s.memoryMB,
+		judge("container", "", machine.container, "limits.memory_mb", limit, machine.memoryMB,
 			action, act(action, conf, ctx))
 	}
 }

@@ -33,15 +33,15 @@ func progressLoop(confPath, logPath string) {
 	for {
 		every := float64(progressDefault)
 		if conf := loadConfig(confPath); len(conf) > 0 {
-			if n, ok := conf.num("timeouts", "progress"); ok && n > 0 {
-				every = n
+			if configured, ok := conf.num("timeouts", "progress"); ok && configured > 0 {
+				every = configured
 			}
 		}
 		time.Sleep(time.Duration(every) * time.Second)
-		for _, r := range openRuns() {
-			text := progressText(r)
-			store(event{"kind": "progress", "run": r.run, "text": text})
-			appendProgress(logPath, text)
+		for _, openRun := range openRuns() {
+			progress := progressText(openRun)
+			store(event{"kind": "progress", "run": openRun.run, "text": progress})
+			appendProgress(logPath, progress)
 		}
 	}
 }
@@ -52,14 +52,14 @@ func appendProgress(path, text string) {
 	if path == "" {
 		return
 	}
-	f, err := os.OpenFile(filepath.Clean(path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	logFile, err := os.OpenFile(filepath.Clean(path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		log.Printf("ammit: progress log %s: %v", path, err)
 		return
 	}
 	stamp := time.Now().UTC().Format("2006-01-02 15:04:05Z")
-	_, werr := fmt.Fprintf(f, "%s %s\n", stamp, strings.ReplaceAll(text, "\n", "\n    "))
-	if cerr := f.Close(); werr == nil {
+	_, werr := fmt.Fprintf(logFile, "%s %s\n", stamp, strings.ReplaceAll(text, "\n", "\n    "))
+	if cerr := logFile.Close(); werr == nil {
 		werr = cerr
 	}
 	if werr != nil {
@@ -76,14 +76,14 @@ func progressText(r openRun) string {
 	if len(phases) == 0 {
 		lines = append(lines, "no phase open")
 	}
-	for _, p := range phases {
-		lines = append(lines, fmt.Sprintf("in %s for %s (lap %d)", p.key, minutes(now-p.at), p.lap))
+	for _, phase := range phases {
+		lines = append(lines, fmt.Sprintf("in %s for %s (lap %d)", phase.key, minutes(now-phase.at), phase.lap))
 	}
-	if phase, text, at := lastRed(r.run); phase != "" {
-		lines = append(lines, fmt.Sprintf("last red: %s, %s ago: %s", phase, minutes(now-at), clip(text, 200)))
+	if phase, redText, redAt := lastRed(r.run); phase != "" {
+		lines = append(lines, fmt.Sprintf("last red: %s, %s ago: %s", phase, minutes(now-redAt), clip(redText, 200)))
 	}
-	for _, c := range inFlight(r.run) {
-		lines = append(lines, fmt.Sprintf("%s waiting %s on: %s", c.agent, minutes(now-c.at), clip(c.doing, 160)))
+	for _, call := range inFlight(r.run) {
+		lines = append(lines, fmt.Sprintf("%s waiting %s on: %s", call.agent, minutes(now-call.at), clip(call.doing, 160)))
 	}
 	if pulse := heartbeatAge(r.run); pulse >= 0 {
 		lines = append(lines, fmt.Sprintf("heartbeat %s ago", minutes(pulse)))
@@ -106,7 +106,7 @@ func currentPhases(run string) []livePhase {
 	defer mu.Unlock()
 	// The starts are folded to (phase, branch) first: Postgres lets HAVING's
 	// subquery see a grouped column, not the expression the group was made of.
-	rows, err := db.Query(`
+	phaseRows, err := db.Query(`
 		SELECT s.phase, s.branch, max(s.at), count(*) FROM (
 		  SELECT run, coalesce(phase,'') AS phase, coalesce(branch,'') AS branch, at, id
 		  FROM events WHERE run=? AND kind='phase_start' AND coalesce(phase,'') <> '') AS s
@@ -119,17 +119,17 @@ func currentPhases(run string) []livePhase {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer phaseRows.Close()
 	var out []livePhase
-	for rows.Next() {
+	for phaseRows.Next() {
 		var phase, branch string
 		var p livePhase
-		if rows.Scan(&phase, &branch, &p.at, &p.lap) == nil {
+		if phaseRows.Scan(&phase, &branch, &p.at, &p.lap) == nil {
 			p.key = phaseKey(phase, branch)
 			out = append(out, p)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter list it always was
+	_ = phaseRows.Err() // a cut-off read is the shorter list it always was
 	return out
 }
 
@@ -161,12 +161,12 @@ type liveCall struct {
 // inFlight is each open wait of the run with what its agent last asked for.
 func inFlight(run string) []liveCall {
 	spans := openSpans(run, "request_start", "request_end", "session")
-	out := make([]liveCall, 0, len(spans))
+	calls := make([]liveCall, 0, len(spans))
 	for request := range spans {
 		if spanIsOrphaned(run, request) {
 			continue
 		}
-		agent, branch, at := spanFacts(run, request)
+		agent, branch, startedAt := spanFacts(run, request)
 		if branch != "" {
 			agent += "@" + branch
 		}
@@ -174,9 +174,9 @@ func inFlight(run string) []liveCall {
 		if doing == "" {
 			doing = "the model"
 		}
-		out = append(out, liveCall{agent, at, doing})
+		calls = append(calls, liveCall{agent, startedAt, doing})
 	}
-	return out
+	return calls
 }
 
 // lastAsked is the last tool line the request's agent logged before the wait
@@ -219,8 +219,8 @@ func waitingCall(run, request string) (bool, string) {
 	if waitWords.MatchString(doing) {
 		return true, doing
 	}
-	for _, m := range longSleep.FindAllStringSubmatch(doing, -1) {
-		if n, err := strconv.Atoi(m[1]); err == nil && n >= 60 {
+	for _, match := range longSleep.FindAllStringSubmatch(doing, -1) {
+		if seconds, err := strconv.Atoi(match[1]); err == nil && seconds >= 60 {
 			return true, doing
 		}
 	}

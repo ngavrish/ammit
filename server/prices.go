@@ -72,10 +72,10 @@ func seedPrices() {
 		log.Printf("ammit: prices: %v", err)
 		return
 	}
-	s := prices()
-	for _, p := range s.Models {
+	table := prices()
+	for _, model := range table.Models {
 		if _, err := db.Exec(`INSERT INTO prices (model, name, tier, input, output, cache_read, cache_write, cache_write_1h, us_surcharge) VALUES (?,?,?,?,?,?,?,?,?)`,
-			p.Model, p.Name, p.Tier, p.Input, p.Output, p.CacheRead, p.CacheWrite, p.CacheWrite1h, s.USSurcharge); err != nil {
+			model.Model, model.Name, model.Tier, model.Input, model.Output, model.CacheRead, model.CacheWrite, model.CacheWrite1h, table.USSurcharge); err != nil {
 			log.Printf("ammit: prices: %v", err)
 		}
 	}

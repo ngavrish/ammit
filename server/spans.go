@@ -47,15 +47,15 @@ func closeSpansOf(run string, at float64, why string) {
 		{"session_start", "session_end", "session"},
 		{"phase_start", "phase_end", "phase"},
 	}
-	for _, p := range pairs {
-		for name, age := range openSpans(run, p.start, p.end, p.column) {
-			e := event{"kind": p.end, "at": at, "run": run, p.column: name,
+	for _, pair := range pairs {
+		for span, age := range openSpans(run, pair.start, pair.end, pair.column) {
+			closeEvent := event{"kind": pair.end, "at": at, "run": run, pair.column: span,
 				"ok": false, "seconds": age,
 				"error": "closed by ammit: " + why}
-			if p.column != "session" {
-				e["session"] = name
+			if pair.column != "session" {
+				closeEvent["session"] = span
 			}
-			store(e)
+			store(closeEvent)
 		}
 	}
 }
@@ -69,22 +69,22 @@ type openRun struct {
 func openRuns() []openRun {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`SELECT run, coalesce(name,''), started, coalesce(usd,0),
+	runRows, err := db.Query(`SELECT run, coalesce(name,''), started, coalesce(usd,0),
 	                       coalesce(turns,0) FROM runs
 	                       WHERE finished IS NULL AND started > ?`,
 		float64(time.Now().Add(-72*time.Hour).UnixNano())/1e9)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer runRows.Close()
 	var out []openRun
-	for rows.Next() {
+	for runRows.Next() {
 		var r openRun
-		if err := rows.Scan(&r.run, &r.name, &r.started, &r.usd, &r.turns); err == nil {
+		if err := runRows.Scan(&r.run, &r.name, &r.started, &r.usd, &r.turns); err == nil {
 			out = append(out, r)
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
+	_ = runRows.Err() // a cut-off read is the shorter answer it always was
 	return out
 }
 
@@ -174,7 +174,7 @@ func spanFacts(run, request string) (string, string, float64) {
 // spanIsOrphaned says whether this request belongs to a session that has since
 // ended — which makes it a lost event rather than a hanging call.
 func spanIsOrphaned(run, request string) bool {
-	agent, branch, at := spanFacts(run, request)
+	agent, branch, startedAt := spanFacts(run, request)
 	if agent == "" {
 		return false
 	}
@@ -183,7 +183,7 @@ func spanIsOrphaned(run, request string) bool {
 	var ended int
 	db.QueryRow(`SELECT count(*) FROM events WHERE run=? AND kind='session_end'
 	             AND coalesce(agent,'')=? AND coalesce(branch,'')=? AND at>=?`,
-		run, agent, branch, at).Scan(&ended)
+		run, agent, branch, startedAt).Scan(&ended)
 	return ended > 0
 }
 
@@ -228,7 +228,7 @@ func turnsPerSession(run string) map[string]float64 {
 	// fan-out into one number (314 "turns in one session" on run 6843c553)
 	// and went on warning about it every fifteen minutes for an hour after
 	// the last of those sessions had ended.
-	rows, err := db.Query(`
+	turnRows, err := db.Query(`
 		SELECT coalesce(t.agent,'') || CASE WHEN coalesce(t.branch,'')<>'' THEN '@'||t.branch ELSE '' END,
 		       count(*) FROM events t
 		WHERE t.run=? AND t.kind='turn' AND coalesce(t.agent,'') <> ''
@@ -247,17 +247,17 @@ func turnsPerSession(run string) map[string]float64 {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	out := map[string]float64{}
-	for rows.Next() {
+	defer turnRows.Close()
+	turns := map[string]float64{}
+	for turnRows.Next() {
 		var who string
 		var n float64
-		if err := rows.Scan(&who, &n); err == nil {
-			out[who] = n
+		if err := turnRows.Scan(&who, &n); err == nil {
+			turns[who] = n
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
-	return out
+	_ = turnRows.Err() // a cut-off read is the shorter answer it always was
+	return turns
 }
 
 // spinningSessions is every open session that keeps asking the model and has
@@ -293,7 +293,7 @@ func spinningSessions(run string, window, minRequests float64) map[string]float6
 	mu.Lock()
 	defer mu.Unlock()
 	since := float64(time.Now().UnixNano())/1e9 - window
-	rows, err := db.Query(`
+	sessionRows, err := db.Query(`
 		SELECT s.session,
 		  (SELECT count(*) FROM events r WHERE r.run=s.run AND r.kind='request_end'
 		     AND coalesce(r.agent,'')=s.agent AND coalesce(r.branch,'')=s.branch
@@ -312,18 +312,18 @@ func spinningSessions(run string, window, minRequests float64) map[string]float6
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	out := map[string]float64{}
-	for rows.Next() {
+	defer sessionRows.Close()
+	spinning := map[string]float64{}
+	for sessionRows.Next() {
 		var session string
 		var reqs, calls float64
-		if err := rows.Scan(&session, &reqs, &calls); err == nil &&
+		if err := sessionRows.Scan(&session, &reqs, &calls); err == nil &&
 			calls == 0 && reqs >= minRequests {
-			out[session] = reqs
+			spinning[session] = reqs
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
-	return out
+	_ = sessionRows.Err() // a cut-off read is the shorter answer it always was
+	return spinning
 }
 
 // heaviestTurn is the largest single prompt this run has sent recently, and who
@@ -349,11 +349,11 @@ func heaviestTurn(run string) (float64, string, string) {
 // is treated as "unknown", and unknown keeps the certificate unsigned - the
 // caller then leaves the row open, which is the recoverable mistake.
 func workerUp(conf Config) bool {
-	out, ok := inspectWorker(conf, "{{.State.Running}}")
+	running, ok := inspectWorker(conf, "{{.State.Running}}")
 	if !ok {
 		return true // unknown: do not certify a death the daemon cannot confirm
 	}
-	return out == "true"
+	return running == "true"
 }
 
 // inspectWorker asks the daemon one field about the worker container. The only
@@ -372,12 +372,12 @@ func inspectWorker(conf Config, format string) (string, bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
+	inspected, err := exec.CommandContext(ctx, "docker", "inspect", "-f",
 		format, worker).Output()
 	if err != nil {
 		return "", false
 	}
-	return strings.TrimSpace(string(out)), true
+	return strings.TrimSpace(string(inspected)), true
 }
 
 // heardFrom is seconds since the WORKER said anything at all - any event it
@@ -494,7 +494,7 @@ func openPhases(run string) map[string]float64 {
 	// ended at 30 minutes and ui's went on to 126 against a 90-minute limit,
 	// unjudged. The key is phase@branch for a branch's phase, the bare phase
 	// otherwise - the same spelling sessions use for agent@branch.
-	rows, err := db.Query(`
+	phaseRows, err := db.Query(`
 		SELECT coalesce(phase,''), coalesce(branch,''), min(at) FROM events
 		WHERE run=? AND kind='phase_start' AND coalesce(phase,'') <> ''
 		  AND coalesce(phase,'') || '@' || coalesce(branch,'') NOT IN (
@@ -504,17 +504,17 @@ func openPhases(run string) map[string]float64 {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer phaseRows.Close()
 	now := float64(time.Now().UnixNano()) / 1e9
 	live := map[string]float64{}
-	for rows.Next() {
+	for phaseRows.Next() {
 		var phase, branch string
 		var at float64
-		if err := rows.Scan(&phase, &branch, &at); err == nil {
+		if err := phaseRows.Scan(&phase, &branch, &at); err == nil {
 			live[phaseKey(phase, branch)] = now - at
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
+	_ = phaseRows.Err() // a cut-off read is the shorter answer it always was
 	return live
 }
 
@@ -528,8 +528,8 @@ func phaseKey(phase, branch string) string {
 }
 
 func splitPhaseKey(key string) (string, string) {
-	if i := strings.Index(key, "@"); i >= 0 {
-		return key[:i], key[i+1:]
+	if atSign := strings.Index(key, "@"); atSign >= 0 {
+		return key[:atSign], key[atSign+1:]
 	}
 	return key, ""
 }
@@ -541,8 +541,8 @@ func splitPhaseKey(key string) (string, string) {
 // nobody measured.
 func sessionQuiet(run, session string) float64 {
 	agent, branch := session, ""
-	if at := strings.Index(session, "@"); at >= 0 {
-		agent, branch = session[:at], session[at+1:]
+	if atSign := strings.Index(session, "@"); atSign >= 0 {
+		agent, branch = session[:atSign], session[atSign+1:]
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -580,7 +580,7 @@ func testRunning(conf Config, run string) bool {
 func openSpans(run, startKind, endKind, column string) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(fmt.Sprintf(`
+	spanRows, err := db.Query(fmt.Sprintf(`
 		SELECT coalesce(%[1]s,''), max(at) FROM events
 		WHERE run=? AND kind=? AND coalesce(%[1]s,'') <> ''
 		  AND coalesce(%[1]s,'') NOT IN (
@@ -589,17 +589,17 @@ func openSpans(run, startKind, endKind, column string) map[string]float64 {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
+	defer spanRows.Close()
 	now := float64(time.Now().UnixNano()) / 1e9
 	live := map[string]float64{}
-	for rows.Next() {
+	for spanRows.Next() {
 		var key string
 		var at float64
-		if err := rows.Scan(&key, &at); err == nil {
+		if err := spanRows.Scan(&key, &at); err == nil {
 			live[key] = now - at
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
+	_ = spanRows.Err() // a cut-off read is the shorter answer it always was
 	return live
 }
 
@@ -612,7 +612,7 @@ func retryWaits(run string, window float64) map[string]float64 {
 	mu.Lock()
 	defer mu.Unlock()
 	since := float64(time.Now().UnixNano())/1e9 - window
-	rows, err := db.Query(`
+	retryRows, err := db.Query(`
 		SELECT coalesce(agent,'') || CASE WHEN coalesce(branch,'')<>'' THEN '@'||branch ELSE '' END,
 		       sum(coalesce(jnum(payload->'seconds'), 0))
 		FROM events
@@ -622,17 +622,17 @@ func retryWaits(run string, window float64) map[string]float64 {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	out := map[string]float64{}
-	for rows.Next() {
+	defer retryRows.Close()
+	waits := map[string]float64{}
+	for retryRows.Next() {
 		var session string
 		var secs float64
-		if rows.Scan(&session, &secs) == nil && session != "" {
-			out[session] = secs
+		if retryRows.Scan(&session, &secs) == nil && session != "" {
+			waits[session] = secs
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
-	return out
+	_ = retryRows.Err() // a cut-off read is the shorter answer it always was
+	return waits
 }
 
 // shortPhases: phases of a run that CLOSED in under `floor` seconds having
@@ -670,7 +670,7 @@ func shortPhases(run string, floor float64) map[string]float64 {
 	// A turn is the thing the floor was always reaching for. With it there is
 	// one number for every phase, and the number only has to be long enough
 	// that a phase which truly did nothing has finished failing.
-	rows, err := db.Query(`
+	phaseRows, err := db.Query(`
 		SELECT coalesce(e.phase,''), coalesce(jnum(e.payload->'seconds'), 0)
 		FROM events e
 		WHERE e.run=? AND e.kind='phase_end' AND coalesce(e.phase,'') <> ''
@@ -688,19 +688,19 @@ func shortPhases(run string, floor float64) map[string]float64 {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	out := map[string]float64{}
-	for rows.Next() {
+	defer phaseRows.Close()
+	shortest := map[string]float64{}
+	for phaseRows.Next() {
 		var phase string
 		var secs float64
-		if rows.Scan(&phase, &secs) == nil {
-			if prev, seen := out[phase]; !seen || secs < prev {
-				out[phase] = secs
+		if phaseRows.Scan(&phase, &secs) == nil {
+			if shortestSoFar, known := shortest[phase]; !known || secs < shortestSoFar {
+				shortest[phase] = secs
 			}
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter answer it always was
-	return out
+	_ = phaseRows.Err() // a cut-off read is the shorter answer it always was
+	return shortest
 }
 
 // lastHeard is when the WORKER last said anything at all under a run, as an
@@ -764,8 +764,8 @@ func chainStart(run string, started float64) (string, float64) {
 var outageSummaries = []string{"Nothing was read or tested"}
 
 func outageRun(summary string) bool {
-	for _, s := range outageSummaries {
-		if strings.Contains(summary, s) {
+	for _, outage := range outageSummaries {
+		if strings.Contains(summary, outage) {
 			return true
 		}
 	}

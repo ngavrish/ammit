@@ -156,17 +156,17 @@ func migrate() error {
 	}
 	var have int
 	_ = conn.QueryRowContext(ctx, `SELECT coalesce(max(version),0) FROM ammit_schema`).Scan(&have)
-	for v := have + 1; v <= schemaVersion; v++ {
-		if step, ok := schemaSteps[v]; ok {
+	for version := have + 1; version <= schemaVersion; version++ {
+		if step, ok := schemaSteps[version]; ok {
 			if _, err := conn.ExecContext(ctx, step); err != nil {
-				return fmt.Errorf("schema step %d: %w", v, err)
+				return fmt.Errorf("schema step %d: %w", version, err)
 			}
 		}
 		if _, err := conn.ExecContext(ctx, `INSERT INTO ammit_schema (version, at) VALUES ($1, $2)
-		                                   ON CONFLICT (version) DO NOTHING`, v, nowWall()); err != nil {
+		                                   ON CONFLICT (version) DO NOTHING`, version, nowWall()); err != nil {
 			return err
 		}
-		log.Printf("ammit: database brought to schema %d", v)
+		log.Printf("ammit: database brought to schema %d", version)
 	}
 	return ensurePartitions(ctx, time.Now())
 }
@@ -192,8 +192,8 @@ func ensurePartitions(ctx context.Context, t time.Time) error {
 	if statestore.Embedded {
 		return nil
 	}
-	for _, m := range []time.Time{t, t.UTC().AddDate(0, 1, 0)} {
-		if err := ensurePartition(ctx, m); err != nil {
+	for _, month := range []time.Time{t, t.UTC().AddDate(0, 1, 0)} {
+		if err := ensurePartition(ctx, month); err != nil {
 			return err
 		}
 	}
@@ -206,41 +206,41 @@ func ensurePartitions(ctx context.Context, t time.Time) error {
 // refuse while such a row exists, and an event dated a month ahead is one a
 // client is allowed to send.
 func ensurePartition(ctx context.Context, month time.Time) error {
-	name, from, to := monthOf(month)
+	partition, from, until := monthOf(month)
 	partMu.Lock()
 	defer partMu.Unlock()
-	if partMade[name] {
+	if partMade[partition] {
 		return nil
 	}
 	var n int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_inherits i
 	                        JOIN pg_class c ON c.oid = i.inhrelid
 	                        JOIN pg_class p ON p.oid = i.inhparent
-	                        WHERE p.relname = 'events' AND c.relname = ?`, name).Scan(&n); err != nil {
+	                        WHERE p.relname = 'events' AND c.relname = ?`, partition).Scan(&n); err != nil {
 		return err
 	}
 	if n == 0 {
-		lo, hi := strconv.FormatFloat(from, 'f', -1, 64), strconv.FormatFloat(to, 'f', -1, 64)
-		tx, err := db.BeginTx(ctx, nil)
+		fromText, untilText := strconv.FormatFloat(from, 'f', -1, 64), strconv.FormatFloat(until, 'f', -1, 64)
+		txn, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-		for _, q := range []string{
-			`CREATE TABLE IF NOT EXISTS ` + name + ` (LIKE events INCLUDING DEFAULTS INCLUDING CONSTRAINTS)`,
-			`INSERT INTO ` + name + ` SELECT * FROM events_default WHERE at >= ` + lo + ` AND at < ` + hi,
-			`DELETE FROM events_default WHERE at >= ` + lo + ` AND at < ` + hi,
-			`ALTER TABLE events ATTACH PARTITION ` + name + ` FOR VALUES FROM (` + lo + `) TO (` + hi + `)`,
+		for _, statement := range []string{
+			`CREATE TABLE IF NOT EXISTS ` + partition + ` (LIKE events INCLUDING DEFAULTS INCLUDING CONSTRAINTS)`,
+			`INSERT INTO ` + partition + ` SELECT * FROM events_default WHERE at >= ` + fromText + ` AND at < ` + untilText,
+			`DELETE FROM events_default WHERE at >= ` + fromText + ` AND at < ` + untilText,
+			`ALTER TABLE events ATTACH PARTITION ` + partition + ` FOR VALUES FROM (` + fromText + `) TO (` + untilText + `)`,
 		} {
-			if _, err := tx.ExecContext(ctx, q); err != nil {
-				_ = tx.Rollback()
-				return fmt.Errorf("could not make the events table %s: %w", name, err)
+			if _, err := txn.ExecContext(ctx, statement); err != nil {
+				_ = txn.Rollback()
+				return fmt.Errorf("could not make the events table %s: %w", partition, err)
 			}
 		}
-		if err := tx.Commit(); err != nil {
+		if err := txn.Commit(); err != nil {
 			return err
 		}
-		log.Printf("ammit: events for %s go to %s", time.Unix(int64(from), 0).UTC().Format("2006-01"), name)
+		log.Printf("ammit: events for %s go to %s", time.Unix(int64(from), 0).UTC().Format("2006-01"), partition)
 	}
-	partMade[name] = true
+	partMade[partition] = true
 	return nil
 }

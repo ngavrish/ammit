@@ -44,12 +44,12 @@ var (
 func chartStartsWhereItsDataDoes(page string) error {
 	// One place, not one per chart kind. Two would be two answers to the same
 	// question and the second would drift.
-	if n := len(xRange.FindAllString(page, -1)); n != 1 {
+	if ranges := len(xRange.FindAllString(page, -1)); ranges != 1 {
 		return fmt.Errorf("the page decides its time range in %d places; the "+
-			"rule is one place, on the way in", n)
+			"rule is one place, on the way in", ranges)
 	}
-	body := rangeBody(page)
-	if body == "" {
+	rangeText := rangeBody(page)
+	if rangeText == "" {
 		return fmt.Errorf("the time range function has no body to read")
 	}
 	// Clipped, not either one alone: the window alone drew a short run as a
@@ -59,7 +59,7 @@ func chartStartsWhereItsDataDoes(page string) error {
 		{"Math.max(", "the range must start at the later of the data and the window"},
 		{"Math.min(", "the range must end at the earlier of the data and the window"},
 	} {
-		if !strings.Contains(body, want.frag) {
+		if !strings.Contains(rangeText, want.frag) {
 			return fmt.Errorf("the time range does not clip: %s", want.why)
 		}
 	}
@@ -71,14 +71,14 @@ func chartStartsWhereItsDataDoes(page string) error {
 	}
 	// And every renderer against time reads its rows through the one function.
 	var stray []string
-	for _, m := range drawFn.FindAllStringSubmatchIndex(page, -1) {
-		name := page[m[2]:m[3]]
-		fn := functionBody(page, m[0])
-		if !timeAxis.MatchString(fn) {
+	for _, match := range drawFn.FindAllStringSubmatchIndex(page, -1) {
+		drawName := page[match[2]:match[3]]
+		drawBody := functionBody(page, match[0])
+		if !timeAxis.MatchString(drawBody) {
 			continue // a table, a tile, a pie: no axis to start anywhere
 		}
-		if !strings.Contains(fn, rowReader) {
-			stray = append(stray, name)
+		if !strings.Contains(drawBody, rowReader) {
+			stray = append(stray, drawName)
 		}
 	}
 	if len(stray) > 0 {
@@ -92,15 +92,15 @@ func chartStartsWhereItsDataDoes(page string) error {
 // rangeBody is the text of the one x-range function, from its match to the end
 // of its block.
 func rangeBody(page string) string {
-	at := xRange.FindStringIndex(page)
-	if at == nil {
+	rangeAt := xRange.FindStringIndex(page)
+	if rangeAt == nil {
 		return ""
 	}
-	end := strings.Index(page[at[1]:], "}}")
+	end := strings.Index(page[rangeAt[1]:], "}}")
 	if end < 0 {
 		return ""
 	}
-	return page[at[1] : at[1]+end]
+	return page[rangeAt[1] : rangeAt[1]+end]
 }
 
 // functionBody is a `function name(...)` block, read by counting braces so a
@@ -110,15 +110,15 @@ func functionBody(page string, at int) string {
 	if open < 0 {
 		return ""
 	}
-	depth, i := 0, at+open
-	for ; i < len(page); i++ {
-		switch page[i] {
+	depth, pos := 0, at+open
+	for ; pos < len(page); pos++ {
+		switch page[pos] {
 		case '{':
 			depth++
 		case '}':
 			depth--
 			if depth == 0 {
-				return page[at : i+1]
+				return page[at : pos+1]
 			}
 		}
 	}

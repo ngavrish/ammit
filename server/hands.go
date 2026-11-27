@@ -39,33 +39,33 @@ var (
 // and does not come from a run's agent; nil otherwise.
 func memberOf(r *http.Request) *handWho {
 	token := strings.TrimSpace(os.Getenv("CELL_TOKEN"))
-	got := r.Header.Get("X-Revisore-Cell-Token")
-	if token == "" || got == "" || subtle.ConstantTimeCompare([]byte(token), []byte(got)) != 1 {
+	cellToken := r.Header.Get("X-Revisore-Cell-Token")
+	if token == "" || cellToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(cellToken)) != 1 {
 		return nil
 	}
 	if runnerCaller(r) != "" {
 		return nil
 	}
-	w := &handWho{email: strings.TrimSpace(r.Header.Get("X-Revisore-Member")),
+	who := &handWho{email: strings.TrimSpace(r.Header.Get("X-Revisore-Member")),
 		via: strings.TrimSpace(r.Header.Get("X-Revisore-Via"))}
-	if w.via == "" {
-		w.via = "web"
+	if who.via == "" {
+		who.via = "web"
 	}
-	if !handEmailRE.MatchString(w.email) || !handViaRE.MatchString(w.via) {
+	if !handEmailRE.MatchString(who.email) || !handViaRE.MatchString(who.via) {
 		return nil
 	}
-	name := r.Header.Get("X-Revisore-Member-Name")
-	if n, err := url.PathUnescape(name); err == nil {
-		name = n
+	memberName := r.Header.Get("X-Revisore-Member-Name")
+	if unescaped, err := url.PathUnescape(memberName); err == nil {
+		memberName = unescaped
 	}
 	var b strings.Builder
-	for _, c := range strings.TrimSpace(name) {
-		if c >= 0x20 && c != 0x7f && b.Len() < 400 {
-			b.WriteRune(c)
+	for _, char := range strings.TrimSpace(memberName) {
+		if char >= 0x20 && char != 0x7f && b.Len() < 400 {
+			b.WriteRune(char)
 		}
 	}
-	w.name = b.String()
-	return w
+	who.name = b.String()
+	return who
 }
 
 func (w *handWho) String() string {

@@ -68,11 +68,11 @@ func putDeploy(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 // caller should.
 func getDeploy(db *DB, mu *sync.Mutex, w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
-	row := db.QueryRowContext(r.Context(),
+	deployRow := db.QueryRowContext(r.Context(),
 		`SELECT at, run, status, detail, shas FROM deploys ORDER BY at DESC LIMIT 1`)
 	var at float64
 	var run, status, detail, shas sql.NullString
-	err := row.Scan(&at, &run, &status, &detail, &shas)
+	err := deployRow.Scan(&at, &run, &status, &detail, &shas)
 	mu.Unlock()
 	if err == sql.ErrNoRows {
 		// Nothing has ever been said. A deployment where the deploy does not

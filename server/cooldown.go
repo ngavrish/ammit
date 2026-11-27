@@ -61,14 +61,14 @@ func cooldown(conf Config) {
 	if since <= idle || cooledFor == last {
 		return
 	}
-	key := fmt.Sprintf("%.0f", last)
-	if recently("timeouts.idle", key, idle) {
+	lastKey := fmt.Sprintf("%.0f", last)
+	if recently("timeouts.idle", lastKey, idle) {
 		return
 	}
 	action := conf.str("actions", "on_idle", "cooldown")
 	ctx := map[string]string{"name": "stack", "run": "-"}
-	for k, v := range conf["context"] {
-		ctx[k] = v
+	for field, fieldValue := range conf["context"] {
+		ctx[field] = fieldValue
 	}
 	outcome := act(action, conf, ctx)
 	judge("stack", "", "product", "timeouts.idle", idle, since, action, outcome)

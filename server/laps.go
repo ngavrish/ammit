@@ -30,19 +30,19 @@ const lapsPrefix = "laps_"
 // absent, so a config written before the rename still holds the heal loop.
 func lapCaps(conf Config) map[string]float64 {
 	caps := map[string]float64{}
-	for key := range conf["loops"] {
+	for loop := range conf["loops"] {
 		// laps_watchdog is the watchdog's cycles per chain (watchdog.go),
 		// not a repair phase: no phase of that name starts on a branch.
-		if !strings.HasPrefix(key, lapsPrefix) || key == lapsPrefix+"watchdog" {
+		if !strings.HasPrefix(loop, lapsPrefix) || loop == lapsPrefix+"watchdog" {
 			continue
 		}
-		if v, ok := conf.num("loops", key); ok && v > 0 {
-			caps[strings.TrimPrefix(key, lapsPrefix)] = v
+		if lapCap, ok := conf.num("loops", loop); ok && lapCap > 0 {
+			caps[strings.TrimPrefix(loop, lapsPrefix)] = lapCap
 		}
 	}
 	if _, ok := caps["branchheal"]; !ok {
-		if v, ok := conf.num("loops", "heal_laps_per_branch"); ok && v > 0 {
-			caps["branchheal"] = v
+		if lapCap, ok := conf.num("loops", "heal_laps_per_branch"); ok && lapCap > 0 {
+			caps["branchheal"] = lapCap
 		}
 	}
 	return caps
@@ -50,11 +50,11 @@ func lapCaps(conf Config) map[string]float64 {
 
 // healCap is the heal loop's cap under whichever name the config uses.
 func healCap(conf Config) (float64, string) {
-	if v, ok := conf.num("loops", lapsPrefix+"branchheal"); ok {
-		return v, "loops." + lapsPrefix + "branchheal"
+	if lapCap, ok := conf.num("loops", lapsPrefix+"branchheal"); ok {
+		return lapCap, "loops." + lapsPrefix + "branchheal"
 	}
-	v, _ := conf.num("loops", "heal_laps_per_branch")
-	return v, "loops.heal_laps_per_branch"
+	lapCap, _ := conf.num("loops", "heal_laps_per_branch")
+	return lapCap, "loops.heal_laps_per_branch"
 }
 
 // phaseStarts is branch -> how many times the phase started on it in the
@@ -67,7 +67,7 @@ func healCap(conf Config) (float64, string) {
 func phaseStarts(run, phase, attemptPhase string) map[string]int {
 	mu.Lock()
 	defer mu.Unlock()
-	rows, err := db.Query(`
+	startRows, err := db.Query(`
 		SELECT coalesce(e.branch,''), count(*) FROM events e
 		WHERE e.run=? AND e.kind='phase_start' AND e.phase=?
 		  AND e.at > coalesce((SELECT max(a.at) FROM events a
@@ -77,17 +77,17 @@ func phaseStarts(run, phase, attemptPhase string) map[string]int {
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	out := map[string]int{}
-	for rows.Next() {
+	defer startRows.Close()
+	starts := map[string]int{}
+	for startRows.Next() {
 		var branch string
 		var n int
-		if rows.Scan(&branch, &n) == nil {
-			out[branch] = n
+		if startRows.Scan(&branch, &n) == nil {
+			starts[branch] = n
 		}
 	}
-	_ = rows.Err() // a cut-off read is the shorter map it always was
-	return out
+	_ = startRows.Err() // a cut-off read is the shorter map it always was
+	return starts
 }
 
 // lapBreach is one branch whose repair phase started more often than its cap.
@@ -104,9 +104,9 @@ func (b lapBreach) rule() string    { return "loops." + lapsPrefix + b.Phase }
 func lapsOver(run string, caps map[string]float64, attemptPhase string) []lapBreach {
 	var out []lapBreach
 	for phase, limit := range caps {
-		for branch, n := range phaseStarts(run, phase, attemptPhase) {
-			if float64(n) > limit {
-				out = append(out, lapBreach{phase, branch, n, limit})
+		for branch, laps := range phaseStarts(run, phase, attemptPhase) {
+			if float64(laps) > limit {
+				out = append(out, lapBreach{phase, branch, laps, limit})
 			}
 		}
 	}
@@ -137,22 +137,22 @@ func judgeRepairLaps(run string, conf Config, ctx map[string]string) {
 	// The phase a branch's attempt begins with: its laps are counted from its
 	// latest start (phaseStarts).
 	attempt := conf.str("loops", "attempt_phase", "implementing")
-	for _, b := range lapsOver(run, caps, attempt) {
-		if lapsJudged(run, b.rule(), b.subject()) {
+	for _, over := range lapsOver(run, caps, attempt) {
+		if lapsJudged(run, over.rule(), over.subject()) {
 			continue
 		}
-		ctx["branch"], ctx["phase"] = b.Branch, b.subject()
-		judge("branch", run, b.subject(), b.rule(), b.Cap, float64(b.Laps),
+		ctx["branch"], ctx["phase"] = over.Branch, over.subject()
+		judge("branch", run, over.subject(), over.rule(), over.Cap, float64(over.Laps),
 			action, act(action, conf, ctx))
 		say := map[string]string{}
-		for k, v := range ctx {
-			say[k] = v
+		for field, fieldValue := range ctx {
+			say[field] = fieldValue
 		}
 		say["verdict"] = "REPAIR-LAPS"
 		// Short: act keeps 200 bytes of what a command says, and the rule is
 		// in the judgement line already.
-		say["summary"] = fmt.Sprintf("%s: %s стартовал %d-й раз при лимите %.0f — ветка остановлена",
-			b.Branch, b.Phase, b.Laps, b.Cap)
+		say["summary"] = fmt.Sprintf("%s: %s started for the %d time against a limit of %.0f — branch stopped",
+			over.Branch, over.Phase, over.Laps, over.Cap)
 		// Said where a person looks: the notify command's own output is the
 		// channel when it is an echo, and the judgement line above names the
 		// rule either way.

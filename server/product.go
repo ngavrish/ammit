@@ -37,9 +37,9 @@ func productBroken(body []byte) (map[string]any, []string) {
 		return nil, []string{"is not a mapping"}
 	}
 	var bad []string
-	for _, key := range productRequired {
-		if _, ok := doc[key]; !ok {
-			bad = append(bad, "missing "+key)
+	for _, required := range productRequired {
+		if _, ok := doc[required]; !ok {
+			bad = append(bad, "missing "+required)
 		}
 	}
 	return doc, bad
@@ -47,23 +47,23 @@ func productBroken(body []byte) (map[string]any, []string) {
 
 // jsonable turns YAML's map[any]any leftovers into what encoding/json takes.
 func jsonable(v any) any {
-	switch t := v.(type) {
+	switch typed := v.(type) {
 	case map[string]any:
-		for k, x := range t {
-			t[k] = jsonable(x)
+		for field, fieldValue := range typed {
+			typed[field] = jsonable(fieldValue)
 		}
-		return t
+		return typed
 	case map[any]any:
-		out := make(map[string]any, len(t))
-		for k, x := range t {
-			out[fmt.Sprint(k)] = jsonable(x)
+		converted := make(map[string]any, len(typed))
+		for field, fieldValue := range typed {
+			converted[fmt.Sprint(field)] = jsonable(fieldValue)
 		}
-		return out
+		return converted
 	case []any:
-		for i, x := range t {
-			t[i] = jsonable(x)
+		for index, element := range typed {
+			typed[index] = jsonable(element)
 		}
-		return t
+		return typed
 	}
 	return v
 }
@@ -78,60 +78,60 @@ func etagOf(body []byte) string {
 // skip asking.
 func serveProduct(mux *http.ServeMux, path string) {
 	read := func(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-		body, err := os.ReadFile(path)
+		stored, err := os.ReadFile(path)
 		if err != nil {
 			http.Error(w, "ammit holds no product: "+err.Error(), http.StatusServiceUnavailable)
 			return nil, false
 		}
-		tag := etagOf(body)
+		tag := etagOf(stored)
 		w.Header().Set("ETag", tag)
 		if strings.Contains(r.Header.Get("If-None-Match"), tag) {
 			w.WriteHeader(http.StatusNotModified)
 			return nil, false
 		}
-		return body, true
+		return stored, true
 	}
 	mux.HandleFunc("GET /product.yml", func(w http.ResponseWriter, r *http.Request) {
-		body, ok := read(w, r)
+		posted, ok := read(w, r)
 		if !ok {
 			return
 		}
 		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-		if _, err := w.Write(body); err != nil {
+		if _, err := w.Write(posted); err != nil {
 			log.Printf("ammit: product not sent: %v", err)
 		}
 	})
 	mux.HandleFunc("GET /product", func(w http.ResponseWriter, r *http.Request) {
-		body, ok := read(w, r)
+		posted, ok := read(w, r)
 		if !ok {
 			return
 		}
-		doc, bad := productBroken(body)
-		if len(bad) > 0 {
-			http.Error(w, "the product ammit holds is broken: "+strings.Join(bad, "; "), http.StatusInternalServerError)
+		product, broken := productBroken(posted)
+		if len(broken) > 0 {
+			http.Error(w, "the product ammit holds is broken: "+strings.Join(broken, "; "), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, jsonable(doc))
+		writeJSON(w, http.StatusOK, jsonable(product))
 	})
 	mux.HandleFunc("PUT /product.yml", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, productMaxBytes))
+		posted, err := io.ReadAll(io.LimitReader(r.Body, productMaxBytes))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if _, bad := productBroken(body); len(bad) > 0 {
-			http.Error(w, "refused, this is not a product:\n"+strings.Join(bad, "\n"), http.StatusBadRequest)
+		if _, broken := productBroken(posted); len(broken) > 0 {
+			http.Error(w, "refused, this is not a product:\n"+strings.Join(broken, "\n"), http.StatusBadRequest)
 			return
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := os.WriteFile(path, body, 0o600); err != nil {
+		if err := os.WriteFile(path, posted, 0o600); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("ammit: product replaced (%d bytes)", len(body))
+		log.Printf("ammit: product replaced (%d bytes)", len(posted))
 		w.WriteHeader(http.StatusNoContent)
 	})
 }

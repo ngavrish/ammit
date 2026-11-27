@@ -45,16 +45,16 @@ def _counts() -> tuple:
         return None, ("golangci-lint is not installed "
                       "(go install github.com/golangci/golangci-lint/v2/"
                       "cmd/golangci-lint@latest)")
-    out = os.path.join(tempfile.mkdtemp(), "gl.json")
+    report_path = os.path.join(tempfile.mkdtemp(), "gl.json")
     try:
-        subprocess.run([exe, "run", f"--output.json.path={out}", "./..."],
+        subprocess.run([exe, "run", f"--output.json.path={report_path}", "./..."],
                        capture_output=True, text=True, cwd=MODULE,
                        timeout=_RUN_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError) as exc:
         return None, f"golangci-lint did not run: {exc}"
     try:
-        with open(out, encoding="utf-8") as fh:
-            data = json.load(fh)
+        with open(report_path, encoding="utf-8") as report_file:
+            report = json.load(report_file)
     except (OSError, ValueError) as exc:
         return None, f"golangci-lint wrote no report: {exc}"
     ver = subprocess.run([exe, "version"], capture_output=True, text=True,
@@ -63,56 +63,56 @@ def _counts() -> tuple:
         print(f"  note    golangci-lint is not {_PINNED}; the baseline was "
               f"taken with that version and the counts will not line up")
     counts: dict = {}
-    for issue in data.get("Issues") or []:
-        name = issue.get("FromLinter") or "?"
-        counts[name] = counts.get(name, 0) + 1
+    for issue in report.get("Issues") or []:
+        linter = issue.get("FromLinter") or "?"
+        counts[linter] = counts.get(linter, 0) + 1
     return counts, ""
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--baseline", action="store_true")
-    ap.add_argument("--require", action="store_true",
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--baseline", action="store_true")
+    parser.add_argument("--require", action="store_true",
                     help="treat a missing golangci-lint as a failure (CI)")
-    args = ap.parse_args()
+    options = parser.parse_args()
 
     counts, note = _counts()
     where = os.path.join(ROOT, BASELINE)
     if counts is None:
         print(f"  MISSING {note}")
-        return 1 if args.require else 0
+        return 1 if options.require else 0
 
-    if args.baseline:
-        with open(where, "w", encoding="utf-8") as fh:
-            json.dump(counts, fh, indent=1, sort_keys=True)
-            fh.write("\n")
+    if options.baseline:
+        with open(where, "w", encoding="utf-8") as baseline_file:
+            json.dump(counts, baseline_file, indent=1, sort_keys=True)
+            baseline_file.write("\n")
         print(f"baseline written: {sum(counts.values())} finding(s) across "
               f"{len(counts)} linter(s) -> {BASELINE}")
         return 0
 
     try:
-        with open(where, encoding="utf-8") as fh:
-            base = json.load(fh)
+        with open(where, encoding="utf-8") as baseline_file:
+            base = json.load(baseline_file)
     except (OSError, ValueError):
         base = {}
 
     grew, new, fell = [], [], []
-    for k, n in sorted(counts.items()):
-        was = base.get(k)
+    for linter, count in sorted(counts.items()):
+        was = base.get(linter)
         if was is None:
-            new.append(f"{k}: {n} (new linter, none before)")
-        elif n > was:
-            grew.append(f"{k}: {n}, was {was}")
-        elif n < was:
-            fell.append(f"{k}: {n}, was {was}")
-    for k, was in sorted(base.items()):
-        if k not in counts and was:
-            fell.append(f"{k}: 0, was {was} - gone")
+            new.append(f"{linter}: {count} (new linter, none before)")
+        elif count > was:
+            grew.append(f"{linter}: {count}, was {was}")
+        elif count < was:
+            fell.append(f"{linter}: {count}, was {was}")
+    for linter, was in sorted(base.items()):
+        if linter not in counts and was:
+            fell.append(f"{linter}: 0, was {was} - gone")
 
-    for row in fell:
-        print(f"  paid    {row}")
-    for row in new + grew:
-        print(f"  WORSE   {row}")
+    for line_said in fell:
+        print(f"  paid    {line_said}")
+    for line_said in new + grew:
+        print(f"  WORSE   {line_said}")
 
     if new or grew:
         print(f"GO-LINT RED: {len(new) + len(grew)} linter(s) grew. Debt here "
